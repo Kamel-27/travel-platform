@@ -112,7 +112,7 @@ export default function SigninPage() {
             <div className="flex flex-col gap-xs">
               <div className="flex justify-between items-center">
                 <label className="font-label-md text-label-md text-on-surface" htmlFor="password">كلمة المرور</label>
-                <Link className="font-label-sm text-label-sm text-primary hover:underline transition-all" href="/">نسيت كلمة المرور؟</Link>
+                <Link className="font-label-sm text-label-sm text-primary hover:underline transition-all" href="/support">نسيت كلمة المرور؟</Link>
               </div>
               <div className="relative flex items-center">
                 <span className="material-symbols-outlined absolute right-3 text-outline" data-icon="lock">lock</span>
@@ -153,7 +153,7 @@ export default function SigninPage() {
           <div className="flex justify-center gap-md mb-base">
             <Link className="font-label-sm text-label-sm text-white/80 hover:text-white transition-colors" href="/">عن سفريات</Link>
             <Link className="font-label-sm text-label-sm text-white/80 hover:text-white transition-colors" href="/">الشروط والأحكام</Link>
-            <Link className="font-label-sm text-label-sm text-white/80 hover:text-white transition-colors" href="/">اتصل بنا</Link>
+            <Link className="font-label-sm text-label-sm text-white/80 hover:text-white transition-colors" href="/support">اتصل بنا</Link>
           </div>
           <p className="font-label-sm text-label-sm text-white/60">© 2026 سفريات. جميع الحقوق محفوظة.</p>
         </footer>

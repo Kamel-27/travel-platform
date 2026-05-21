@@ -183,10 +183,10 @@ export default function SecurePaymentPage() {
                     <span className="material-symbols-outlined text-4xl">ios</span>
                   </div>
                   <p className="font-body-lg text-body-lg text-center text-white/80">ادفع بلمسة واحدة باستخدام Apple Pay بأمان تام</p>
-                  <button className="bg-white text-black font-bold font-title-lg px-xl py-md rounded-xl hover:bg-white/90 active:scale-95 transition-all shadow-md flex items-center gap-xs">
+                  <Link href="/checkout/confirmation" className="bg-white text-black font-bold font-title-lg px-xl py-md rounded-xl hover:bg-white/90 active:scale-95 transition-all shadow-md flex items-center gap-xs">
                     <span>الدفع باستخدام</span>
                     <span className="font-extrabold flex items-center text-xl font-mono"> Pay</span>
-                  </button>
+                  </Link>
                 </div>
               )}
 
@@ -202,9 +202,9 @@ export default function SecurePaymentPage() {
                   <div className="bg-white/5 border border-white/10 rounded-xl p-md max-w-sm text-center">
                     <p className="font-label-sm text-label-sm text-white/60">سيتم خصم قيمة الحجز (1,430 SAR) مباشرة من رصيد المحفظة.</p>
                   </div>
-                  <button className="bg-teal-500 hover:bg-teal-600 active:scale-95 text-white font-bold font-title-lg px-xl py-md rounded-xl transition-all shadow-md">
+                  <Link href="/checkout/confirmation" className="bg-teal-500 hover:bg-teal-600 active:scale-95 text-white font-bold font-title-lg px-xl py-md rounded-xl transition-all shadow-md text-center">
                     تأكيد الدفع من المحفظة
-                  </button>
+                  </Link>
                 </div>
               )}
 
@@ -271,9 +271,9 @@ export default function SecurePaymentPage() {
       <footer className="w-full py-lg px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto flex flex-col md:flex-row justify-between items-center gap-base border-t border-white/10 mt-xl opacity-60 text-white">
         <div className="font-headline-md text-headline-md font-extrabold text-primary-fixed-dim">Safariyat</div>
         <div className="flex gap-md">
-          <Link className="font-label-sm text-label-sm hover:text-orange-400 transition-colors" href="#">عن سفريات</Link>
-          <Link className="font-label-sm text-label-sm hover:text-orange-400 transition-colors" href="#">سياسة الخصوصية</Link>
-          <Link className="font-label-sm text-label-sm hover:text-orange-400 transition-colors" href="#">اتصل بنا</Link>
+          <Link className="font-label-sm text-label-sm hover:text-orange-400 transition-colors" href="/">عن سفريات</Link>
+          <Link className="font-label-sm text-label-sm hover:text-orange-400 transition-colors" href="/">سياسة الخصوصية</Link>
+          <Link className="font-label-sm text-label-sm hover:text-orange-400 transition-colors" href="/support">اتصل بنا</Link>
         </div>
         <div className="font-label-sm text-label-sm text-white/40">© 2026 سفريات. جميع الحقوق محفوظة.</div>
       </footer>

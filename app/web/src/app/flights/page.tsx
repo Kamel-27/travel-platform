@@ -18,8 +18,8 @@ export default function FlightsPage() {
 <nav className="hidden md:flex items-center gap-md">
 <Link className="text-primary font-bold border-b-2 border-primary pb-1 font-label-md text-label-md" href="/">رحلات طيران</Link>
 <Link className="text-on-surface-variant hover:text-primary transition-colors font-label-md text-label-md" href="/hotels">فنادق</Link>
-<Link className="text-on-surface-variant hover:text-primary transition-colors font-label-md text-label-md" href="/">عروض</Link>
-<Link className="text-on-surface-variant hover:text-primary transition-colors font-label-md text-label-md" href="/">رحلاتي</Link>
+<Link className="text-on-surface-variant hover:text-primary transition-colors font-label-md text-label-md" href="/#offers">عروض</Link>
+<Link className="text-on-surface-variant hover:text-primary transition-colors font-label-md text-label-md" href="/manage-bookings">رحلاتي</Link>
 </nav>
 </div>
 <div className="flex items-center gap-base">
@@ -318,7 +318,7 @@ export default function FlightsPage() {
 <div className="flex flex-col gap-sm">
 <span className="font-label-md text-label-md font-bold text-on-surface">عن سفريات</span>
 <Link className="font-body-md text-body-md text-on-surface-variant hover:text-primary hover:underline" href="/">من نحن</Link>
-<Link className="font-body-md text-body-md text-on-surface-variant hover:text-primary hover:underline" href="/">اتصل بنا</Link>
+<Link className="font-body-md text-body-md text-on-surface-variant hover:text-primary hover:underline" href="/support">اتصل بنا</Link>
 </div>
 <div className="flex flex-col gap-sm">
 <span className="font-label-md text-label-md font-bold text-on-surface">القانونية</span>

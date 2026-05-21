@@ -11,12 +11,12 @@ export default function ManageBookingsPage() {
 <header className="bg-surface-container-lowest dark:bg-inverse-surface shadow-sm sticky top-0 z-50">
 <div className="flex justify-between items-center w-full px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto h-16">
 <div className="flex items-center gap-md">
-<span className="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary dark:text-inverse-primary">سفريات</span>
+<Link href="/" className="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary dark:text-inverse-primary hover:opacity-90 transition-opacity">سفريات</Link>
 <nav className="hidden md:flex gap-md mt-1">
 <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/">رحلات طيران</Link>
-<Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/">فنادق</Link>
-<Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/">عروض</Link>
-<Link className="text-primary dark:text-inverse-primary font-bold border-b-2 border-primary dark:border-inverse-primary pb-1 font-label-md text-label-md" href="/">رحلاتي</Link>
+<Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/hotels">فنادق</Link>
+<Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/#offers">عروض</Link>
+<Link className="text-primary dark:text-inverse-primary font-bold border-b-2 border-primary dark:border-inverse-primary pb-1 font-label-md text-label-md" href="/manage-bookings">رحلاتي</Link>
 </nav>
 </div>
 <div className="flex items-center gap-base">
@@ -28,13 +28,13 @@ export default function ManageBookingsPage() {
 <span className="material-symbols-outlined" data-icon="notifications">notifications</span>
 <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full border-2 border-white"></span>
 </button>
-<div className="flex items-center gap-sm pr-base border-r border-outline-variant mr-base">
+<Link href="/dashboard-overview" className="flex items-center gap-sm pr-base border-r border-outline-variant mr-base hover:opacity-80 transition-opacity">
 <div className="text-left hidden md:block">
 <p className="font-label-md text-label-md font-bold leading-none">أحمد المسؤول</p>
 <p className="text-label-sm text-label-sm text-on-surface-variant">مدير النظام</p>
 </div>
 <img alt="صورة الملف الشخصي" className="w-10 h-10 rounded-full object-cover border-2 border-primary-container" data-alt="A professional headshot of a middle-aged Arab businessman in a modern office environment. He is wearing a crisp white shirt and a charcoal grey blazer. The background is a brightly lit, blurred minimalist corporate workspace with glass walls and soft blue accent colors. The lighting is flattering and high-key, conveying authority and reliability in a corporate modern style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuA7VmntjDodzuIgrnC-IhKbzO_ySxhV7plhLOWbjaJPYFuISe5aelWM4yefDp5pgvF1cIK-DtL7SZO1i0ig-cMsHCnrY2YW99BP6MXKumIIBDnRDZnkvj7YWu8et53yJBhCDZDigJejVln_dV3pzfH2vAN4lxk83Kt0v7J5gxobdGtLsBYaycK_frGMtR538pIvnWewztRK5gFs9ortFyi0qjvSNb_6H1yFPaOOkqqGA2FRjR25cjDCJywCE37Srt3z1OpIkjMrE7s1"/>
-</div>
+</Link>
 </div>
 </div>
 </header>
@@ -278,35 +278,35 @@ export default function ManageBookingsPage() {
 <footer className="bg-surface-container dark:bg-surface-dim border-t border-outline-variant">
 <div className="w-full py-lg px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-base">
 <div className="flex flex-col md:items-start items-center gap-xs">
-<span className="font-headline-md text-headline-md font-extrabold text-primary dark:text-primary-fixed-dim">سفريات</span>
+<Link href="/" className="font-headline-md text-headline-md font-extrabold text-primary dark:text-primary-fixed-dim hover:opacity-90 transition-opacity">سفريات</Link>
 <p className="text-on-surface-variant dark:text-on-secondary-container font-label-sm text-label-sm">© 2024 سفريات. جميع الحقوق محفوظة.</p>
 </div>
 <nav className="flex gap-md">
 <Link className="text-on-surface-variant dark:text-on-secondary-container font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/">عن سفريات</Link>
 <Link className="text-on-surface-variant dark:text-on-secondary-container font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/">سياسة الخصوصية</Link>
 <Link className="text-on-surface-variant dark:text-on-secondary-container font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/">الشروط والأحكام</Link>
-<Link className="text-on-surface-variant dark:text-on-secondary-container font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/">اتصل بنا</Link>
+<Link className="text-on-surface-variant dark:text-on-secondary-container font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/support">اتصل بنا</Link>
 </nav>
 </div>
 </footer>
 
 <div className="md:hidden fixed bottom-0 left-0 right-0 bg-surface-container-lowest border-t border-outline-variant h-16 flex justify-around items-center px-md z-50">
-<button className="flex flex-col items-center gap-1 text-on-surface-variant">
+<Link href="/dashboard-overview" className="flex flex-col items-center gap-1 text-on-surface-variant">
 <span className="material-symbols-outlined" data-icon="home">home</span>
 <span className="text-[10px] font-label-sm">الرئيسية</span>
-</button>
-<button className="flex flex-col items-center gap-1 text-primary">
+</Link>
+<Link href="/manage-bookings" className="flex flex-col items-center gap-1 text-primary">
 <span className="material-symbols-outlined" data-icon="airplane_ticket">airplane_ticket</span>
 <span className="text-[10px] font-label-sm">الحجوزات</span>
-</button>
-<button className="flex flex-col items-center gap-1 text-on-surface-variant">
+</Link>
+<Link href="/dashboard-overview" className="flex flex-col items-center gap-1 text-on-surface-variant">
 <span className="material-symbols-outlined" data-icon="insights">insights</span>
 <span className="text-[10px] font-label-sm">التقارير</span>
-</button>
-<button className="flex flex-col items-center gap-1 text-on-surface-variant">
+</Link>
+<Link href="/user-dashboard" className="flex flex-col items-center gap-1 text-on-surface-variant">
 <span className="material-symbols-outlined" data-icon="settings">settings</span>
 <span className="text-[10px] font-label-sm">الإعدادات</span>
-</button>
+</Link>
 </div>
     </>
   );

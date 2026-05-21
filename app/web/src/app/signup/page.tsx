@@ -164,7 +164,7 @@ export default function SignupPage() {
           <div className="flex gap-md">
             <Link className="hover:text-primary transition-colors" href="/">عن سفريات</Link>
             <Link className="hover:text-primary transition-colors" href="/">سياسة الخصوصية</Link>
-            <Link className="hover:text-primary transition-colors" href="/">اتصل بنا</Link>
+            <Link className="hover:text-primary transition-colors" href="/support">اتصل بنا</Link>
           </div>
         </div>
       </footer>

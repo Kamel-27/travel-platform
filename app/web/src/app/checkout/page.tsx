@@ -57,7 +57,7 @@ export default function CheckoutPage() {
               سفريات
             </Link>
             <nav className="hidden md:flex items-center gap-base">
-              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors px-xs" href="/flights">
+              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors px-xs" href="/">
                 رحلات طيران
               </Link>
               <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors px-xs" href="/hotels">
@@ -415,11 +415,11 @@ export default function CheckoutPage() {
             <p className="font-body-md text-body-md text-on-surface-variant text-center md:text-right mt-1">وجهتك الأولى لاستكشاف العالم بكل سهولة، أمن، وراحة تامة.</p>
           </div>
           <div className="flex flex-wrap justify-center gap-md my-sm">
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="#">عن سفريات</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="#">سياسة الخصوصية</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="#">الشروط والأحكام</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="#">اتصل بنا</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="#">الأسئلة الشائعة</Link>
+            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/">عن سفريات</Link>
+            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/">سياسة الخصوصية</Link>
+            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/">الشروط والأحكام</Link>
+            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/support">اتصل بنا</Link>
+            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/support">الأسئلة الشائعة</Link>
           </div>
           <p className="font-label-sm text-label-sm text-on-surface-variant">© 2026 سفريات. جميع الحقوق محفوظة.</p>
         </div>

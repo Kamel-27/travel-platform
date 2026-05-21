@@ -23,7 +23,7 @@ export default function HotelDetailsPage() {
               سفريات
             </Link>
             <div className="hidden md:flex gap-md">
-              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/flights">
+              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/">
                 رحلات طيران
               </Link>
               <Link className="text-primary dark:text-inverse-primary font-bold border-b-2 border-primary pb-1 font-label-md text-label-md" href="/hotels">
@@ -348,11 +348,11 @@ export default function HotelDetailsPage() {
             <p className="text-on-surface-variant font-label-sm text-label-sm">© 2026 سفريات. جميع الحقوق محفوظة.</p>
           </div>
           <div className="flex flex-wrap justify-center gap-md">
-            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="#">عن سفريات</Link>
-            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="#">سياسة الخصوصية</Link>
-            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="#">الشروط والأحكام</Link>
-            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="#">اتصل بنا</Link>
-            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="#">الأسئلة الشائعة</Link>
+            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="/">عن سفريات</Link>
+            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="/">سياسة الخصوصية</Link>
+            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="/">الشروط والأحكام</Link>
+            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="/support">اتصل بنا</Link>
+            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="/support">الأسئلة الشائعة</Link>
           </div>
         </div>
       </footer>

@@ -34,8 +34,8 @@ export default function HomepagePage() {
 <nav className="hidden md:flex items-center gap-md">
 <Link className="text-primary dark:text-inverse-primary font-bold border-b-2 border-primary dark:border-inverse-primary pb-1 font-label-md text-label-md" href="/">رحلات طيران</Link>
 <Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary transition-colors font-label-md text-label-md" href="/hotels">فنادق</Link>
-<Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary transition-colors font-label-md text-label-md" href="/">عروض</Link>
-<Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary transition-colors font-label-md text-label-md" href="/">رحلاتي</Link>
+<Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary transition-colors font-label-md text-label-md" href="/#offers">عروض</Link>
+<Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary transition-colors font-label-md text-label-md" href="/manage-bookings">رحلاتي</Link>
 </nav>
 </div>
 <div className="flex items-center gap-sm">
@@ -193,7 +193,7 @@ export default function HomepagePage() {
 </div>
 </section>
 
-<section className="bg-surface-container py-xl">
+<section id="offers" className="bg-surface-container py-xl">
 <div className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
 <div className="mb-lg">
 <h2 className="font-headline-lg text-headline-lg text-primary">عروض حصرية لفترة محدودة</h2>
@@ -221,7 +221,7 @@ export default function HomepagePage() {
 <span className="material-symbols-outlined text-[18px]" data-icon="timer">timer</span>
 <span className="font-label-sm text-label-sm">ينتهي العرض خلال 3 أيام</span>
 </div>
-<button className="w-full bg-secondary-container text-on-secondary-container py-2 rounded-lg font-bold hover:bg-primary hover:text-on-primary transition-all duration-300">احجز الآن</button>
+<Link href="/flights/details" className="block text-center w-full bg-secondary-container text-on-secondary-container py-2 rounded-lg font-bold hover:bg-primary hover:text-on-primary transition-all duration-300">احجز الآن</Link>
 </div>
 </div>
 
@@ -245,7 +245,7 @@ export default function HomepagePage() {
 <span className="material-symbols-outlined text-[18px]" data-icon="timer">timer</span>
 <span className="font-label-sm text-label-sm">ينتهي العرض خلال 5 أيام</span>
 </div>
-<button className="w-full bg-secondary-container text-on-secondary-container py-2 rounded-lg font-bold hover:bg-primary hover:text-on-primary transition-all duration-300">احجز الآن</button>
+<Link href="/flights/details" className="block text-center w-full bg-secondary-container text-on-secondary-container py-2 rounded-lg font-bold hover:bg-primary hover:text-on-primary transition-all duration-300">احجز الآن</Link>
 </div>
 </div>
 
@@ -269,7 +269,7 @@ export default function HomepagePage() {
 <span className="material-symbols-outlined text-[18px]" data-icon="timer">timer</span>
 <span className="font-label-sm text-label-sm">ينتهي العرض قريباً</span>
 </div>
-<button className="w-full bg-secondary-container text-on-secondary-container py-2 rounded-lg font-bold hover:bg-primary hover:text-on-primary transition-all duration-300">احجز الآن</button>
+<Link href="/hotels/details" className="block text-center w-full bg-secondary-container text-on-secondary-container py-2 rounded-lg font-bold hover:bg-primary hover:text-on-primary transition-all duration-300">احجز الآن</Link>
 </div>
 </div>
 </div>
@@ -317,9 +317,9 @@ export default function HomepagePage() {
 <div>
 <h5 className="font-bold mb-md text-on-surface">الدعم</h5>
 <ul className="space-y-sm text-on-surface-variant font-label-md text-label-md">
-<li><Link className="hover:text-primary hover:underline transition-all" href="/">اتصل بنا</Link></li>
-<li><Link className="hover:text-primary hover:underline transition-all" href="/">الأسئلة الشائعة</Link></li>
-<li><Link className="hover:text-primary hover:underline transition-all" href="/">مركز المساعدة</Link></li>
+<li><Link className="hover:text-primary hover:underline transition-all" href="/support">اتصل بنا</Link></li>
+<li><Link className="hover:text-primary hover:underline transition-all" href="/support">الأسئلة الشائعة</Link></li>
+<li><Link className="hover:text-primary hover:underline transition-all" href="/support">مركز المساعدة</Link></li>
 </ul>
 </div>
 <div>
@@ -348,15 +348,15 @@ export default function HomepagePage() {
 <span className="material-symbols-outlined" data-icon="home" data-weight="fill" style={{ fontVariationSettings: "'FILL' 1" }}>home</span>
 <span className="font-label-sm text-label-sm">الرئيسية</span>
 </Link>
-<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/">
+<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/hotels">
 <span className="material-symbols-outlined" data-icon="explore">explore</span>
 <span className="font-label-sm text-label-sm">استكشف</span>
 </Link>
-<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/">
+<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/manage-bookings">
 <span className="material-symbols-outlined" data-icon="airplane_ticket">airplane_ticket</span>
 <span className="font-label-sm text-label-sm">حجوزاتي</span>
 </Link>
-<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/">
+<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/user-dashboard">
 <span className="material-symbols-outlined" data-icon="person">person</span>
 <span className="font-label-sm text-label-sm">حسابي</span>
 </Link>

@@ -387,10 +387,10 @@ export default function HotelsPage() {
               <Link className="text-primary dark:text-inverse-primary font-bold border-b-2 border-primary dark:border-inverse-primary pb-1 font-label-md text-label-md" href="/hotels">
                 فنادق
               </Link>
-              <Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary transition-colors font-label-md text-label-md" href="/">
+              <Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary transition-colors font-label-md text-label-md" href="/#offers">
                 عروض
               </Link>
-              <Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary transition-colors font-label-md text-label-md" href="/">
+              <Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary transition-colors font-label-md text-label-md" href="/manage-bookings">
                 رحلاتي
               </Link>
             </div>
@@ -994,10 +994,10 @@ export default function HotelsPage() {
             <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="/">
               الشروط والأحكام
             </Link>
-            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="/">
+            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="/support">
               اتصل بنا
             </Link>
-            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="/">
+            <Link className="text-on-surface-variant font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity" href="/support">
               الأسئلة الشائعة
             </Link>
           </div>
@@ -1018,15 +1018,15 @@ export default function HotelsPage() {
             <span className="material-symbols-outlined" data-icon="home">home</span>
             <span className="font-label-sm text-label-sm">الرئيسية</span>
           </Link>
-          <Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/">
+          <Link className="flex flex-col items-center gap-xs text-primary" href="/hotels">
             <span className="material-symbols-outlined" data-icon="explore">explore</span>
             <span className="font-label-sm text-label-sm">استكشف</span>
           </Link>
-          <Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/">
+          <Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/manage-bookings">
             <span className="material-symbols-outlined" data-icon="airplane_ticket">airplane_ticket</span>
             <span className="font-label-sm text-label-sm">حجوزاتي</span>
           </Link>
-          <Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/">
+          <Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/user-dashboard">
             <span className="material-symbols-outlined" data-icon="person">person</span>
             <span className="font-label-sm text-label-sm">حسابي</span>
           </Link>

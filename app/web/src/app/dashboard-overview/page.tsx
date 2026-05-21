@@ -12,44 +12,44 @@ export default function DashboardOverviewPage() {
 
 <aside className="w-64 flex-shrink-0 bg-surface-container-lowest border-l border-outline-variant hidden md:flex flex-col z-50">
 <div className="p-md h-16 flex items-center justify-center">
-<span className="font-headline-md text-headline-md font-extrabold text-primary">سفريات</span>
+<Link href="/" className="font-headline-md text-headline-md font-extrabold text-primary hover:opacity-90 transition-opacity">سفريات</Link>
 </div>
 <nav className="flex-1 px-base mt-md space-y-xs overflow-y-auto custom-scrollbar">
-<Link className="flex items-center gap-base px-md py-sm rounded-lg sidebar-active transition-all group" href="/">
+<Link className="flex items-center gap-base px-md py-sm rounded-lg sidebar-active transition-all group" href="/dashboard-overview">
 <span className="material-symbols-outlined text-[20px]">dashboard</span>
 <span className="font-label-md text-label-md">نظرة عامة</span>
 </Link>
-<Link className="flex items-center gap-base px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container transition-all group" href="/">
+<Link className="flex items-center gap-base px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container transition-all group" href="/manage-bookings">
 <span className="material-symbols-outlined text-[20px]">calendar_month</span>
 <span className="font-label-md text-label-md">الحجوزات</span>
 </Link>
-<Link className="flex items-center gap-base px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container transition-all group" href="/">
+<Link className="flex items-center gap-base px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container transition-all group" href="/dashboard-overview">
 <span className="material-symbols-outlined text-[20px]">group</span>
 <span className="font-label-md text-label-md">العملاء</span>
 </Link>
-<Link className="flex items-center gap-base px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container transition-all group" href="/">
+<Link className="flex items-center gap-base px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container transition-all group" href="/dashboard-overview">
 <span className="material-symbols-outlined text-[20px]">flight</span>
 <span className="font-label-md text-label-md">إدارة الرحلات</span>
 </Link>
-<Link className="flex items-center gap-base px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container transition-all group" href="/">
+<Link className="flex items-center gap-base px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container transition-all group" href="/dashboard-overview">
 <span className="material-symbols-outlined text-[20px]">hotel</span>
 <span className="font-label-md text-label-md">إدارة الفنادق</span>
 </Link>
-<Link className="flex items-center gap-base px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container transition-all group" href="/">
+<Link className="flex items-center gap-base px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container transition-all group" href="/dashboard-overview">
 <span className="material-symbols-outlined text-[20px]">bar_chart</span>
 <span className="font-label-md text-label-md">التقارير</span>
 </Link>
 </nav>
 <div className="p-md border-t border-outline-variant">
-<div className="flex items-center gap-base">
+<Link href="/user-dashboard" className="flex items-center gap-base hover:opacity-80 transition-opacity">
 <div className="w-10 h-10 rounded-full overflow-hidden border border-outline-variant">
-<img alt="Profile" className="w-full h-full object-cover" data-alt="A professional headshot of a middle-aged Arab businessman in a sleek, modern office environment. He is wearing a sharp, tailored blue suit with a crisp white shirt, exuding confidence and leadership. The lighting is soft and cinematic, with a shallow depth of field focusing on his friendly yet professional expression. The overall atmosphere is clean, corporate, and high-end." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDpwAWfUjoVTvgWkuwRu5wqhKUNXu1eRox1dAVt2nkjvPJO7__EeZTKjWcdPhyKa-fsfVxOnhQp6ggdhjFFJVHt4hTNEqok3pn3_oSwZVfq2BJlhS4HE-318pLYQGlStYP7shY3MujZCpZx2VHG_Zmw_bj25QH1VoTpB7INuGE0vMTX2HLhalXPc_0HSscdwmUjTZ4LCz-YgXIAJgjoKWGwDMLSNT7io7jIuZVbOFW2fRh4oog2dWtueLWLCc8abNq1vz4YUe2HL6Om"/>
+<img alt="Profile" className="w-full h-full object-cover" data-alt="A professional headshot of a middle-aged Arab businessman in a sleek, modern office environment. He is wearing a sharp, tailored blue suit with a crisp white shirt, exuding confidence and leadership. The lighting is soft and cinematic, with a shallow depth of field focusing on his friendly yet professional expression. The overall atmosphere is clean, corporate, and high-end." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDpwAWfUjoVTvgWkuwRu5wqhKUNXu1eRox1dAVt2nkjvPJO__EeZTKjWcdPhyKa-fsfVxOnhQp6ggdhjFFJVHt4hTNEqok3pn3_oSwZVfq2BJlhS4HE-318pLYQGlStYP7shY3MujZCpZx2VHG_Zmw_bj25QH1VoTpB7INuGE0vMTX2HLhalXPc_0HSscdwmUjTZ4LCz-YgXIAJgjoKWGwDMLSNT7io7jIuZVbOFW2fRh4oog2dWtueLWLCc8abNq1vz4YUe2HL6Om"/>
 </div>
 <div>
 <p className="font-label-md text-label-md text-on-surface">أحمد منصور</p>
 <p className="font-label-sm text-label-sm text-on-surface-variant">مدير النظام</p>
 </div>
-</div>
+</Link>
 </div>
 </aside>
 
@@ -319,19 +319,19 @@ export default function DashboardOverviewPage() {
 </div>
 
 <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-surface-container-lowest border-t border-outline-variant flex justify-around py-xs z-50">
-<Link className="flex flex-col items-center p-xs text-primary" href="/">
+<Link className="flex flex-col items-center p-xs text-primary" href="/dashboard-overview">
 <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>dashboard</span>
 <span className="text-[10px] font-label-sm">الرئيسية</span>
 </Link>
-<Link className="flex flex-col items-center p-xs text-on-surface-variant" href="/">
+<Link className="flex flex-col items-center p-xs text-on-surface-variant" href="/manage-bookings">
 <span className="material-symbols-outlined">calendar_month</span>
 <span className="text-[10px] font-label-sm">الحجوزات</span>
 </Link>
-<Link className="flex flex-col items-center p-xs text-on-surface-variant" href="/">
+<Link className="flex flex-col items-center p-xs text-on-surface-variant" href="/dashboard-overview">
 <span className="material-symbols-outlined">flight</span>
 <span className="text-[10px] font-label-sm">الرحلات</span>
 </Link>
-<Link className="flex flex-col items-center p-xs text-on-surface-variant" href="/">
+<Link className="flex flex-col items-center p-xs text-on-surface-variant" href="/dashboard-overview">
 <span className="material-symbols-outlined">bar_chart</span>
 <span className="text-[10px] font-label-sm">التقارير</span>
 </Link>

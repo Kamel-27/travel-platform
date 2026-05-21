@@ -153,11 +153,11 @@ export default function HelpSupportPage() {
       <header className="fixed top-0 z-50 w-full bg-surface-container-lowest dark:bg-inverse-surface shadow-sm h-16 flex items-center border-b border-outline-variant">
         <div className="flex justify-between items-center w-full px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto h-16">
           <div className="flex items-center gap-lg">
-            <Link href="/" className="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary dark:text-inverse-primary">
+            <Link href="/" className="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary dark:text-inverse-primary hover:opacity-90 transition-opacity">
               سفريات
             </Link>
             <nav className="hidden md:flex items-center gap-md">
-              <Link className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/flights">
+              <Link className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/">
                 رحلات طيران
               </Link>
               <Link className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/hotels">
@@ -510,19 +510,19 @@ export default function HelpSupportPage() {
       {/* Footer */}
       <footer className="w-full py-lg px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto flex flex-col md:flex-row justify-between items-center gap-base bg-surface-container border-t border-outline-variant">
         <div className="flex flex-col items-center md:items-start gap-xs">
-          <span className="font-headline-md text-headline-md font-extrabold text-primary">سفريات</span>
+          <Link href="/" className="font-headline-md text-headline-md font-extrabold text-primary hover:opacity-90 transition-opacity">سفريات</Link>
           <p className="text-on-secondary-container font-label-sm text-label-sm">
             © 2026 سفريات. جميع الحقوق محفوظة.
           </p>
         </div>
         <div className="flex flex-wrap justify-center gap-md">
-          <Link className="text-on-secondary-container font-label-sm text-label-sm hover:text-primary transition-opacity opacity-80 hover:opacity-100" href="/about">
+          <Link className="text-on-secondary-container font-label-sm text-label-sm hover:text-primary transition-opacity opacity-80 hover:opacity-100" href="/">
             عن سفريات
           </Link>
-          <Link className="text-on-secondary-container font-label-sm text-label-sm hover:text-primary transition-opacity opacity-80 hover:opacity-100" href="/privacy">
+          <Link className="text-on-secondary-container font-label-sm text-label-sm hover:text-primary transition-opacity opacity-80 hover:opacity-100" href="/">
             سياسة الخصوصية
           </Link>
-          <Link className="text-on-secondary-container font-label-sm text-label-sm hover:text-primary transition-opacity opacity-80 hover:opacity-100" href="/terms">
+          <Link className="text-on-secondary-container font-label-sm text-label-sm hover:text-primary transition-opacity opacity-80 hover:opacity-100" href="/">
             الشروط والأحكام
           </Link>
           <Link className="text-on-secondary-container font-label-sm text-label-sm hover:text-primary transition-opacity opacity-80 hover:opacity-100" href="/support">

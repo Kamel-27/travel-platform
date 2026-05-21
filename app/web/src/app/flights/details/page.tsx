@@ -258,11 +258,11 @@ export default function FlightDetailsPage() {
             <p className="font-label-sm text-label-sm text-outline mt-1">© 2026 سفريات. جميع الحقوق محفوظة.</p>
           </div>
           <div className="flex flex-wrap justify-center gap-md">
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="#">عن سفريات</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="#">سياسة الخصوصية</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="#">الشروط والأحكام</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="#">اتصل بنا</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="#">الأسئلة الشائعة</Link>
+            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/">عن سفريات</Link>
+            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/">سياسة الخصوصية</Link>
+            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/">الشروط والأحكام</Link>
+            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/support">اتصل بنا</Link>
+            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/support">الأسئلة الشائعة</Link>
           </div>
           <div className="flex gap-sm">
             <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center border border-outline-variant text-outline hover:text-primary cursor-pointer transition-colors">
