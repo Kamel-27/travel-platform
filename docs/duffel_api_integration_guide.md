@@ -40,7 +40,7 @@ Offer Request (search criteria) → list of Offers → Get single Offer (adds se
 ```
 
 ### Offer object — top-level fields
-`id`, `created_at`, `updated_at`, `expires_at` (offers expire ~30 min after creation, exact deadline in this field), `live_mode`, `partial`, `base_amount`/`base_currency`, `tax_amount`/`tax_currency`, `total_amount`/`total_currency`, `total_emissions_kg` (CO₂ estimate), `owner` (airline info + logos), `supported_loyalty_programmes`, `supported_passenger_identity_document_types`, `passenger_identity_documents_required`, `payment_requirements` (`requires_instant_payment`, `payment_required_by`, `price_guarantee_expires_at`), `available_airline_credit_ids`, `private_fares` (corporate/negotiated fares).
+`id`, `created_at`, `updated_at`, `expires_at` (**the only authoritative expiry** — lifetime varies by airline/content source and is not a fixed 30 minutes; LCC offers can expire in minutes. Duffel's own guides just say offers "get stale fairly quickly" and recommend re-fetching the single offer at selection), `live_mode`, `partial`, `base_amount`/`base_currency`, `tax_amount`/`tax_currency`, `total_amount`/`total_currency`, `total_emissions_kg` (CO₂ estimate), `owner` (airline info + logos), `supported_loyalty_programmes`, `supported_passenger_identity_document_types`, `passenger_identity_documents_required`, `payment_requirements` (`requires_instant_payment`, `payment_required_by`, `price_guarantee_expires_at`), `available_airline_credit_ids`, `private_fares` (corporate/negotiated fares).
 
 ### Nested: slices → segments
 - **Slice** (one direction of travel): `origin`, `destination`, `duration`, `fare_brand_name`, `conditions` (refund/change policy for that slice), `segments[]`.
@@ -48,6 +48,7 @@ Offer Request (search criteria) → list of Offers → Get single Offer (adds se
 
 ### Passengers, conditions, services
 - `passengers[]`: type (adult/child/infant), name, age, `loyalty_programme_accounts`.
+- **Order creation requires per passenger** (verified against the create-order schema / official JS client types): `id` (Duffel's passenger id from the offer request — you must echo it back), `given_name`, `family_name`, `title`, `gender`, `born_on`, `email`, `phone_number` (E.164). Optional: `identity_documents[]` (required in practice when the offer sets `passenger_identity_documents_required`), `infant_passenger_id` (required for infants — links them to a responsible adult), `loyalty_programme_accounts`.
 - `conditions`: `refund_before_departure` / `change_before_departure`, each with `allowed`, `penalty_amount`, `penalty_currency`.
 - `available_services[]` (only on **Get single offer**, not list): baggage, seats, etc. — `total_amount`, `segment_ids`, `passenger_ids`, `maximum_quantity`.
 
@@ -55,7 +56,7 @@ Offer Request (search criteria) → list of Offers → Get single Offer (adds se
 `offer_request_id` (required filter), `limit` (1–200, default 50), `after`/`before` cursors, `sort` = `total_amount` or `total_duration` (prefix `-` for descending), `max_connections`.
 
 ### Order object (post-booking)
-`id`, `booking_reference` (airline PNR, ~6 chars), `booking_references[]` (all carrier references for multi-carrier itineraries), pricing fields (same shape as Offer), `passengers`, `slices`, `services`, `documents` (issued e-tickets), `type` (`instant` vs `hold`), `content` (`self-managed` vs `managed`), `payment_status`, `conditions`, `available_actions` (cancel/change/update), `changes`/`airline_initiated_changes`, `cancellation`/`cancelled_at`/`void_window_ends_at`, `metadata` (your own key-value pairs), `users`.
+`id`, `booking_reference` (airline PNR, ~6 chars), `booking_references[]` (all carrier references for multi-carrier itineraries), pricing fields (same shape as Offer), `passengers`, `slices`, `services`, `documents` (issued e-tickets — `type` is one of `electronic_ticket`, `electronic_miscellaneous_document_associated`, `electronic_miscellaneous_document_standalone`; there is **no** plain `electronic_miscellaneous_document` value), `type` (`instant` vs `hold`), `content` (`self-managed` vs `managed`), `payment_status`, `conditions`, `available_actions` (cancel/change/update), `changes`/`airline_initiated_changes`, `cancellation`/`cancelled_at`/`void_window_ends_at`, `metadata` (your own key-value pairs), `users`.
 
 ### Order endpoints
 `POST` create order, `GET` single/list (with filters/sort), `PATCH` update, `POST` price order, `GET`/`POST` services, `POST` cancel, order change requests (separate resource: propose → accept a change).
@@ -98,10 +99,19 @@ Practical answer: **you get everything the underlying content source (NDC/GDS/LC
 - Seat maps are a **separate endpoint**, not embedded in the offer — call it explicitly, and only after an offer is selected.
 
 ### Operational limits to design around
-- **Rate limit**: default 120 requests/60s for search in live mode; exceeding it returns `rate_limit_error` with a `ratelimit-reset` header. ([Duffel rate limit](https://help.duffel.com/hc/en-gb/articles/10229200096786-What-is-the-API-rate-limit))
-- **Offer expiry**: ~30 minutes — you cannot book an expired offer; you must re-search.
-- **Webhooks**: at-least-once delivery, unordered, retried up to 72 hours with exponential backoff; every event carries an `idempotency_key` for you to dedupe. ([Webhooks](https://duffel.com/docs/api/webhooks), [Receiving Webhooks](https://duffel.com/docs/guides/receiving-webhooks))
+- **Rate limit** *(verified)*: default 120 requests/60s for search in live mode; **limits vary per endpoint and each endpoint has its own separate limit**. Exceeding one returns `rate_limit_error` with a `ratelimit-reset` header. ([Duffel rate limit](https://help.duffel.com/hc/en-gb/articles/10229200096786-What-is-the-API-rate-limit))
+- **Offer expiry** *(corrected)*: **no fixed window** — `expires_at` on each offer is the only truth, and lifetimes vary by airline/content source (LCCs can be minutes). You cannot book an expired offer; re-fetch the single offer at selection to revalidate, and re-search if it's gone.
+- **Webhooks** *(verified, with one correction)*: at-least-once delivery, unordered, retried up to 72 hours with exponential backoff. Documented event types: `order.created`, `order.airline_initiated_change_detected`, `ping.triggered` (flights) and `stays.booking.created` (stays) — **there is no documented `order.updated` event**; Duffel says more events will be added progressively. Each event has its own unique `id` (`wev_…`) **and** an `idempotency_key` — but the `idempotency_key` is *the related resource's ID* (e.g. `ord_…`), **not** a per-event key. Dedupe exact redeliveries on the event `id`; use `idempotency_key` to correlate the event to your order. Deduping on `idempotency_key` alone would silently drop distinct events about the same order. ([Webhooks](https://duffel.com/docs/api/webhooks), [Webhook Events](https://duffel.com/docs/api/v1/webhook-events), [Receiving Webhooks](https://duffel.com/docs/guides/receiving-webhooks))
 - **Sandbox vs live**: `live_mode` field on every object; test API keys hit a sandbox with fake airlines for booking flows without spending money.
+
+### Order creation has NO idempotency key — design around it *(important correction)*
+Duffel's Create Order endpoint does **not** accept a client-supplied idempotency key (no `Idempotency-Key` header, no request field — confirmed against the API reference and Duffel's own response-handling guide). Any idempotency key in TravelHub's schema is an **internal dedup mechanism with zero Duffel-side guarantee**. Duffel's actual guidance ([Order/booking creation response handling](https://duffel.com/docs/api/overview/response-handling/order-and-booking-creation)):
+
+- Set an HTTP client timeout of **at least 130 seconds** on create-order calls.
+- **503** → no booking was created supplier-side; safe to retry. **500** → contact support with the `request_id` before retrying. **4xx** → don't retry, fix the request.
+- **200/202 or a timeout** → outcome may be ambiguous; **do not blind-retry — that's exactly how duplicate orders happen.** Discover the real outcome via the `order.created` webhook or by listing orders (Duffel notes the order can take time to appear).
+
+Practical pattern for this repo: generate an internal idempotency key per booking **before** the first create-order attempt, store it, and **echo it into the Duffel order's `metadata`** (orders support arbitrary key-value metadata). After a crash/timeout you can then list recent orders and match on your own key to determine whether the order exists — that plus the `order.created` webhook is the only reliable recovery path.
 
 ---
 
@@ -121,7 +131,7 @@ DuffelModule
   ├─ DuffelHttpClient      (wraps official Duffel Node SDK or raw HTTP, holds API key/base URL)
   ├─ DuffelOfferMapper      (Offer → your Flight DTO)
   ├─ DuffelStaysMapper      (Accommodation/Rate → your Hotel DTO)
-  └─ DuffelWebhookController (signature verification + dedupe by idempotency_key)
+  └─ DuffelWebhookController (signature verification + dedupe by event id — see §4: idempotency_key is the resource id, not a per-event key)
 ```
 
 Keeping `DuffelModule` isolated (mirroring the old `PkfareModule` pattern already used in this repo's history) means a future supplier swap or multi-supplier aggregation only touches this module, not controllers or frontend contracts.
@@ -140,7 +150,8 @@ Duffel is the source of truth for the **airline-side reservation** (PNR, ticketi
 | Flight/hotel **search** | Synchronous | User is actively waiting on screen; queuing adds latency for no benefit. Cache instead (see Redis below). |
 | **Create order** (booking + payment) | Synchronous for the critical path | The user needs an immediate success/failure result to know if they're booked. This is a single call to Duffel, not a multi-service saga — no need for orchestration complexity here since Duffel itself owns the airline-side transaction. |
 | Post-booking side effects (confirmation email, loyalty ledger update, analytics event, internal notifications) | **Queue** | Non-critical to the user's immediate response; failures here shouldn't fail the booking. |
-| **Webhook ingestion** (order changes, airline-initiated changes, payment events) | **Queue** | Duffel expects a fast 2xx ack and retries for 72h on failure. Best practice: webhook controller does signature verification + dedupe by `idempotency_key`, pushes a job, returns 200 immediately, and a worker processes it. Prevents slow downstream logic from causing Duffel to see timeouts and retry-storm you. |
+| **Webhook ingestion** (order changes, airline-initiated changes, payment events) | **Queue** | Duffel expects a fast 2xx ack and retries for 72h on failure. Best practice: webhook controller does signature verification + dedupe by event `id`, persists the raw event, pushes a job, returns 200 immediately, and a worker processes it. Prevents slow downstream logic from causing Duffel to see timeouts and retry-storm you. |
+| **Webhook reprocessing / reconciliation** (unmatched or failed events) | **Queue (repeatable job)** | First-attempt processing isn't enough: an event can arrive **before** the row it references exists locally (e.g. `order.created` lands while the create-order HTTP call is still in flight, or an event references an order your DB hasn't linked yet). Persist every event with a `processed_at` timestamp (null until handled, partial-indexed), and run a periodic BullMQ repeatable job that re-attempts unmatched/unprocessed events. The same sweep is the safety net for events lost after Duffel's 72h retry window and the recovery path for the "did my order actually get created?" ambiguity in §4. |
 | **Offer-expiry / hold-order payment deadline reminders** | Queue (delayed jobs) | Held orders have a `payment_required_by` deadline — a delayed job to notify the user or auto-release the hold is a natural fit for a job queue, not a cron-polling loop. |
 | Order **cancellation/change** confirmations | Sync call to Duffel, then queue the notification | Same critical-vs-side-effect split as booking. |
 
@@ -152,9 +163,9 @@ Source pattern reference: [Event-Driven Microservices for Booking Systems](https
 
 ## 7. Should You Use Redis? — Yes, for Three Distinct Jobs
 
-1. **Cache** — short-TTL (1–5 min) cache of search results keyed by normalized search params (origin/destination/dates/pax for flights; location/dates/guests for stays). Cuts duplicate Duffel calls for repeat/back-button searches and helps you stay under the 120 req/60s rate limit across horizontally-scaled backend instances.
+1. **Cache** — short-TTL cache of search results keyed by normalized search params (origin/destination/dates/pax for flights; location/dates/guests for stays). Cuts duplicate Duffel calls for repeat/back-button searches and helps you stay under the 120 req/60s search rate limit across horizontally-scaled backend instances. **TTL must respect offer expiry**: cached search results contain offers, and offers have no fixed lifetime (§4) — an LCC offer can be dead in minutes, so a 5-minute TTL can serve unbookable results. Rules: (a) keep the cache TTL short (≤2 min is a sane default) *and* never longer than the minimum `expires_at` remaining among the cached offers; (b) treat the cache as a **display-layer** optimization only — always re-fetch the single offer (`GET /air/offers/:id`) when the user selects it, and drive the checkout countdown off that fresh `expires_at`, never off cached data.
 2. **Ephemeral multi-step state** — Stays' `search_result_id → rate_id → quote_id` chain and any multi-step flight search flow are naturally short-lived session state; store them in Redis with a TTL matching Duffel's own expiry windows instead of a database table.
-3. **Distributed locking / idempotency** — guard the "create order" endpoint with a Redis-based lock or SETNX-style idempotency key on `(user_id, offer_id)` so a double-click or client retry can't create two orders for the same offer before the first request completes. This is the same pattern OTA references use to prevent duplicate bookings.
+3. **Distributed locking / idempotency** — guard the "create order" endpoint with a Redis-based lock or SETNX-style idempotency key on `(user_id, offer_id)` so a double-click or client retry can't create two orders for the same offer before the first request completes. This matters **more** for Duffel than for a Stripe-style API: since Duffel offers no server-side idempotency on order creation (§4), this client-side lock plus the metadata-echo reconciliation pattern is the *only* duplicate-order protection you get — there is no provider backstop if it fails.
 4. **Rate-limit coordination** — if you scale to multiple backend instances, a Redis token bucket keeps you collectively under Duffel's per-key rate limit rather than each instance tracking its own local counter.
 
 Since BullMQ already requires Redis as its backing store, one Redis instance serves both the cache and queue needs — no separate infrastructure.
@@ -183,7 +194,8 @@ Sources: [Event-Driven Microservices for Booking Systems](https://dev.to/airtruf
 | Decision | Recommendation |
 |---|---|
 | Supplier | Duffel, via an isolated `DuffelModule` in `app/Backend`, mirroring the old `PkfareModule` isolation pattern |
-| Message queue | Yes — **BullMQ** (Redis-backed) scoped to: webhook processing, notifications, delayed hold/expiry reminders. Not for the live search/booking request path. |
+| Message queue | Yes — **BullMQ** (Redis-backed) scoped to: webhook processing, a repeatable reprocessing/reconciliation job for unmatched events, notifications, delayed hold/expiry reminders. Not for the live search/booking request path. |
+| Order-creation idempotency | **Client-side only** — Duffel accepts no idempotency key. Redis lock pre-flight + internal key echoed into order `metadata` + `order.created` webhook / list-orders for post-timeout recovery; never blind-retry an ambiguous outcome. |
 | Redis | Yes — single instance serving search-result cache, ephemeral multi-step search state, booking idempotency locks, and as BullMQ's backing store |
 | Search index (Elasticsearch/OpenSearch) | Not yet — only justified once aggregating multiple suppliers |
 | Saga/outbox pattern | Not yet — single DB transaction is sufficient at current scope; revisit if adding independent payment/loyalty microservices |
