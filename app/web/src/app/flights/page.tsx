@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, Suspense } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 
@@ -46,6 +46,25 @@ interface ApiSlice {
   fareBrandName?: string | null;
   segments: ApiSegment[];
   stops: number;
+}
+
+interface ApiFlight {
+  id: string;
+  airline: string;
+  airlineCode?: string;
+  airlineLogo?: string | null;
+  flightNumber: string;
+  departureAirport?: string;
+  arrivalAirport?: string;
+  departureTime?: string;
+  arrivalTime?: string;
+  stops?: number;
+  price: number | string;
+  currency?: string;
+  cabinClass?: string;
+  totalEmissionsKg?: number | null;
+  expiresAt?: string | null;
+  slices?: ApiSlice[];
 }
 
 interface SliceDisplay {
@@ -256,12 +275,8 @@ function AirportInput({
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<Airport[]>([]);
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setResults(searchAirports(query));
-  }, [query]);
+  const results = useMemo<Airport[]>(() => searchAirports(query), [query]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -749,11 +764,11 @@ function FlightsInner() {
         }
 
         const mapped: Flight[] = (data.data || [])
-          .filter((f: Record<string, unknown>) => {
+          .filter((f: ApiFlight) => {
             const price = Number(f.price);
             return price > 0 && f.departureAirport !== "N/A";
           })
-          .map((f: any) => {
+          .map((f: ApiFlight) => {
             const apiSlices: ApiSlice[] = f.slices || [];
             const slices: SliceDisplay[] = apiSlices.map((slice: ApiSlice) => {
               const depDate = new Date(slice.departureTime);
@@ -880,6 +895,8 @@ function FlightsInner() {
   );
 
   useEffect(() => {
+    // Fetch-on-mount: fetchFlights sets loading state synchronously before the async work
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchFlights(initialOrigin, initialDest, initialDate, initialAdults, initialReturnDate || undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

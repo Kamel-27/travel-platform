@@ -259,6 +259,8 @@ function HotelsInner() {
 
   // Initial fetch
   useEffect(() => {
+    // Fetch-on-mount: fetchHotels sets loading state synchronously before the async work
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchHotels(initialCityCode, initialCheckIn, initialCheckOut, initialAdults);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

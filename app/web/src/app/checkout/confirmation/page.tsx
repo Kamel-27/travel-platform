@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 
 interface ConfettiPiece {
@@ -12,22 +12,29 @@ interface ConfettiPiece {
   duration: number;
 }
 
-export default function BookingConfirmationPage() {
-  const [confetti, setConfetti] = useState<ConfettiPiece[]>([]);
+// Seeded PRNG so the pieces are identical on server and client (no hydration mismatch)
+function createRandom(seed: number) {
+  return () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  };
+}
 
-  useEffect(() => {
-    // Generate particles
-    const colors = ["#22c55e", "#4ade80", "#16a34a", "#86efac", "#3b82f6", "#2dd4bf"];
-    const pieces: ConfettiPiece[] = Array.from({ length: 60 }).map((_, i) => ({
-      id: i,
-      left: Math.random() * 100, // percentage
-      delay: Math.random() * 4, // seconds
-      size: Math.random() * 8 + 6, // pixels
-      color: colors[Math.floor(Math.random() * colors.length)],
-      duration: Math.random() * 3 + 2, // seconds
-    }));
-    setConfetti(pieces);
-  }, []);
+function generateConfetti(): ConfettiPiece[] {
+  const colors = ["#22c55e", "#4ade80", "#16a34a", "#86efac", "#3b82f6", "#2dd4bf"];
+  const random = createRandom(42);
+  return Array.from({ length: 60 }).map((_, i) => ({
+    id: i,
+    left: random() * 100, // percentage
+    delay: random() * 4, // seconds
+    size: random() * 8 + 6, // pixels
+    color: colors[Math.floor(random() * colors.length)],
+    duration: random() * 3 + 2, // seconds
+  }));
+}
+
+export default function BookingConfirmationPage() {
+  const [confetti] = useState<ConfettiPiece[]>(generateConfetti);
 
   return (
     <div className="min-h-screen bg-background text-on-surface font-sans relative overflow-x-hidden" dir="rtl">

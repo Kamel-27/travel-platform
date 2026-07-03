@@ -231,7 +231,7 @@ export default function HotelDetailsPage() {
               <div className="flex gap-md overflow-x-auto pb-md no-scrollbar">
                 <div className="min-w-[280px] md:min-w-[340px] p-md bg-white border border-outline-variant rounded-xl shadow-sm flex flex-col justify-between">
                   <p className="font-body-md text-body-md italic text-on-surface-variant">
-                    "إقامة مذهلة وفاخرة لأبعد الحدود، الخدمة هنا في قمة الرقي والاهتمام بالتفاصيل متناهي. بوفيه الطعام متنوع ولذيذ جداً وسأكرر الزيارة بالتأكيد."
+                    &quot;إقامة مذهلة وفاخرة لأبعد الحدود، الخدمة هنا في قمة الرقي والاهتمام بالتفاصيل متناهي. بوفيه الطعام متنوع ولذيذ جداً وسأكرر الزيارة بالتأكيد.&quot;
                   </p>
                   <div className="flex items-center gap-sm mt-md pt-sm border-t border-outline-variant/30">
                     <div className="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold text-base">A</div>
@@ -244,7 +244,7 @@ export default function HotelDetailsPage() {
 
                 <div className="min-w-[280px] md:min-w-[340px] p-md bg-white border border-outline-variant rounded-xl shadow-sm flex flex-col justify-between">
                   <p className="font-body-md text-body-md italic text-on-surface-variant">
-                    "أفضل فندق في الرياض بلا منازع لتجربة الضيافة والرفاهية العالية. الهدوء والخصوصية والمرافق الصحية كانت تجربة متكاملة ورائعة للغاية."
+                    &quot;أفضل فندق في الرياض بلا منازع لتجربة الضيافة والرفاهية العالية. الهدوء والخصوصية والمرافق الصحية كانت تجربة متكاملة ورائعة للغاية.&quot;
                   </p>
                   <div className="flex items-center gap-sm mt-md pt-sm border-t border-outline-variant/30">
                     <div className="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold text-base">L</div>

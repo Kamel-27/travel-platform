@@ -12,7 +12,7 @@ export default function SigninPage() {
     if (!canvas) return;
     const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
     if (!ctx) return;
-    let particles: any[] = [];
+    const particles: Particle[] = [];
     let animationFrame: number;
 
     function initCanvas() {
@@ -77,7 +77,7 @@ export default function SigninPage() {
     };
   }, []);
 
-  const handleSubmit = (e: any) => {
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     alert('تم تسجيل الدخول بنجاح بنسخة العرض!');
     window.location.href = '/user-dashboard';

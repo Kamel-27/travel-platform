@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -76,12 +76,8 @@ function HomeAirportInput({
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<Airport[]>([]);
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setResults(searchAirports(query));
-  }, [query]);
+  const results = useMemo<Airport[]>(() => searchAirports(query), [query]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
