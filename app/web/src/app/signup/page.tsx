@@ -6,7 +6,7 @@ import Link from "next/link";
 export default function SignupPage() {
   const [showPassword, setShowPassword] = useState(false);
 
-  const handleSubmit = (e: any) => {
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     alert("تم إنشاء الحساب بنجاح بنسخة العرض!");
     window.location.href = "/signin";
