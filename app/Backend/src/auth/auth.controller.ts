@@ -1,28 +1,23 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Post,
   Query,
   Req,
   Res,
   UnauthorizedException,
-  UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
-import { CurrentUser } from './decorators/current-user.decorator';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import type { JwtPayload } from './guards/jwt-auth.guard';
 import { MagicLinkService } from './services/magic-link.service';
 import { TokenService } from './services/token.service';
 import type { SessionResponse } from './services/token.service';
 import { RequestMagicLinkDto, VerifyMagicLinkDto } from './dto/auth.dto';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { User } from '../users/user.entity';
 import { ErrorCode } from '../common/dto/error-response.dto';
 import { GoogleAuthService } from './services/google-auth.service';
 import { AccountResolutionService } from './services/account-resolution.service';
@@ -30,6 +25,7 @@ import { AuthProvider } from './entities/auth-identity.entity';
 
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
   private readonly isProduction: boolean;
   private readonly webAppUrl: string;
 
@@ -39,8 +35,6 @@ export class AuthController {
     private readonly googleAuthService: GoogleAuthService,
     private readonly accountResolutionService: AccountResolutionService,
     private readonly config: ConfigService,
-    @InjectRepository(User)
-    private readonly userRepo: Repository<User>,
   ) {
     this.isProduction = this.config.get('NODE_ENV') === 'production';
     this.webAppUrl = this.config.get<string>(
@@ -108,24 +102,36 @@ export class AuthController {
     typedRes.clearCookie('oauth_google_state', clearOptions);
     typedRes.clearCookie('oauth_google_verifier', clearOptions);
 
-    // Verify callback and exchange auth code
-    const googleUser = await this.googleAuthService.verifyCallback(
-      code,
-      state,
-      cookieState,
-      cookieVerifier,
-    );
+    // This is a browser flow — on any failure redirect back to the web app
+    // with an error flag instead of rendering a JSON error envelope.
+    try {
+      // Verify callback and exchange auth code
+      const googleUser = await this.googleAuthService.verifyCallback(
+        code,
+        state,
+        cookieState,
+        cookieVerifier,
+      );
 
-    // Resolve the account (find-or-create user and auth identity)
-    const user = await this.accountResolutionService.resolve(
-      googleUser.email,
-      AuthProvider.Google,
-      googleUser.sub,
-      googleUser.fullName,
-    );
+      // Resolve the account (find-or-create user and auth identity)
+      const user = await this.accountResolutionService.resolve(
+        googleUser.email,
+        AuthProvider.Google,
+        googleUser.sub,
+        googleUser.fullName,
+      );
 
-    // Set refresh token cookie on res
-    await this.tokenService.createSession(user, typedReq, typedRes);
+      // Set refresh token cookie on res
+      await this.tokenService.createSession(user, typedReq, typedRes);
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Google OAuth callback failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      const reason =
+        err instanceof ForbiddenException ? 'account_disabled' : 'auth_failed';
+      typedRes.redirect(`${this.webAppUrl}/auth/callback?error=${reason}`);
+      return;
+    }
 
     // Redirect user back to the web application callback page
     typedRes.redirect(`${this.webAppUrl}/auth/callback`);
@@ -208,37 +214,5 @@ export class AuthController {
       await this.tokenService.revokeRefresh(rawToken, typedRes);
     }
     return { message: 'Logged out' };
-  }
-
-  // ── Current user ────────────────────────────────────────────────
-
-  /**
-   * GET /me
-   * Returns the current user's profile. Requires JWT auth.
-   */
-  @Get('/me')
-  @UseGuards(JwtAuthGuard)
-  async getMe(@CurrentUser() jwtUser: unknown): Promise<{
-    id: string;
-    email: string;
-    full_name: string | null;
-    phone: string | null;
-    role: string;
-  }> {
-    const payload = jwtUser as JwtPayload;
-    const user = await this.userRepo.findOneBy({ id: payload.sub });
-    if (!user) {
-      throw new UnauthorizedException({
-        code: ErrorCode.UNAUTHENTICATED,
-        message: 'User not found',
-      });
-    }
-    return {
-      id: user.id,
-      email: user.email,
-      full_name: user.fullName,
-      phone: user.phone,
-      role: user.role,
-    };
   }
 }

@@ -192,12 +192,45 @@ describe('TokenService', () => {
 
       const session = await service.rotateRefresh(rawToken, mockReq, mockRes);
 
-      expect(existingToken.revokedAt).not.toBeNull();
-      expect(refreshRepoSaveMock).toHaveBeenCalledWith(existingToken);
+      // Old token revoked via an atomic UPDATE … WHERE revoked_at IS NULL
+      expect(refreshRepoQueryBuilderMock.set).toHaveBeenCalledWith({
+        revokedAt: expect.any(Date),
+      });
+      expect(refreshRepoQueryBuilderMock.where).toHaveBeenCalledWith(
+        'token_hash = :hash AND revoked_at IS NULL',
+        { hash },
+      );
       expect(session.access_token).toBe('mock-jwt-token');
 
-      const newSaved = refreshRepoSaveMock.mock.calls[1][0];
+      const newSaved = refreshRepoSaveMock.mock.calls[0][0];
       expect(newSaved.familyId).toBe(familyId);
+    });
+
+    it('should revoke the family when the atomic claim loses (0 affected rows)', async () => {
+      const rawToken = 'raced-token';
+      const hash = createHash('sha256').update(rawToken).digest('hex');
+
+      refreshRepoFindOneMock.mockResolvedValue({
+        id: randomUUID(),
+        tokenHash: hash,
+        familyId: randomUUID(),
+        userId: mockUser.id,
+        expiresAt: new Date(Date.now() + 86400000),
+        revokedAt: null, // looked fresh at read time …
+        user: mockUser,
+        userAgent: 'agent',
+        ip: '127.0.0.1',
+        createdAt: new Date(),
+      });
+      // … but a concurrent rotation claimed it first
+      (refreshRepoQueryBuilderMock.execute as jest.Mock).mockResolvedValue({
+        affected: 0,
+      });
+
+      await expect(
+        service.rotateRefresh(rawToken, mockReq, mockRes),
+      ).rejects.toThrow('Refresh token reuse detected');
+      expect(refreshRepoSaveMock).not.toHaveBeenCalled();
     });
 
     it('should revoke entire family when a rotated token is reused (theft detection)', async () => {
@@ -219,6 +252,10 @@ describe('TokenService', () => {
       };
 
       refreshRepoFindOneMock.mockResolvedValue(revokedToken);
+      // Already-revoked token → the atomic claim matches no rows
+      (refreshRepoQueryBuilderMock.execute as jest.Mock).mockResolvedValue({
+        affected: 0,
+      });
 
       await expect(
         service.rotateRefresh(rawToken, mockReq, mockRes),
