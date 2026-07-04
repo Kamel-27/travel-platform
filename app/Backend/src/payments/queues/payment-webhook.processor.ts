@@ -14,6 +14,7 @@ import {
 } from '../entities/payment-attempt.entity';
 import { Booking, BookingStatus } from '../../bookings/entities/booking.entity';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
+import { toPaymobGatewayAmount } from '../services/paymob.service';
 
 @Processor('payment_webhook_queue')
 export class PaymentWebhookProcessor extends WorkerHost {
@@ -132,10 +133,12 @@ export class PaymentWebhookProcessor extends WorkerHost {
       // 3. Process outcomes
       if (webhookEvent.eventType === 'transaction.succeeded') {
         const paidAmount = transaction.amount_cents as number;
-        let expectedAmount = booking.totalAmount;
-        if (booking.currency === 'USD' && transaction.currency === 'EGP' && !process.env.JEST_WORKER_ID) {
-          expectedAmount = Math.round(booking.totalAmount * 50.0);
-        }
+        // The gateway order was registered with the sandbox-converted EGP
+        // amount, so the webhook must be verified against that same figure.
+        const expectedAmount = toPaymobGatewayAmount(
+          booking.totalAmount,
+          booking.currency,
+        ).amountCents;
 
         if (paidAmount !== expectedAmount) {
           this.logger.error(

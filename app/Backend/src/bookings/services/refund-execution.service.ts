@@ -8,7 +8,10 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 
-import { PaymobService } from '../../payments/services/paymob.service';
+import {
+  PaymobService,
+  toPaymobGatewayAmount,
+} from '../../payments/services/paymob.service';
 import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
 import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
 import { PaymentWebhookEvent } from '../../payments/entities/payment-webhook-event.entity';
@@ -77,10 +80,12 @@ export class RefundExecutionService {
     }
 
     const transactionId = await this.resolvePaymobTransactionId(paymentId);
-    let refundAmount = amount;
-    if (payment.currency === 'USD' && !process.env.JEST_WORKER_ID) {
-      refundAmount = Math.round(amount * 50.0);
-    }
+    // The original gateway charge was sandbox-converted to EGP, so refunds
+    // must be issued in the same converted figure.
+    const { amountCents: refundAmount } = toPaymobGatewayAmount(
+      amount,
+      payment.currency,
+    );
     return this.paymobService.refundTransaction(transactionId, refundAmount);
   }
 

@@ -28,6 +28,47 @@ export interface PaymobPaymentKeyResult {
  * verification, in Paymob's mandated lexicographic order. `order` and
  * `source_data.*` are nested lookups on the transaction object.
  */
+/**
+ * Paymob (Egypt) sandbox merchants settle exclusively in EGP, while Duffel
+ * sandbox offers arrive in whatever currency the airline files (GBP, EUR,
+ * USD, ...). Any non-EGP amount is converted with these fixed development
+ * rates so the gateway accepts the order instead of rejecting it with
+ * "Invalid currency sent". The conversion is deterministic so payment-key
+ * creation, webhook amount verification and refunds all agree on the same
+ * EGP figure. Disabled under Jest so unit tests observe pass-through values.
+ */
+const SANDBOX_EGP_RATES: Record<string, number> = {
+  USD: 50,
+  EUR: 54,
+  GBP: 63,
+  SAR: 13.35,
+  AED: 13.6,
+  KWD: 163,
+  QAR: 13.75,
+  BHD: 132.5,
+  OMR: 130,
+  JOD: 70.5,
+  CAD: 36.5,
+  AUD: 33,
+  CHF: 56,
+  JPY: 0.35,
+  INR: 0.6,
+  TRY: 1.55,
+};
+const SANDBOX_EGP_FALLBACK_RATE = 50;
+
+export function toPaymobGatewayAmount(
+  amountCents: number,
+  currency: string,
+): { amountCents: number; currency: string } {
+  const code = (currency || '').toUpperCase();
+  if (code === 'EGP' || process.env.JEST_WORKER_ID) {
+    return { amountCents, currency: code || 'EGP' };
+  }
+  const rate = SANDBOX_EGP_RATES[code] ?? SANDBOX_EGP_FALLBACK_RATE;
+  return { amountCents: Math.round(amountCents * rate), currency: 'EGP' };
+}
+
 const HMAC_FIELDS = [
   'amount_cents',
   'created_at',
@@ -106,12 +147,8 @@ export class PaymobService {
   ): Promise<PaymobPaymentKeyResult> {
     this.assertConfigured();
 
-    let finalAmount = amountCents;
-    let finalCurrency = currency;
-    if (currency === 'USD' && !process.env.JEST_WORKER_ID) {
-      finalCurrency = 'EGP';
-      finalAmount = Math.round(amountCents * 50.0);
-    }
+    const { amountCents: finalAmount, currency: finalCurrency } =
+      toPaymobGatewayAmount(amountCents, currency);
 
     const token = await this.authenticate();
 
