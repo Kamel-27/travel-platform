@@ -3,6 +3,10 @@ import type { SessionResponse } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
+// Flight searches proxy a live Duffel call and can legitimately take a while,
+// but nothing should ever hang a page forever (nfr.md §5 — no hung spinners).
+const REQUEST_TIMEOUT_MS = 45_000;
+
 export class ApiError extends Error {
   code: string;
   status: number;
@@ -63,12 +67,20 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
       if (token) finalHeaders["Authorization"] = `Bearer ${token}`;
     }
 
-    return fetch(`${API_BASE}/api/v1${path}`, {
-      ...rest,
-      headers: finalHeaders,
-      credentials: "include",
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
+    try {
+      return await fetch(`${API_BASE}/api/v1${path}`, {
+        ...rest,
+        headers: finalHeaders,
+        credentials: "include",
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: rest.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err) {
+      if (err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError")) {
+        throw new ApiError(408, "TIMEOUT", "انتهت مهلة الاتصال بالخادم، يرجى المحاولة مرة أخرى", {});
+      }
+      throw new ApiError(0, "NETWORK_ERROR", "تعذر الاتصال بالخادم، تحقق من اتصالك بالإنترنت", {});
+    }
   };
 
   let res = await doFetch();
