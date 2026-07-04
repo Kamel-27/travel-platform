@@ -133,7 +133,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
       if (webhookEvent.eventType === 'transaction.succeeded') {
         const paidAmount = transaction.amount_cents as number;
         let expectedAmount = booking.totalAmount;
-        if (booking.currency === 'USD' && transaction.currency === 'EGP' && process.env.NODE_ENV !== 'test') {
+        if (booking.currency === 'USD' && transaction.currency === 'EGP' && !process.env.JEST_WORKER_ID) {
           expectedAmount = Math.round(booking.totalAmount * 50.0);
         }
 

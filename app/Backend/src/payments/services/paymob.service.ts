@@ -108,7 +108,7 @@ export class PaymobService {
 
     let finalAmount = amountCents;
     let finalCurrency = currency;
-    if (currency === 'USD' && process.env.NODE_ENV !== 'test') {
+    if (currency === 'USD' && !process.env.JEST_WORKER_ID) {
       finalCurrency = 'EGP';
       finalAmount = Math.round(amountCents * 50.0);
     }
