@@ -9,9 +9,73 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { ErrorCode } from '../common/dto/error-response.dto';
 
+/**
+ * Thrown when Duffel returns a definitive non-retryable failure (4xx).
+ * The order was NOT created supplier-side.
+ */
+export class DuffelDefinitiveError extends Error {
+  constructor(
+    public readonly statusCode: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'DuffelDefinitiveError';
+  }
+}
+
+/**
+ * Thrown when Duffel returns an ambiguous outcome (500/timeout/network error).
+ * The order MAY or MAY NOT have been created supplier-side — do NOT retry.
+ */
+export class DuffelAmbiguousError extends Error {
+  constructor(
+    message: string,
+    public readonly requestId?: string,
+  ) {
+    super(message);
+    this.name = 'DuffelAmbiguousError';
+  }
+}
+
 export interface MinorUnitMoney {
   amount: number;
   currency: string;
+}
+
+export interface DuffelDocument {
+  type: string;
+  uniqueIdentifier: string;
+  passengerIds: string[];
+}
+
+export interface DuffelOrderResult {
+  orderId: string;
+  bookingReference: string;
+  documents: DuffelDocument[];
+}
+
+export interface CreateOrderPassenger {
+  id: string;
+  given_name: string;
+  family_name: string;
+  title: string;
+  gender: string;
+  born_on: string;
+  email: string;
+  phone_number: string;
+  infant_passenger_id?: string;
+  identity_documents?: {
+    type: string;
+    unique_identifier: string;
+    expires_on: string;
+    issuing_country_code: string;
+  }[];
+}
+
+export interface CreateOrderParams {
+  offerId: string;
+  passengers: CreateOrderPassenger[];
+  metadata: Record<string, string>;
 }
 
 export interface NormalizedSegment {
@@ -204,6 +268,169 @@ export class DuffelService {
         message: 'Flight validation is temporarily unavailable.',
       });
     }
+  }
+
+  /**
+   * Create a Duffel order (ticket the flight).
+   * POST /air/orders
+   *
+   * CRITICAL: 130s timeout per Duffel SLA. Error handling follows the
+   * paid recovery matrix (booking_state_machine.md §4):
+   * - 201/200 → success (DuffelOrderResult)
+   * - 4xx     → DuffelDefinitiveError (order NOT created, safe to refund)
+   * - 500     → DuffelAmbiguousError (outcome unknown, do NOT retry)
+   * - timeout → DuffelAmbiguousError (outcome unknown, do NOT retry)
+   */
+  async createOrder(params: CreateOrderParams): Promise<DuffelOrderResult> {
+    this.assertConfigured();
+
+    const body = {
+      data: {
+        selected_offers: [params.offerId],
+        passengers: params.passengers,
+        payments: [
+          {
+            type: 'instant' as const,
+          },
+        ],
+        metadata: params.metadata,
+        type: 'instant' as const,
+      },
+    };
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/air/orders`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(body),
+        // Duffel SLA: order creation can take up to 130 seconds
+        signal: AbortSignal.timeout(130_000),
+      });
+    } catch (err: unknown) {
+      // Network error or timeout — outcome is ambiguous
+      const message =
+        err instanceof Error ? err.message : 'Unknown network error';
+      this.logger.error(`Duffel createOrder network/timeout error: ${message}`);
+      throw new DuffelAmbiguousError(
+        `Order creation failed with ambiguous outcome: ${message}`,
+      );
+    }
+
+    // Parse the request_id header for admin tracing
+    const requestId = response.headers.get('x-request-id') ?? undefined;
+
+    if (response.ok) {
+      const json = (await response.json()) as Record<string, unknown>;
+      const data = json['data'] as Record<string, unknown>;
+      return this.mapOrderResult(data);
+    }
+
+    // Read error body for logging
+    let errorBody: unknown = null;
+    try {
+      errorBody = await response.json();
+    } catch {
+      // ignore
+    }
+
+    if (response.status >= 400 && response.status < 500) {
+      // Definitive failure — Duffel created nothing
+      this.logger.error(
+        `Duffel createOrder definitive failure [${response.status}]: ${JSON.stringify(errorBody)}`,
+      );
+      throw new DuffelDefinitiveError(
+        response.status,
+        `Order creation rejected by Duffel: HTTP ${response.status}`,
+      );
+    }
+
+    if (response.status === 503) {
+      // 503 — Duffel guarantees nothing was created, but we treat as ambiguous
+      // to let the reconciliation sweep handle it safely
+      this.logger.error(
+        `Duffel createOrder 503 (request_id: ${requestId}): ${JSON.stringify(errorBody)}`,
+      );
+      throw new DuffelAmbiguousError(
+        `Order creation returned 503 — outcome ambiguous`,
+        requestId,
+      );
+    }
+
+    // 500 or any other server error — fully ambiguous
+    this.logger.error(
+      `Duffel createOrder server error [${response.status}] (request_id: ${requestId}): ${JSON.stringify(errorBody)}`,
+    );
+    throw new DuffelAmbiguousError(
+      `Order creation returned HTTP ${response.status} — outcome ambiguous`,
+      requestId,
+    );
+  }
+
+  /**
+   * List orders from Duffel for reconciliation matching.
+   * GET /air/orders
+   */
+  async listOrders(params: {
+    createdAfter?: string;
+    limit?: number;
+  }): Promise<Record<string, unknown>[]> {
+    this.assertConfigured();
+
+    const queryParams = new URLSearchParams();
+    if (params.createdAfter) {
+      queryParams.set('created_after', params.createdAfter);
+    }
+    queryParams.set('limit', String(params.limit ?? 50));
+
+    try {
+      const response = await fetch(
+        `${this.baseUrl}/air/orders?${queryParams.toString()}`,
+        {
+          method: 'GET',
+          headers: this.getHeaders(),
+          signal: AbortSignal.timeout(30_000),
+        },
+      );
+
+      if (!response.ok) {
+        this.logger.error(
+          `Duffel listOrders failed with status ${response.status}`,
+        );
+        return [];
+      }
+
+      const json = (await response.json()) as Record<string, unknown>;
+      const data = json['data'] as Record<string, unknown>[] | undefined;
+      return data ?? [];
+    } catch (err: unknown) {
+      this.logger.error('Duffel listOrders failed', err);
+      return [];
+    }
+  }
+
+  // ── Order Result Mapper ─────────────────────────────────────────
+
+  private mapOrderResult(raw: any): DuffelOrderResult {
+    const documents: DuffelDocument[] = (raw.documents ?? []).map(
+      (doc: any) => ({
+        type: doc.type as string,
+        uniqueIdentifier: doc.unique_identifier as string,
+        passengerIds: (doc.passenger_ids ?? []) as string[],
+      }),
+    );
+
+    // Duffel returns booking_reference as a single string or as booking_references[]
+    const bookingReference =
+      (raw.booking_reference as string) ??
+      (raw.booking_references?.[0]?.booking_reference as string) ??
+      '';
+
+    return {
+      orderId: raw.id as string,
+      bookingReference,
+      documents,
+    };
   }
 
   // ── Helpers & Mappers ─────────────────────────────────────────────

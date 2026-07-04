@@ -2,8 +2,9 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { InjectEntityManager } from '@nestjs/typeorm';
+import { InjectQueue } from '@nestjs/bullmq';
 import { EntityManager } from 'typeorm';
-import { Job } from 'bullmq';
+import { Job, Queue } from 'bullmq';
 
 import { PaymentWebhookEvent } from '../entities/payment-webhook-event.entity';
 import { Payment, PaymentStatus } from '../entities/payment.entity';
@@ -22,6 +23,8 @@ export class PaymentWebhookProcessor extends WorkerHost {
     @InjectEntityManager()
     private readonly entityManager: EntityManager,
     private readonly stateMachine: BookingStateMachineService,
+    @InjectQueue('order_fulfillment_queue')
+    private readonly orderFulfillmentQueue: Queue,
   ) {
     super();
   }
@@ -152,9 +155,15 @@ export class PaymentWebhookProcessor extends WorkerHost {
         await manager.save(PaymentAttempt, attempt);
         await manager.save(Payment, payment);
 
-        // Stub: Enqueue order-creation job (Branch 3 will implement the actual queue worker)
+        // Enqueue Duffel order creation job (no auto-retries — ambiguous failures
+        // must stay in paid and be handled by reconciliation sweep)
+        await this.orderFulfillmentQueue.add(
+          'create_duffel_order',
+          { bookingId: booking.id },
+          { attempts: 1, removeOnComplete: true, removeOnFail: 100 },
+        );
         this.logger.log(
-          `Booking ${booking.id} payment verified. Enqueuing order creation (stub).`,
+          `Booking ${booking.id} payment verified. Order creation job enqueued.`,
         );
       } else if (webhookEvent.eventType === 'transaction.failed') {
         attempt.status = PaymentAttemptStatus.Failed;

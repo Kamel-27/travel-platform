@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import { Test, TestingModule } from '@nestjs/testing';
 import { EntityManager } from 'typeorm';
+import { getQueueToken } from '@nestjs/bullmq';
 
 import { PaymentWebhookProcessor } from './payment-webhook.processor';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
@@ -18,6 +19,7 @@ describe('PaymentWebhookProcessor', () => {
   let mockEntityManager: any;
   let mockEventQueryBuilder: any;
   let mockBookingQueryBuilder: any;
+  let mockOrderFulfillmentQueue: any;
 
   const mockWebhookEvent = {
     id: 'evt_123',
@@ -102,6 +104,10 @@ describe('PaymentWebhookProcessor', () => {
       return cb(mockEntityManager);
     });
 
+    mockOrderFulfillmentQueue = {
+      add: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PaymentWebhookProcessor,
@@ -114,6 +120,10 @@ describe('PaymentWebhookProcessor', () => {
         {
           provide: EntityManager,
           useValue: mockEntityManager,
+        },
+        {
+          provide: getQueueToken('order_fulfillment_queue'),
+          useValue: mockOrderFulfillmentQueue,
         },
       ],
     }).compile();
@@ -148,6 +158,13 @@ describe('PaymentWebhookProcessor', () => {
     expect(mockEntityManager.save).toHaveBeenCalledWith(
       PaymentWebhookEvent,
       expect.objectContaining({ processedAt: expect.any(Date) }),
+    );
+
+    // Verify order fulfillment job was enqueued after T4
+    expect(mockOrderFulfillmentQueue.add).toHaveBeenCalledWith(
+      'create_duffel_order',
+      { bookingId: 'booking_123' },
+      expect.objectContaining({ attempts: 1 }),
     );
   });
 });

@@ -23,9 +23,10 @@ import { PaymentWebhookSweepService } from './services/payment-webhook-sweep.ser
       PaymentWebhookEvent,
       Refund,
     ]),
-    BullModule.registerQueue({
-      name: 'payment_webhook_queue',
-    }),
+    BullModule.registerQueue(
+      { name: 'payment_webhook_queue' },
+      { name: 'order_fulfillment_queue' },
+    ),
     BookingsModule,
   ],
   controllers: [PaymentsController, WebhooksController],
