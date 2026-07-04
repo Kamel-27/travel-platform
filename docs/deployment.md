@@ -1,24 +1,29 @@
-# Deployment (M8) — Oracle Cloud Always Free
+# Deployment (M8) — Azure (student credit)
 
 **Status:** v1 — first manual deploy, per roadmap.md §5 ("don't automate a deploy you haven't done manually").
 
 Frontend (`app/web`) is deployed on Vercel already. This covers the backend
-(`app/Backend` + Postgres + Redis), self-hosted on one Oracle Cloud
-Always Free VM via `docker-compose.prod.yml` — genuinely free forever within
-the Always Free limits, no trial-credit expiry.
+(`app/Backend` + Postgres + Redis), self-hosted on one Azure Virtual Machine
+via `docker-compose.prod.yml` — same self-hosted shape originally scoped for
+Oracle Cloud, then DigitalOcean; both rejected card verification, so this
+runs on Azure's student credit instead. Same Dockerfile/compose/Caddy setup
+either way — a VM is a VM; only the provisioning steps below are Azure-specific.
 
-## 1. Provision the VM (OCI Console — manual, only you have the account)
+## 1. Provision the VM (Azure Portal — manual, only you have the account)
 
-1. Create an OCI account (card required for identity verification only — Always
-   Free resources are never billed unless you explicitly upgrade and exceed them).
-2. Compute → Create Instance:
-   - Shape: **VM.Standard.A1.Flex** (Ampere/ARM, Always Free — up to 4 OCPUs / 24GB RAM).
-   - Image: **Ubuntu 24.04** (or latest LTS).
-   - Add your SSH public key (or let OCI generate a key pair for you — download the `.key` file).
-   - Networking: use the default VCN or create one; **assign a public IPv4 address**.
-3. In the VCN's **Security List** (or a Network Security Group), add ingress rules for
-   `0.0.0.0/0`: TCP 80, TCP 443, TCP 22 (SSH). This is separate from the VM's own
-   OS firewall — both need to allow the ports, that's the #1 thing people miss here.
+1. Redeem the Azure for Students credit (school email verification), then
+   Create a resource → **Virtual Machine**:
+   - Image: **Ubuntu Server 24.04 LTS**.
+   - Size: **B1s** (1 vCPU / 1GB RAM) to start — bump to **B2s** (2 vCPU / 4GB)
+     if Postgres + Redis + the NestJS app feels sluggish together.
+   - Authentication: **SSH public key**, note the admin username you set
+     (commonly `azureuser` — the portal suggests this by default).
+   - A public IP is assigned automatically (accept the default settings).
+2. Networking tab (or the VM's **Networking** blade after creation) → add
+   inbound port rules for **80** and **443** (22/SSH is usually already open
+   by default from the quick-create wizard — verify it's there too). This is
+   Azure's Network Security Group (NSG) — separate from the VM's own OS
+   firewall (`ufw`, set up below); both need to allow the ports.
 
 ## 2. DNS
 
@@ -31,9 +36,9 @@ Caddy needs a real domain to request a Let's Encrypt certificate (bare IPs don't
 ## 3. Server setup (SSH in)
 
 ```bash
-ssh -i /path/to/key ubuntu@<vm-public-ip>
+ssh -i /path/to/key azureuser@<vm-public-ip>   # use whatever admin username you set
 
-# OS firewall (ufw) — allow the same ports as the OCI security list
+# OS firewall (ufw) — allow the same ports as the NSG rules above
 sudo ufw allow 22 && sudo ufw allow 80 && sudo ufw allow 443 && sudo ufw enable
 
 # Docker + Compose plugin
