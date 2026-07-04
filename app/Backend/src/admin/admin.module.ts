@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { BullModule } from '@nestjs/bullmq';
 
 import { AuthModule } from '../auth/auth.module';
 import { BookingsModule } from '../bookings/bookings.module';
@@ -33,6 +34,10 @@ import { AuditLogService } from './services/audit-log.service';
     BookingsModule,
     PaymentsModule,
     DuffelModule,
+    BullModule.registerQueue(
+      { name: 'payment_webhook_queue' },
+      { name: 'order_fulfillment_queue' },
+    ),
   ],
   controllers: [AdminController],
   providers: [AdminService, AuditLogService],
