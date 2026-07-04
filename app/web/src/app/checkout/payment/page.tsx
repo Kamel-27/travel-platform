@@ -1,33 +1,180 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense, useRef } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { api, ApiError } from "@/lib/api-client";
+import { formatMoney } from "@/lib/money";
+import { formatFlightTime, formatIsoDuration } from "@/lib/datetime";
+import { getAirportLabel } from "@/lib/airports";
+import type { Booking, PaymentIntent } from "@/lib/types";
 
-export default function SecurePaymentPage() {
+function PaymentInner() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const bookingId = searchParams.get("booking_id");
+
   const [paymentMethod, setPaymentMethod] = useState("credit_card"); // credit_card, apple_pay, wallet
-  const [timeLeft, setTimeLeft] = useState(14 * 60 + 59);
+  const [booking, setBooking] = useState<Booking | null>(null);
+  const [paymentIntent, setPaymentIntent] = useState<PaymentIntent | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  // Countdown timer logic
+  const pollingRef = useRef<boolean>(true);
+
+  // 1. Fetch booking details and payment intent on mount
   useEffect(() => {
-    if (timeLeft <= 0) return;
+    if (!bookingId) {
+      setTimeout(() => {
+        setError("لم يتم تحديد رقم الحجز.");
+        setLoading(false);
+      }, 0);
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadData() {
+      try {
+        // Fetch Booking
+        const bookingData = await api.get<Booking>(`/bookings/${bookingId}`);
+        if (!isMounted) return;
+
+        setBooking(bookingData);
+
+        // If already confirmed, redirect directly
+        if (bookingData.status === "confirmed") {
+          router.push(`/checkout/confirmation?booking_id=${bookingId}`);
+          return;
+        }
+
+        // Fetch or create Payment Intent
+        const intent = await api.post<PaymentIntent>(`/bookings/${bookingId}/payment-intent`);
+        if (!isMounted) return;
+
+        setPaymentIntent(intent);
+
+        // Calculate initial remaining time from offer snapshot expiry
+        if (bookingData.snapshot?.expires_at) {
+          const expires = new Date(bookingData.snapshot.expires_at).getTime();
+          const remaining = Math.max(0, Math.floor((expires - Date.now()) / 1000));
+          setTimeLeft(remaining);
+        }
+
+        setLoading(false);
+      } catch (err: unknown) {
+        if (!isMounted) return;
+        if (err instanceof ApiError) {
+          if (err.status === 410) {
+            setError("انتهت صلاحية حجز هذه الرحلة، يرجى البحث عن رحلة جديدة.");
+          } else {
+            setError(err.message || "فشل تحميل تفاصيل الدفع.");
+          }
+        } else {
+          setError("حدث خطأ غير متوقع أثناء تحميل تفاصيل الدفع.");
+        }
+        setLoading(false);
+      }
+    }
+
+    void loadData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [bookingId, router]);
+
+  // 2. Countdown timer
+  useEffect(() => {
+    if (timeLeft === null || timeLeft <= 0) return;
     const timer = setInterval(() => {
-      setTimeLeft((prev) => prev - 1);
+      setTimeLeft((prev) => {
+        if (prev === null || prev <= 0) {
+          clearInterval(timer);
+          setError("انتهت صلاحية عرض الرحلة. يرجى البحث من جديد.");
+          return 0;
+        }
+        return prev - 1;
+      });
     }, 1000);
     return () => clearInterval(timer);
   }, [timeLeft]);
 
+  // 3. Polling for payment status (T4/T5 transitions)
+  useEffect(() => {
+    if (!bookingId || loading || error || booking?.status === "confirmed") return;
+
+    pollingRef.current = true;
+    let timerId: NodeJS.Timeout;
+
+    const pollStatus = async () => {
+      if (!pollingRef.current) return;
+      try {
+        const updatedBooking = await api.get<Booking>(`/bookings/${bookingId}`);
+        if (!pollingRef.current) return;
+
+        if (updatedBooking.status !== booking?.status) {
+          setBooking(updatedBooking);
+        }
+
+        if (updatedBooking.status === "paid") {
+          setStatusMessage("تم استلام الدفع بنجاح. جاري تأكيد حجزك مع شركة الطيران...");
+        } else if (updatedBooking.status === "confirmed") {
+          pollingRef.current = false;
+          router.push(`/checkout/confirmation?booking_id=${bookingId}`);
+          return;
+        } else if (updatedBooking.status === "order_failed" || updatedBooking.status === "failed") {
+          pollingRef.current = false;
+          setError("فشل تأكيد الحجز. يرجى محاولة الدفع مرة أخرى أو الاتصال بالدعم.");
+          return;
+        }
+      } catch (err) {
+        // Silently ignore polling errors to remain resilient
+        console.error("Polling error:", err);
+      }
+
+      if (pollingRef.current) {
+        timerId = setTimeout(pollStatus, 3000);
+      }
+    };
+
+    timerId = setTimeout(pollStatus, 3000);
+
+    return () => {
+      pollingRef.current = false;
+      clearTimeout(timerId);
+    };
+  }, [bookingId, loading, error, booking?.status, router]);
+
   const formatTime = () => {
+    if (timeLeft === null || timeLeft <= 0) return "0:00";
     const minutes = Math.floor(timeLeft / 60);
     const seconds = timeLeft % 60;
     return `${minutes}:${seconds < 10 ? "0" : ""}${seconds}`;
   };
 
-  // Card input states
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardHolder, setCardHolder] = useState("");
-  const [expiryDate, setExpiryDate] = useState("");
-  const [cvv, setCvv] = useState("");
-  const [saveCard, setSaveCard] = useState(false);
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0b1120] text-white flex flex-col items-center justify-center gap-md" dir="rtl">
+        <span className="material-symbols-outlined text-primary text-5xl animate-spin">progress_activity</span>
+        <p className="font-title-md">جاري تجهيز بوابة الدفع الآمنة...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[#0b1120] text-white flex flex-col items-center justify-center gap-base text-center p-4" dir="rtl">
+        <span className="material-symbols-outlined text-red-500 text-5xl">error</span>
+        <p className="font-title-md text-title-md text-white max-w-md">{error}</p>
+        <Link href="/flights" className="mt-md bg-primary hover:bg-primary-container text-white px-md py-sm rounded-lg font-label-md text-label-md">
+          العودة للبحث عن رحلات
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#0b1120] text-white font-sans overflow-x-hidden relative" dir="rtl">
@@ -54,24 +201,32 @@ export default function SecurePaymentPage() {
             <span className="material-symbols-outlined text-primary-fixed-dim !text-[32px]">lock</span>
           </div>
           <h1 className="font-headline-lg text-headline-lg-mobile md:text-headline-lg font-bold text-white mb-xs text-center">بوابة الدفع الآمنة</h1>
-          <div className="flex items-center gap-xs font-label-md text-label-md text-orange-400 font-bold bg-orange-400/10 px-md py-sm rounded-full border border-orange-400/20 shadow-sm animate-pulse">
-            <span className="material-symbols-outlined !text-[18px]">timer</span>
-            <span>تبقي {formatTime()} لإكمال الحجز</span>
-          </div>
+          {timeLeft !== null && timeLeft > 0 && (
+            <div className="flex items-center gap-xs font-label-md text-label-md text-orange-400 font-bold bg-orange-400/10 px-md py-sm rounded-full border border-orange-400/20 shadow-sm animate-pulse">
+              <span className="material-symbols-outlined !text-[18px]">timer</span>
+              <span>تبقي {formatTime()} لإكمال الدفع</span>
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-lg items-start">
-          {/* Left: Payment Form */}
+          {/* Left: Payment Form/Iframe Container */}
           <div className="lg:col-span-8 order-2 lg:order-1">
+            {statusMessage && (
+              <div className="bg-teal-500/10 border border-teal-500/30 rounded-2xl p-md mb-md flex items-center gap-base">
+                <span className="material-symbols-outlined text-teal-400 animate-spin">progress_activity</span>
+                <p className="font-body-md text-teal-400">{statusMessage}</p>
+              </div>
+            )}
+
             <div className="bg-white/[0.03] backdrop-blur-xl border border-white/10 rounded-2xl p-md md:p-lg shadow-[0_8px_32px_0_rgba(0,0,0,0.37)]">
-              
               {/* Payment Tabs */}
               <div className="flex flex-wrap gap-base mb-lg">
                 <button
                   onClick={() => setPaymentMethod("credit_card")}
                   className={`flex-1 min-w-[140px] flex items-center justify-center gap-sm p-md rounded-xl transition-all font-label-md border-2 font-bold cursor-pointer ${
                     paymentMethod === "credit_card"
-                      ? "bg-white text-primary border-white"
+                      ? "bg-white text-[#0b1120] border-white"
                       : "bg-white/[0.02] border-white/10 text-white hover:bg-white/5"
                   }`}
                 >
@@ -93,7 +248,7 @@ export default function SecurePaymentPage() {
                   onClick={() => setPaymentMethod("wallet")}
                   className={`flex-1 min-w-[140px] flex items-center justify-center gap-sm p-md rounded-xl transition-all font-label-md border-2 font-bold cursor-pointer ${
                     paymentMethod === "wallet"
-                      ? "bg-white text-primary border-white"
+                      ? "bg-white text-[#0b1120] border-white"
                       : "bg-white/[0.02] border-white/10 text-white hover:bg-white/5"
                   }`}
                 >
@@ -102,78 +257,23 @@ export default function SecurePaymentPage() {
                 </button>
               </div>
 
-              {/* Render dynamic payment forms based on selected method */}
+              {/* Render Payment Method Content */}
               {paymentMethod === "credit_card" && (
                 <div className="space-y-md">
-                  <div className="space-y-xs">
-                    <label className="font-label-md text-label-md text-surface-variant block">رقم البطاقة</label>
-                    <div className="relative">
-                      <input
-                        className="w-full bg-white/5 border border-white/10 rounded-lg p-md text-white placeholder:text-white/20 text-left"
-                        dir="ltr"
-                        placeholder="**** **** **** ****"
-                        type="text"
-                        value={cardNumber}
-                        onChange={(e) => setCardNumber(e.target.value)}
-                      />
-                      <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
-                        <span className="material-symbols-outlined text-white/40">credit_card</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-xs">
-                    <label className="font-label-md text-label-md text-surface-variant block">اسم صاحب البطاقة</label>
-                    <input
-                      className="w-full bg-white/5 border border-white/10 rounded-lg p-md text-white placeholder:text-white/20"
-                      placeholder="الاسم بالكامل كما هو مكتوب على البطاقة"
-                      type="text"
-                      value={cardHolder}
-                      onChange={(e) => setCardHolder(e.target.value)}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-md">
-                    <div className="space-y-xs">
-                      <label className="font-label-md text-label-md text-surface-variant block">تاريخ الانتهاء</label>
-                      <input
-                        className="w-full bg-white/5 border border-white/10 rounded-lg p-md text-white placeholder:text-white/20 text-center"
-                        placeholder="MM / YY"
-                        type="text"
-                        value={expiryDate}
-                        onChange={(e) => setExpiryDate(e.target.value)}
+                  {paymentIntent?.iframe_url ? (
+                    <div className="relative rounded-xl overflow-hidden bg-white border border-white/10 shadow-lg">
+                      <iframe
+                        src={paymentIntent.iframe_url}
+                        className="w-full h-[650px] border-0"
+                        title="Paymob Secure Checkout"
                       />
                     </div>
-                    <div className="space-y-xs">
-                      <label className="font-label-md text-label-md text-surface-variant block">رمز الأمان (CVV)</label>
-                      <div className="relative">
-                        <input
-                          className="w-full bg-white/5 border border-white/10 rounded-lg p-md text-white placeholder:text-white/20 text-center"
-                          placeholder="***"
-                          type="password"
-                          maxLength={3}
-                          value={cvv}
-                          onChange={(e) => setCvv(e.target.value)}
-                        />
-                        <span className="absolute inset-y-0 left-4 flex items-center">
-                          <span className="material-symbols-outlined text-white/40 cursor-help" title="الرمز المكون من 3 أرقام خلف البطاقة">help_outline</span>
-                        </span>
-                      </div>
+                  ) : (
+                    <div className="py-xl flex flex-col items-center justify-center text-center gap-base">
+                      <span className="material-symbols-outlined text-5xl text-orange-400">warning</span>
+                      <p className="font-body-lg text-white/80">فشل تهيئة بوابة الدفع Paymob. يرجى المحاولة لاحقاً.</p>
                     </div>
-                  </div>
-
-                  <div className="flex items-center gap-base pt-base">
-                    <input
-                      className="w-5 h-5 rounded border-white/10 bg-white/5 text-primary focus:ring-primary-container"
-                      id="save-card"
-                      type="checkbox"
-                      checked={saveCard}
-                      onChange={(e) => setSaveCard(e.target.checked)}
-                    />
-                    <label className="font-body-md text-body-md text-surface-variant cursor-pointer select-none" htmlFor="save-card">
-                      حفظ بيانات البطاقة لعمليات الدفع القادمة بأمان
-                    </label>
-                  </div>
+                  )}
                 </div>
               )}
 
@@ -183,10 +283,12 @@ export default function SecurePaymentPage() {
                     <span className="material-symbols-outlined text-4xl">ios</span>
                   </div>
                   <p className="font-body-lg text-body-lg text-center text-white/80">ادفع بلمسة واحدة باستخدام Apple Pay بأمان تام</p>
-                  <Link href="/checkout/confirmation" className="bg-white text-black font-bold font-title-lg px-xl py-md rounded-xl hover:bg-white/90 active:scale-95 transition-all shadow-md flex items-center gap-xs">
-                    <span>الدفع باستخدام</span>
-                    <span className="font-extrabold flex items-center text-xl font-mono"> Pay</span>
-                  </Link>
+                  <button
+                    disabled
+                    className="bg-white/20 text-white/60 cursor-not-allowed font-bold font-title-lg px-xl py-md rounded-xl shadow-md flex items-center gap-xs"
+                  >
+                    <span>غير متوفر حالياً</span>
+                  </button>
                 </div>
               )}
 
@@ -196,18 +298,10 @@ export default function SecurePaymentPage() {
                     <span className="material-symbols-outlined text-4xl">account_balance_wallet</span>
                   </div>
                   <div className="text-center">
-                    <p className="font-body-lg text-body-lg text-white/80">رصيد محفظتك الرقمية الحالي هو:</p>
-                    <p className="font-headline-lg text-headline-lg text-teal-400 font-bold mt-xs">2,450 SAR</p>
+                    <p className="font-body-lg text-body-lg text-white/80">رصيد محفظتك الرقمية الحالي غير كافٍ للدفع.</p>
                   </div>
-                  <div className="bg-white/5 border border-white/10 rounded-xl p-md max-w-sm text-center">
-                    <p className="font-label-sm text-label-sm text-white/60">سيتم خصم قيمة الحجز (1,430 SAR) مباشرة من رصيد المحفظة.</p>
-                  </div>
-                  <Link href="/checkout/confirmation" className="bg-teal-500 hover:bg-teal-600 active:scale-95 text-white font-bold font-title-lg px-xl py-md rounded-xl transition-all shadow-md text-center">
-                    تأكيد الدفع من المحفظة
-                  </Link>
                 </div>
               )}
-
             </div>
 
             {/* Trusted Badges */}
@@ -221,44 +315,72 @@ export default function SecurePaymentPage() {
 
           {/* Right: Summary Panel */}
           <div className="lg:col-span-4 order-1 lg:order-2">
-            <div className="bg-white/[0.03] backdrop-blur-xl border border-white/10 rounded-2xl p-md md:p-lg shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] sticky top-24">
-              <h2 className="font-title-lg text-title-lg text-white mb-md font-bold border-b border-white/10 pb-sm">تفاصيل الحجز</h2>
-              <div className="space-y-sm pb-md border-b border-white/10">
-                <div className="flex justify-between font-body-md text-body-md text-white/70">
-                  <span>سعر التذكرة الأساسي</span>
-                  <span>1,250 SAR</span>
-                </div>
-                <div className="flex justify-between font-body-md text-body-md text-white/70">
-                  <span>ضريبة القيمة المضافة (15%)</span>
-                  <span>180 SAR</span>
-                </div>
-                <div className="flex justify-between font-body-md text-body-md text-white/70">
-                  <span>رسوم الدفع والخدمة الآمنة</span>
-                  <span className="text-teal-400">مجاناً</span>
-                </div>
-              </div>
-              <div className="py-md">
-                <div className="flex justify-between items-center">
-                  <span className="font-title-lg text-title-lg text-white font-bold">الإجمالي الكلي</span>
-                  <span className="font-headline-md text-headline-md text-orange-400 font-extrabold shadow-orange-400">1,430 SAR</span>
-                </div>
-              </div>
+            <div className="bg-white/[0.03] backdrop-blur-xl border border-white/10 rounded-2xl p-md md:p-lg shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] sticky top-24 space-y-md">
+              <h2 className="font-title-lg text-title-lg text-white font-bold border-b border-white/10 pb-sm">تفاصيل الحجز</h2>
               
-              <div className="bg-white/5 rounded-xl p-base mt-xs flex gap-base items-start border border-white/10">
+              {booking?.snapshot && (
+                <div className="space-y-sm text-sm border-b border-white/10 pb-md">
+                  <div className="flex items-center gap-xs font-bold text-white">
+                    <span className="material-symbols-outlined text-primary text-lg">flight_takeoff</span>
+                    <span>{booking.snapshot.owner_airline_name}</span>
+                  </div>
+                  {booking.snapshot.slices.map((slice, i) => (
+                    <div key={i} className="text-white/70 space-y-[2px] pl-5">
+                      <p className="font-bold">{getAirportLabel(slice.origin)} ← {getAirportLabel(slice.destination)}</p>
+                      <p className="text-xs text-white/50">{formatFlightTime(slice.segments[0].departing_at.local)} · {formatIsoDuration(slice.duration)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {booking?.passengers && booking.passengers.length > 0 && (
+                <div className="space-y-xs text-sm border-b border-white/10 pb-md text-white/70">
+                  <p className="font-bold text-white mb-xs flex items-center gap-xs">
+                    <span className="material-symbols-outlined text-primary text-lg">people</span>
+                    <span>المسافرين ({booking.passengers.length})</span>
+                  </p>
+                  {booking.passengers.map((p, index) => (
+                    <p key={p.id} className="pl-5 text-xs">
+                      {index + 1}. {p.given_name} {p.family_name} ({p.type === "adult" ? "بالغ" : p.type === "child" ? "طفل" : "رضيع"})
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {booking && (
+                <div className="space-y-sm pb-md border-b border-white/10">
+                  <div className="flex justify-between font-body-md text-body-md text-white/70">
+                    <span>سعر التذكرة الأساسي</span>
+                    <span>{formatMoney(booking.base_amount, booking.currency)}</span>
+                  </div>
+                  <div className="flex justify-between font-body-md text-body-md text-white/70">
+                    <span>رسوم الخدمة والضرائب</span>
+                    <span>{formatMoney(booking.markup_amount, booking.currency)}</span>
+                  </div>
+                  <div className="flex justify-between font-body-md text-body-md text-white/70">
+                    <span>رسوم الدفع والخدمة الآمنة</span>
+                    <span className="text-teal-400">مجاناً</span>
+                  </div>
+                </div>
+              )}
+
+              {booking && (
+                <div className="py-xs">
+                  <div className="flex justify-between items-center">
+                    <span className="font-title-lg text-title-lg text-white font-bold">الإجمالي الكلي</span>
+                    <span className="font-headline-md text-headline-md text-orange-400 font-extrabold shadow-orange-400">
+                      {formatMoney(booking.total_amount, booking.currency)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-white/5 rounded-xl p-base flex gap-base items-start border border-white/10">
                 <span className="material-symbols-outlined text-teal-400 mt-0.5 shrink-0">info</span>
                 <p className="font-label-sm text-label-sm text-white/60">جميع الضرائب والرسوم مشمولة بالكامل في السعر النهائي. لن يتم تطبيق أي رسوم مخفية لاحقاً.</p>
               </div>
 
-              {/* Secure Checkout Button */}
-              <Link
-                href="/checkout/confirmation"
-                className="w-full mt-lg bg-orange-400 hover:bg-orange-500 active:scale-95 transition-all text-on-tertiary-fixed font-title-lg p-md rounded-xl flex items-center justify-center gap-base font-bold shadow-md shadow-orange-400/20"
-              >
-                <span className="material-symbols-outlined">security</span>
-                <span>ادفع الآن بأمان</span>
-              </Link>
-              
-              <div className="mt-md flex items-center justify-center gap-xs text-white/40">
+              <div className="flex items-center justify-center gap-xs text-white/40 pt-sm">
                 <span className="material-symbols-outlined !text-[14px]">verified_user</span>
                 <span className="font-label-sm text-label-sm">تشفير وحماية 256-بت SSL</span>
               </div>
@@ -278,5 +400,19 @@ export default function SecurePaymentPage() {
         <div className="font-label-sm text-label-sm text-white/40">© 2026 سفريات. جميع الحقوق محفوظة.</div>
       </footer>
     </div>
+  );
+}
+
+export default function SecurePaymentPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#0b1120] text-white flex items-center justify-center">
+          <span className="material-symbols-outlined text-primary text-5xl animate-spin">progress_activity</span>
+        </div>
+      }
+    >
+      <PaymentInner />
+    </Suspense>
   );
 }
