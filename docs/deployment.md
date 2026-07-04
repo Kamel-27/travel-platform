@@ -1,24 +1,32 @@
-# Deployment (M8) — Oracle Cloud Always Free
+# Deployment (M8) — DigitalOcean ($200 GitHub Student Pack credit)
 
 **Status:** v1 — first manual deploy, per roadmap.md §5 ("don't automate a deploy you haven't done manually").
 
 Frontend (`app/web`) is deployed on Vercel already. This covers the backend
-(`app/Backend` + Postgres + Redis), self-hosted on one Oracle Cloud
-Always Free VM via `docker-compose.prod.yml` — genuinely free forever within
-the Always Free limits, no trial-credit expiry.
+(`app/Backend` + Postgres + Redis), self-hosted on one DigitalOcean Droplet via
+`docker-compose.prod.yml` — same self-hosted shape originally scoped for Oracle
+Cloud Always Free, moved here after Oracle's card verification rejected a valid
+card (a known recurring complaint with their signup flow). The $200/1-year
+GitHub Student Pack credit covers a small Droplet (~$4-6/mo) for the whole
+credit period; after that it's a low, predictable monthly cost if you choose
+to keep it running — no Oracle-style account-suspension risk, no cliff like a
+90-day trial credit.
 
-## 1. Provision the VM (OCI Console — manual, only you have the account)
+## 1. Provision the Droplet (DigitalOcean console — manual, only you have the account)
 
-1. Create an OCI account (card required for identity verification only — Always
-   Free resources are never billed unless you explicitly upgrade and exceed them).
-2. Compute → Create Instance:
-   - Shape: **VM.Standard.A1.Flex** (Ampere/ARM, Always Free — up to 4 OCPUs / 24GB RAM).
-   - Image: **Ubuntu 24.04** (or latest LTS).
-   - Add your SSH public key (or let OCI generate a key pair for you — download the `.key` file).
-   - Networking: use the default VCN or create one; **assign a public IPv4 address**.
-3. In the VCN's **Security List** (or a Network Security Group), add ingress rules for
-   `0.0.0.0/0`: TCP 80, TCP 443, TCP 22 (SSH). This is separate from the VM's own
-   OS firewall — both need to allow the ports, that's the #1 thing people miss here.
+1. Redeem the $200 credit via the GitHub Student Developer Pack offer, then
+   create a Droplet:
+   - Image: **Ubuntu 24.04 LTS**.
+   - Plan: **Basic — Regular (shared CPU)**, smallest size (1 vCPU / 1GB RAM,
+     ~$4-6/mo) is enough for Postgres + Redis + this NestJS app on a low-traffic demo.
+   - Authentication: add your **SSH public key** (avoid password auth).
+   - A public IPv4 is assigned automatically.
+2. (Optional but recommended) Networking → Cloud Firewalls → create one allowing
+   inbound TCP 22 (SSH), 80, 443 from `0.0.0.0/0`, and attach it to the Droplet.
+   Unlike Oracle's default-deny Security List, DigitalOcean Droplets have no
+   inbound restrictions by default — the Cloud Firewall is an extra layer on
+   top of the OS-level `ufw` firewall set up below, not a required substitute
+   for it, but worth adding since it blocks traffic before it even reaches the VM.
 
 ## 2. DNS
 
@@ -31,9 +39,9 @@ Caddy needs a real domain to request a Let's Encrypt certificate (bare IPs don't
 ## 3. Server setup (SSH in)
 
 ```bash
-ssh -i /path/to/key ubuntu@<vm-public-ip>
+ssh -i /path/to/key root@<droplet-public-ip>
 
-# OS firewall (ufw) — allow the same ports as the OCI security list
+# OS firewall (ufw) — allow the same ports as the Cloud Firewall (if you added one)
 sudo ufw allow 22 && sudo ufw allow 80 && sudo ufw allow 443 && sudo ufw enable
 
 # Docker + Compose plugin
