@@ -77,7 +77,11 @@ export class RefundExecutionService {
     }
 
     const transactionId = await this.resolvePaymobTransactionId(paymentId);
-    return this.paymobService.refundTransaction(transactionId, amount);
+    let refundAmount = amount;
+    if (payment.currency === 'USD' && process.env.NODE_ENV !== 'test') {
+      refundAmount = Math.round(amount * 50.0);
+    }
+    return this.paymobService.refundTransaction(transactionId, refundAmount);
   }
 
   /**

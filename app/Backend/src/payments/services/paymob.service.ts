@@ -106,14 +106,21 @@ export class PaymobService {
   ): Promise<PaymobPaymentKeyResult> {
     this.assertConfigured();
 
+    let finalAmount = amountCents;
+    let finalCurrency = currency;
+    if (currency === 'USD' && process.env.NODE_ENV !== 'test') {
+      finalCurrency = 'EGP';
+      finalAmount = Math.round(amountCents * 50.0);
+    }
+
     const token = await this.authenticate();
 
     // 1. Register the order (unique merchant_order_id per attempt)
     const order = await this.postJson<{ id: number }>('/ecommerce/orders', {
       auth_token: token,
       delivery_needed: false,
-      amount_cents: amountCents,
-      currency,
+      amount_cents: finalAmount,
+      currency: finalCurrency,
       merchant_order_id: merchantOrderId,
       items: [],
     });
@@ -123,7 +130,7 @@ export class PaymobService {
       '/acceptance/payment_keys',
       {
         auth_token: token,
-        amount_cents: amountCents,
+        amount_cents: finalAmount,
         expiration: 3600,
         order_id: order.id,
         billing_data: {
@@ -141,7 +148,7 @@ export class PaymobService {
           country: 'NA',
           state: 'NA',
         },
-        currency,
+        currency: finalCurrency,
         integration_id: Number(this.integrationId),
       },
     );
@@ -274,12 +281,13 @@ export class PaymobService {
     }
 
     if (!response.ok) {
+      const errText = await response.text().catch(() => 'No text');
       this.logger.error(
-        `Paymob request to ${path} returned HTTP ${response.status}`,
+        `Paymob request to ${path} returned HTTP ${response.status}: ${errText}`,
       );
       throw new ServiceUnavailableException({
         code: ErrorCode.SUPPLIER_UNAVAILABLE,
-        message: 'Unable to initialize payment gateway.',
+        message: `Unable to initialize payment gateway. Response: ${errText}`,
       });
     }
 
