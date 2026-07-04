@@ -1,32 +1,29 @@
-# Deployment (M8) — DigitalOcean ($200 GitHub Student Pack credit)
+# Deployment (M8) — Azure (student credit)
 
 **Status:** v1 — first manual deploy, per roadmap.md §5 ("don't automate a deploy you haven't done manually").
 
 Frontend (`app/web`) is deployed on Vercel already. This covers the backend
-(`app/Backend` + Postgres + Redis), self-hosted on one DigitalOcean Droplet via
-`docker-compose.prod.yml` — same self-hosted shape originally scoped for Oracle
-Cloud Always Free, moved here after Oracle's card verification rejected a valid
-card (a known recurring complaint with their signup flow). The $200/1-year
-GitHub Student Pack credit covers a small Droplet (~$4-6/mo) for the whole
-credit period; after that it's a low, predictable monthly cost if you choose
-to keep it running — no Oracle-style account-suspension risk, no cliff like a
-90-day trial credit.
+(`app/Backend` + Postgres + Redis), self-hosted on one Azure Virtual Machine
+via `docker-compose.prod.yml` — same self-hosted shape originally scoped for
+Oracle Cloud, then DigitalOcean; both rejected card verification, so this
+runs on Azure's student credit instead. Same Dockerfile/compose/Caddy setup
+either way — a VM is a VM; only the provisioning steps below are Azure-specific.
 
-## 1. Provision the Droplet (DigitalOcean console — manual, only you have the account)
+## 1. Provision the VM (Azure Portal — manual, only you have the account)
 
-1. Redeem the $200 credit via the GitHub Student Developer Pack offer, then
-   create a Droplet:
-   - Image: **Ubuntu 24.04 LTS**.
-   - Plan: **Basic — Regular (shared CPU)**, smallest size (1 vCPU / 1GB RAM,
-     ~$4-6/mo) is enough for Postgres + Redis + this NestJS app on a low-traffic demo.
-   - Authentication: add your **SSH public key** (avoid password auth).
-   - A public IPv4 is assigned automatically.
-2. (Optional but recommended) Networking → Cloud Firewalls → create one allowing
-   inbound TCP 22 (SSH), 80, 443 from `0.0.0.0/0`, and attach it to the Droplet.
-   Unlike Oracle's default-deny Security List, DigitalOcean Droplets have no
-   inbound restrictions by default — the Cloud Firewall is an extra layer on
-   top of the OS-level `ufw` firewall set up below, not a required substitute
-   for it, but worth adding since it blocks traffic before it even reaches the VM.
+1. Redeem the Azure for Students credit (school email verification), then
+   Create a resource → **Virtual Machine**:
+   - Image: **Ubuntu Server 24.04 LTS**.
+   - Size: **B1s** (1 vCPU / 1GB RAM) to start — bump to **B2s** (2 vCPU / 4GB)
+     if Postgres + Redis + the NestJS app feels sluggish together.
+   - Authentication: **SSH public key**, note the admin username you set
+     (commonly `azureuser` — the portal suggests this by default).
+   - A public IP is assigned automatically (accept the default settings).
+2. Networking tab (or the VM's **Networking** blade after creation) → add
+   inbound port rules for **80** and **443** (22/SSH is usually already open
+   by default from the quick-create wizard — verify it's there too). This is
+   Azure's Network Security Group (NSG) — separate from the VM's own OS
+   firewall (`ufw`, set up below); both need to allow the ports.
 
 ## 2. DNS
 
@@ -39,9 +36,9 @@ Caddy needs a real domain to request a Let's Encrypt certificate (bare IPs don't
 ## 3. Server setup (SSH in)
 
 ```bash
-ssh -i /path/to/key root@<droplet-public-ip>
+ssh -i /path/to/key azureuser@<vm-public-ip>   # use whatever admin username you set
 
-# OS firewall (ufw) — allow the same ports as the Cloud Firewall (if you added one)
+# OS firewall (ufw) — allow the same ports as the NSG rules above
 sudo ufw allow 22 && sudo ufw allow 80 && sudo ufw allow 443 && sudo ufw enable
 
 # Docker + Compose plugin
