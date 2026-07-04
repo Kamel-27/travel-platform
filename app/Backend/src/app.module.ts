@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import * as Joi from 'joi';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -8,6 +9,7 @@ import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { RedisModule } from './redis/redis.module';
 import { FlightsModule } from './flights/flights.module';
+import { BookingsModule } from './bookings/bookings.module';
 
 @Module({
   imports: [
@@ -32,11 +34,13 @@ import { FlightsModule } from './flights/flights.module';
         DUFFEL_API_KEY: Joi.string().allow('').optional(),
       }),
     }),
+    ScheduleModule.forRoot(),
     DatabaseModule,
     RedisModule,
     HealthModule,
     AuthModule,
     FlightsModule,
+    BookingsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
