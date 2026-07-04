@@ -1,66 +1,70 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 import {
   BadRequestException,
+  Body,
   Controller,
-  Headers,
   Post,
-  Req,
+  Query,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 
-import { StripeService } from './services/stripe.service';
+import { PaymobService } from './services/paymob.service';
 import { PaymentWebhookEvent } from './entities/payment-webhook-event.entity';
 import { PaymentProvider } from './entities/payment.entity';
 
 @Controller('webhooks')
 export class WebhooksController {
   constructor(
-    private readonly stripeService: StripeService,
+    private readonly paymobService: PaymobService,
     @InjectRepository(PaymentWebhookEvent)
     private readonly webhookRepo: Repository<PaymentWebhookEvent>,
-    @InjectQueue('stripe_webhook_queue')
+    @InjectQueue('payment_webhook_queue')
     private readonly webhookQueue: Queue,
   ) {}
 
   /**
-   * POST /webhooks/stripe
-   * Receives Stripe webhook payloads, verifies signature, persists event for deduplication,
-   * enqueues processing job, and returns fast 200 OK.
+   * POST /webhooks/paymob
+   * Receives Paymob transaction-processed callbacks, verifies the HMAC
+   * (sent as a query param), persists the event for deduplication,
+   * enqueues a processing job, and returns a fast 200 OK.
    */
-  @Post('stripe')
-  async handleStripeWebhook(
-    @Req() req: any,
-    @Headers('stripe-signature') signature?: string,
+  @Post('paymob')
+  async handlePaymobWebhook(
+    @Body() body: any,
+    @Query('hmac') hmac?: string,
   ): Promise<any> {
-    if (!signature) {
-      throw new BadRequestException('Missing stripe-signature header.');
+    // Only transaction callbacks are relevant (and HMAC-verifiable with the
+    // transaction field set); acknowledge and ignore other callback types.
+    if (body?.type !== 'TRANSACTION' || !body.obj) {
+      return { received: true, ignored: true };
     }
 
-    const rawBody = req.rawBody;
-    if (!rawBody) {
-      throw new BadRequestException('Missing raw request body buffer.');
+    const transaction = body.obj as Record<string, any>;
+
+    // 1. HMAC verify before any DB write
+    if (!this.paymobService.verifyTransactionHmac(transaction, hmac)) {
+      throw new BadRequestException('HMAC verification failed.');
     }
 
-    // 1. Signature Verify before any DB write
-    let stripeEvent: any;
-    try {
-      stripeEvent = this.stripeService.constructEvent(
-        rawBody as Buffer,
-        signature,
-      );
-    } catch (err: any) {
-      throw new BadRequestException(
-        err.message || 'Signature verification failed.',
-      );
-    }
+    // Derive a semantic event type from the transaction flags
+    const eventType = transaction.pending
+      ? 'transaction.pending'
+      : transaction.success
+        ? 'transaction.succeeded'
+        : 'transaction.failed';
+
+    // Paymob has no distinct event id; a transaction can legitimately emit
+    // callbacks in different states, so dedupe on (id, state) — exact
+    // redeliveries collapse, state progressions are kept.
+    const providerEventId = `${transaction.id}:${eventType}`;
 
     // 2. Persist event using unique checks for deduplication
     const existing = await this.webhookRepo.findOneBy({
-      provider: PaymentProvider.Stripe,
-      providerEventId: stripeEvent.id,
+      provider: PaymentProvider.Paymob,
+      providerEventId,
     });
 
     if (existing) {
@@ -69,10 +73,10 @@ export class WebhooksController {
     }
 
     const eventEntity = new PaymentWebhookEvent();
-    eventEntity.provider = PaymentProvider.Stripe;
-    eventEntity.providerEventId = stripeEvent.id;
-    eventEntity.eventType = stripeEvent.type;
-    eventEntity.payload = stripeEvent;
+    eventEntity.provider = PaymentProvider.Paymob;
+    eventEntity.providerEventId = providerEventId;
+    eventEntity.eventType = eventType;
+    eventEntity.payload = body;
 
     try {
       const saved = await this.webhookRepo.save(eventEntity);

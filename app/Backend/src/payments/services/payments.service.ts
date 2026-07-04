@@ -7,10 +7,15 @@ import {
 } from '@nestjs/common';
 import { InjectEntityManager, InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
+import { randomUUID } from 'crypto';
 
-import { StripeService } from './stripe.service';
+import { PaymobService } from './paymob.service';
 import { Booking, BookingStatus } from '../../bookings/entities/booking.entity';
 import { FlightOfferSnapshot } from '../../bookings/entities/flight-offer-snapshot.entity';
+import {
+  Passenger,
+  PassengerType,
+} from '../../bookings/entities/passenger.entity';
 import {
   Payment,
   PaymentProvider,
@@ -25,6 +30,17 @@ import { User, UserRole } from '../../users/user.entity';
 import { ErrorCode } from '../../common/dto/error-response.dto';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
 
+interface CreateAttemptResult {
+  provider: string;
+  payment_token: string;
+  iframe_url: string | null;
+  amount: number;
+  currency: string;
+}
+
+type CreateAttemptOutcome =
+  { expired: true } | { expired: false; payload: CreateAttemptResult };
+
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
@@ -38,119 +54,142 @@ export class PaymentsService {
     private readonly attemptRepo: Repository<PaymentAttempt>,
     @InjectRepository(Refund)
     private readonly refundRepo: Repository<Refund>,
-    private readonly stripeService: StripeService,
+    private readonly paymobService: PaymobService,
     private readonly stateMachine: BookingStateMachineService,
   ) {}
 
   /**
-   * Creates or retries a payment attempt for a booking by initializing a Stripe PaymentIntent.
+   * Creates or retries a payment attempt for a booking by registering a
+   * Paymob order and requesting a payment key (iframe token).
    * Enforces rules around booking statuses and offer expiration dates.
    */
   async createOrGetPaymentAttempt(
     user: User,
     bookingId: string,
-  ): Promise<{
-    provider: string;
-    client_secret: string | null;
-    amount: number;
-    currency: string;
-  }> {
-    return this.entityManager.transaction(async (manager) => {
-      // 1. Lock and retrieve Booking
-      const booking = await manager
-        .getRepository(Booking)
-        .createQueryBuilder('booking')
-        .setLock('pessimistic_write')
-        .where('booking.id = :id', { id: bookingId })
-        .getOne();
+  ): Promise<CreateAttemptResult> {
+    const outcome = await this.entityManager.transaction<CreateAttemptOutcome>(
+      async (manager) => {
+        // 1. Lock and retrieve Booking
+        const booking = await manager
+          .getRepository(Booking)
+          .createQueryBuilder('booking')
+          .setLock('pessimistic_write')
+          .where('booking.id = :id', { id: bookingId })
+          .getOne();
 
-      if (!booking) {
-        throw new NotFoundException({
-          code: ErrorCode.NOT_FOUND,
-          message: 'Booking not found.',
-        });
-      }
+        if (!booking) {
+          throw new NotFoundException({
+            code: ErrorCode.NOT_FOUND,
+            message: 'Booking not found.',
+          });
+        }
 
-      if (booking.userId !== user.id) {
-        throw new ForbiddenException({
-          code: ErrorCode.FORBIDDEN,
-          message: 'Access denied to this booking.',
-        });
-      }
+        if (booking.userId !== user.id) {
+          throw new ForbiddenException({
+            code: ErrorCode.FORBIDDEN,
+            message: 'Access denied to this booking.',
+          });
+        }
 
-      // Check booking status guard
-      if (booking.status !== BookingStatus.AwaitingPayment) {
-        throw new ConflictException({
-          code: ErrorCode.ILLEGAL_TRANSITION,
-          message: `Booking must be in awaiting_payment status, current status is ${booking.status}.`,
-        });
-      }
+        // Check booking status guard
+        if (booking.status !== BookingStatus.AwaitingPayment) {
+          throw new ConflictException({
+            code: ErrorCode.ILLEGAL_TRANSITION,
+            message: `Booking must be in awaiting_payment status, current status is ${booking.status}.`,
+          });
+        }
 
-      // 2. Load and verify offer snapshot expiry
-      const snapshot = await manager
-        .getRepository(FlightOfferSnapshot)
-        .findOneBy({ bookingId: booking.id });
+        // 2. Load and verify offer snapshot expiry
+        const snapshot = await manager
+          .getRepository(FlightOfferSnapshot)
+          .findOneBy({ bookingId: booking.id });
 
-      if (!snapshot) {
-        throw new NotFoundException({
-          code: ErrorCode.NOT_FOUND,
-          message: 'Booking snapshot not found.',
-        });
-      }
+        if (!snapshot) {
+          throw new NotFoundException({
+            code: ErrorCode.NOT_FOUND,
+            message: 'Booking snapshot not found.',
+          });
+        }
 
-      const now = new Date();
-      if (new Date(snapshot.expiresAt) <= now) {
-        // T3: Transition booking status to failed
-        await this.stateMachine.transitionTo(
+        const now = new Date();
+        if (new Date(snapshot.expiresAt) <= now) {
+          // T3: mark failed, then commit — throwing inside this transaction
+          // would roll the transition back, so the 409 is raised outside.
+          await this.stateMachine.transitionTo(
+            manager,
+            booking.id,
+            BookingStatus.Failed,
+            user.id,
+            'offer_expired',
+          );
+          return { expired: true };
+        }
+
+        // 3. Resolve or create Payment record
+        let payment = await manager
+          .getRepository(Payment)
+          .findOneBy({ bookingId: booking.id });
+        if (!payment) {
+          payment = new Payment();
+          payment.bookingId = booking.id;
+          payment.provider = PaymentProvider.Paymob;
+          payment.status = PaymentStatus.Pending;
+          payment.amount = booking.totalAmount;
+          payment.currency = booking.currency;
+          payment = await manager.save(Payment, payment);
+        }
+
+        // 4. Register Paymob order + payment key.
+        // Paymob requires billing data; the lead adult passenger carries the
+        // contact fields T2 already validated.
+        const billing = await this.resolveBillingData(
           manager,
           booking.id,
-          BookingStatus.Failed,
-          user.id,
-          'offer_expired',
+          user,
         );
-        throw new ConflictException({
-          code: ErrorCode.OFFER_EXPIRED,
-          message: 'The flight offer has expired.',
-        });
-      }
 
-      // 3. Resolve or create Payment record
-      let payment = await manager
-        .getRepository(Payment)
-        .findOneBy({ bookingId: booking.id });
-      if (!payment) {
-        payment = new Payment();
-        payment.bookingId = booking.id;
-        payment.provider = PaymentProvider.Stripe;
-        payment.status = PaymentStatus.Pending;
-        payment.amount = booking.totalAmount;
-        payment.currency = booking.currency;
-        payment = await manager.save(Payment, payment);
-      }
+        // merchant_order_id must be unique per Paymob order, so retries
+        // (new attempts) get a fresh suffix while staying traceable.
+        const merchantOrderId = `${booking.id}:${randomUUID().slice(0, 8)}`;
 
-      // 4. Create Stripe PaymentIntent
-      const intent = await this.stripeService.createPaymentIntent(
-        booking.totalAmount,
-        booking.currency,
-        booking.id,
-      );
+        const paymentKey = await this.paymobService.createPaymentKey(
+          booking.totalAmount,
+          booking.currency,
+          merchantOrderId,
+          billing,
+        );
 
-      // 5. Create new PaymentAttempt record
-      const attempt = new PaymentAttempt();
-      attempt.paymentId = payment.id;
-      attempt.providerReferenceId = intent.id;
-      attempt.status = this.mapStripeStatusToAttemptStatus(intent.status);
-      attempt.method = 'card'; // default method
+        // 5. Create new PaymentAttempt record keyed by the Paymob order id —
+        // that is what transaction webhooks carry (obj.order.id).
+        const attempt = new PaymentAttempt();
+        attempt.paymentId = payment.id;
+        attempt.providerReferenceId = paymentKey.orderId;
+        attempt.status = PaymentAttemptStatus.RequiresAction;
+        attempt.method = 'card'; // default method
 
-      await manager.save(PaymentAttempt, attempt);
+        await manager.save(PaymentAttempt, attempt);
 
-      return {
-        provider: 'stripe',
-        client_secret: intent.client_secret,
-        amount: payment.amount,
-        currency: payment.currency,
-      };
-    });
+        return {
+          expired: false,
+          payload: {
+            provider: 'paymob',
+            payment_token: paymentKey.paymentKey,
+            iframe_url: paymentKey.iframeUrl,
+            amount: payment.amount,
+            currency: payment.currency,
+          },
+        };
+      },
+    );
+
+    if (outcome.expired) {
+      throw new ConflictException({
+        code: ErrorCode.OFFER_EXPIRED,
+        message: 'The flight offer has expired.',
+      });
+    }
+
+    return outcome.payload;
   }
 
   /**
@@ -216,22 +255,28 @@ export class PaymentsService {
     };
   }
 
-  private mapStripeStatusToAttemptStatus(
-    stripeStatus: string,
-  ): PaymentAttemptStatus {
-    switch (stripeStatus) {
-      case 'succeeded':
-        return PaymentAttemptStatus.Succeeded;
-      case 'processing':
-        return PaymentAttemptStatus.Processing;
-      case 'requires_action':
-      case 'requires_payment_method':
-      case 'requires_confirmation':
-      case 'requires_capture':
-        return PaymentAttemptStatus.RequiresAction;
-      case 'canceled':
-      default:
-        return PaymentAttemptStatus.Failed;
-    }
+  private async resolveBillingData(
+    manager: EntityManager,
+    bookingId: string,
+    user: User,
+  ): Promise<{
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone_number: string;
+  }> {
+    const passengers = await manager
+      .getRepository(Passenger)
+      .find({ where: { bookingId } });
+
+    const lead =
+      passengers.find((p) => p.type === PassengerType.Adult) ?? passengers[0];
+
+    return {
+      first_name: lead?.givenName || user.fullName || 'NA',
+      last_name: lead?.familyName || 'NA',
+      email: lead?.email || user.email,
+      phone_number: lead?.phoneNumber || 'NA',
+    };
   }
 }

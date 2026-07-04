@@ -21,17 +21,18 @@ describe('PaymentWebhookProcessor', () => {
 
   const mockWebhookEvent = {
     id: 'evt_123',
-    provider: 'stripe',
-    providerEventId: 'evt_id_stripe',
-    eventType: 'payment_intent.succeeded',
+    provider: 'paymob',
+    providerEventId: '99999:transaction.succeeded',
+    eventType: 'transaction.succeeded',
     payload: {
-      data: {
-        object: {
-          id: 'pi_123',
-          amount: 10500,
-          metadata: {
-            booking_id: 'booking_123',
-          },
+      type: 'TRANSACTION',
+      obj: {
+        id: 99999,
+        pending: false,
+        success: true,
+        amount_cents: 10500,
+        order: {
+          id: 12345,
         },
       },
     },
@@ -41,8 +42,8 @@ describe('PaymentWebhookProcessor', () => {
   const mockAttempt = {
     id: 'att_123',
     paymentId: 'pay_123',
-    providerReferenceId: 'pi_123',
-    status: PaymentAttemptStatus.Processing,
+    providerReferenceId: '12345',
+    status: PaymentAttemptStatus.RequiresAction,
   };
 
   const mockPayment = {
@@ -133,7 +134,7 @@ describe('PaymentWebhookProcessor', () => {
       'booking_123',
       BookingStatus.Paid,
       null,
-      'Stripe payment intent succeeded',
+      'Paymob transaction succeeded',
     );
 
     expect(mockEntityManager.save).toHaveBeenCalledWith(

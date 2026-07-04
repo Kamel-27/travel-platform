@@ -5,18 +5,19 @@ import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 
 import { PaymentsService } from './payments.service';
-import { StripeService } from './stripe.service';
+import { PaymobService } from './paymob.service';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
 import { Payment } from '../entities/payment.entity';
 import { PaymentAttempt } from '../entities/payment-attempt.entity';
 import { Refund } from '../entities/refund.entity';
 import { Booking, BookingStatus } from '../../bookings/entities/booking.entity';
 import { FlightOfferSnapshot } from '../../bookings/entities/flight-offer-snapshot.entity';
+import { Passenger } from '../../bookings/entities/passenger.entity';
 import { User, UserRole } from '../../users/user.entity';
 
 describe('PaymentsService', () => {
   let service: PaymentsService;
-  let stripeService: StripeService;
+  let paymobService: PaymobService;
   let mockEntityManager: any;
 
   const mockUser: User = {
@@ -57,7 +58,7 @@ describe('PaymentsService', () => {
             findOneBy: jest.fn().mockImplementation(() => {
               const s = new FlightOfferSnapshot();
               s.bookingId = 'booking_123';
-              s.expiresAt = new Date(Date.now() + 600000);
+              s.expiresAt = new Date(Date.now() + 600000); // 10 mins in future
               return Promise.resolve(s);
             }),
           };
@@ -65,6 +66,11 @@ describe('PaymentsService', () => {
         if (cls === Payment) {
           return {
             findOneBy: jest.fn().mockResolvedValue(null),
+          };
+        }
+        if (cls === Passenger) {
+          return {
+            find: jest.fn().mockResolvedValue([]),
           };
         }
         return {};
@@ -79,12 +85,12 @@ describe('PaymentsService', () => {
       providers: [
         PaymentsService,
         {
-          provide: StripeService,
+          provide: PaymobService,
           useValue: {
-            createPaymentIntent: jest.fn().mockResolvedValue({
-              id: 'pi_123',
-              client_secret: 'pi_123_secret_123',
-              status: 'requires_payment_method',
+            createPaymentKey: jest.fn().mockResolvedValue({
+              orderId: 'paymob_order_123',
+              paymentKey: 'paymob_key_123',
+              iframeUrl: 'https://iframe_url',
             }),
           },
         },
@@ -120,22 +126,24 @@ describe('PaymentsService', () => {
     }).compile();
 
     service = module.get<PaymentsService>(PaymentsService);
-    stripeService = module.get<StripeService>(StripeService);
+    paymobService = module.get<PaymobService>(PaymobService);
   });
 
   describe('createOrGetPaymentAttempt', () => {
-    it('should successfully create a stripe payment intent and save payment attempt', async () => {
+    it('should successfully create a paymob order and return payment details', async () => {
       const result = await service.createOrGetPaymentAttempt(
         mockUser,
         'booking_123',
       );
 
-      expect(stripeService.createPaymentIntent).toHaveBeenCalledWith(
+      expect(paymobService.createPaymentKey).toHaveBeenCalledWith(
         10500,
         'USD',
-        'booking_123',
+        expect.stringContaining('booking_123'),
+        expect.any(Object),
       );
-      expect(result.client_secret).toBe('pi_123_secret_123');
+      expect(result.payment_token).toBe('paymob_key_123');
+      expect(result.iframe_url).toBe('https://iframe_url');
       expect(result.amount).toBe(10500);
       expect(result.currency).toBe('USD');
     });
@@ -148,18 +156,23 @@ describe('PaymentsService', () => {
     });
 
     it('should throw ConflictException if booking is not awaiting_payment status', async () => {
-      mockEntityManager.getRepository = jest.fn().mockReturnValueOnce({
-        createQueryBuilder: jest.fn().mockReturnValueOnce({
-          setLock: jest.fn().mockReturnThis(),
-          where: jest.fn().mockReturnThis(),
-          getOne: jest.fn().mockImplementationOnce(() => {
-            const b = new Booking();
-            b.id = 'booking_123';
-            b.userId = 'user_123';
-            b.status = BookingStatus.Paid; // Already paid
-            return Promise.resolve(b);
-          }),
-        }),
+      mockEntityManager.getRepository = jest.fn().mockImplementation((cls) => {
+        if (cls === Booking) {
+          return {
+            createQueryBuilder: jest.fn().mockReturnValue({
+              setLock: jest.fn().mockReturnThis(),
+              where: jest.fn().mockReturnThis(),
+              getOne: jest.fn().mockImplementation(() => {
+                const b = new Booking();
+                b.id = 'booking_123';
+                b.userId = 'user_123';
+                b.status = BookingStatus.Paid; // Already paid
+                return Promise.resolve(b);
+              }),
+            }),
+          };
+        }
+        return {};
       });
 
       await expect(

@@ -6,7 +6,7 @@ export class CreatePaymentTables1751900000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     // 1. Create custom payment enums
     await queryRunner.query(
-      `CREATE TYPE "payment_provider" AS ENUM ('stripe')`,
+      `CREATE TYPE "payment_provider" AS ENUM ('stripe', 'paymob')`,
     );
     await queryRunner.query(
       `CREATE TYPE "payment_status" AS ENUM ('pending', 'succeeded', 'failed', 'refunded', 'partially_refunded')`,

@@ -11,7 +11,7 @@ import { Refund } from './entities/refund.entity';
 import { PaymentsController } from './payments.controller';
 import { WebhooksController } from './webhooks.controller';
 import { PaymentsService } from './services/payments.service';
-import { StripeService } from './services/stripe.service';
+import { PaymobService } from './services/paymob.service';
 import { PaymentWebhookProcessor } from './queues/payment-webhook.processor';
 import { PaymentWebhookSweepService } from './services/payment-webhook-sweep.service';
 
@@ -24,17 +24,17 @@ import { PaymentWebhookSweepService } from './services/payment-webhook-sweep.ser
       Refund,
     ]),
     BullModule.registerQueue({
-      name: 'stripe_webhook_queue',
+      name: 'payment_webhook_queue',
     }),
     BookingsModule,
   ],
   controllers: [PaymentsController, WebhooksController],
   providers: [
     PaymentsService,
-    StripeService,
+    PaymobService,
     PaymentWebhookProcessor,
     PaymentWebhookSweepService,
   ],
-  exports: [PaymentsService, StripeService],
+  exports: [PaymentsService, PaymobService],
 })
 export class PaymentsModule {}

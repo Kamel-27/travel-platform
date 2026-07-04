@@ -12,6 +12,7 @@ import { Booking } from '../../bookings/entities/booking.entity';
 
 export enum PaymentProvider {
   Stripe = 'stripe',
+  Paymob = 'paymob',
 }
 
 export enum PaymentStatus {

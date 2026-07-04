@@ -14,7 +14,7 @@ import {
 import { Booking, BookingStatus } from '../../bookings/entities/booking.entity';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
 
-@Processor('stripe_webhook_queue')
+@Processor('payment_webhook_queue')
 export class PaymentWebhookProcessor extends WorkerHost {
   private readonly logger = new Logger(PaymentWebhookProcessor.name);
 
@@ -28,7 +28,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
 
   async process(job: Job<{ eventId: string }>): Promise<void> {
     const { eventId } = job.data;
-    this.logger.log(`Processing stripe webhook job for event: ${eventId}`);
+    this.logger.log(`Processing paymob webhook job for event: ${eventId}`);
 
     // Process inside transaction
     await this.entityManager.transaction(async (manager) => {
@@ -52,32 +52,52 @@ export class PaymentWebhookProcessor extends WorkerHost {
         return;
       }
 
-      const stripeEventObj = webhookEvent.payload;
-      const intentObj = stripeEventObj.data?.object;
-      if (!intentObj) {
+      const transaction = webhookEvent.payload.obj;
+      if (!transaction) {
         this.logger.warn(
-          `Stripe event ${eventId} payload does not contain data.object.`,
+          `Paymob event ${eventId} payload does not contain obj.`,
         );
         webhookEvent.processedAt = new Date();
         await manager.save(PaymentWebhookEvent, webhookEvent);
         return;
       }
 
-      const intentId = intentObj.id;
+      // Pending (e.g. 3DS in flight) carries no final outcome — ack and wait
+      // for the terminal callback.
+      if (webhookEvent.eventType === 'transaction.pending') {
+        webhookEvent.processedAt = new Date();
+        await manager.save(PaymentWebhookEvent, webhookEvent);
+        return;
+      }
+
+      // Attempts are keyed by the Paymob order id (obj.order.id)
+      const paymobOrderId =
+        transaction.order?.id !== undefined
+          ? String(transaction.order.id)
+          : null;
+
+      if (!paymobOrderId) {
+        this.logger.warn(
+          `Paymob event ${eventId} transaction carries no order id.`,
+        );
+        webhookEvent.processedAt = new Date();
+        await manager.save(PaymentWebhookEvent, webhookEvent);
+        return;
+      }
 
       // 1. Resolve Attempt
       const attempt = await manager.getRepository(PaymentAttempt).findOne({
-        where: { providerReferenceId: intentId },
+        where: { providerReferenceId: paymobOrderId },
       });
 
       if (!attempt) {
         // Race condition: webhook arrived before backend finished creating attempt.
         // Throw error so BullMQ retries the job.
         this.logger.warn(
-          `PaymentAttempt with reference ${intentId} not found yet. Retrying job.`,
+          `PaymentAttempt with reference ${paymobOrderId} not found yet. Retrying job.`,
         );
         throw new Error(
-          `Attempt reference ${intentId} not found, retry scheduled.`,
+          `Attempt reference ${paymobOrderId} not found, retry scheduled.`,
         );
       }
 
@@ -107,13 +127,13 @@ export class PaymentWebhookProcessor extends WorkerHost {
       webhookEvent.paymentAttemptId = attempt.id;
 
       // 3. Process outcomes
-      if (webhookEvent.eventType === 'payment_intent.succeeded') {
-        const stripeAmount = intentObj.amount as number;
-        if (stripeAmount !== booking.totalAmount) {
+      if (webhookEvent.eventType === 'transaction.succeeded') {
+        const paidAmount = transaction.amount_cents as number;
+        if (paidAmount !== booking.totalAmount) {
           this.logger.error(
-            `Stripe payment amount mismatch. Event has ${stripeAmount}, Booking expects ${booking.totalAmount}.`,
+            `Paymob payment amount mismatch. Event has ${paidAmount}, Booking expects ${booking.totalAmount}.`,
           );
-          throw new Error('Stripe payment amount mismatch');
+          throw new Error('Paymob payment amount mismatch');
         }
 
         // T4 transition: awaiting_payment -> paid
@@ -122,7 +142,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
           booking.id,
           BookingStatus.Paid,
           null, // system transition
-          'Stripe payment intent succeeded',
+          'Paymob transaction succeeded',
         );
 
         // Update payment and attempt statuses
@@ -136,10 +156,10 @@ export class PaymentWebhookProcessor extends WorkerHost {
         this.logger.log(
           `Booking ${booking.id} payment verified. Enqueuing order creation (stub).`,
         );
-      } else if (webhookEvent.eventType === 'payment_intent.payment_failed') {
+      } else if (webhookEvent.eventType === 'transaction.failed') {
         attempt.status = PaymentAttemptStatus.Failed;
         attempt.failureReason =
-          intentObj.last_payment_error?.message || 'Payment method declined';
+          transaction.data?.message || 'Transaction declined';
 
         await manager.save(PaymentAttempt, attempt);
         // Note: Booking stays awaiting_payment to allow retry
@@ -149,7 +169,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
       webhookEvent.processedAt = new Date();
       await manager.save(PaymentWebhookEvent, webhookEvent);
       this.logger.log(
-        `Successfully processed stripe webhook event: ${eventId}`,
+        `Successfully processed paymob webhook event: ${eventId}`,
       );
     });
   }

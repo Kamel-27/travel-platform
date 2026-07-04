@@ -13,7 +13,7 @@ export class PaymentWebhookSweepService {
   constructor(
     @InjectRepository(PaymentWebhookEvent)
     private readonly webhookRepo: Repository<PaymentWebhookEvent>,
-    @InjectQueue('stripe_webhook_queue')
+    @InjectQueue('payment_webhook_queue')
     private readonly webhookQueue: Queue,
   ) {}
 
