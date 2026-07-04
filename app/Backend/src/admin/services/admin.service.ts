@@ -1,0 +1,601 @@
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import { InjectEntityManager, InjectRepository } from '@nestjs/typeorm';
+import {
+  EntityManager,
+  FindOptionsWhere,
+  IsNull,
+  LessThan,
+  Repository,
+} from 'typeorm';
+
+import { User } from '../../users/user.entity';
+import { RefreshToken } from '../../auth/entities/refresh-token.entity';
+import { Booking, BookingStatus } from '../../bookings/entities/booking.entity';
+import {
+  MarkupRule,
+  MarkupType,
+} from '../../bookings/entities/markup-rule.entity';
+import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
+import { PaymentWebhookEvent } from '../../payments/entities/payment-webhook-event.entity';
+import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
+import { DuffelService } from '../../duffel/duffel.service';
+import { PaymobService } from '../../payments/services/paymob.service';
+import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
+import { AuditLogService } from './audit-log.service';
+import { ErrorCode } from '../../common/dto/error-response.dto';
+import {
+  CreateMarkupRuleDto,
+  UpdateMarkupRuleDto,
+} from '../dto/markup-rule.dto';
+import { ListBookingsQueryDto } from '../dto/list-bookings-query.dto';
+import { ListUsersQueryDto } from '../dto/list-users-query.dto';
+
+/** Bookings stuck in `paid` longer than this show up in the health report. */
+const STUCK_PAID_WINDOW_MS = 15 * 60 * 1000;
+
+@Injectable()
+export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
+  constructor(
+    @InjectEntityManager()
+    private readonly entityManager: EntityManager,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+    @InjectRepository(Booking)
+    private readonly bookingRepo: Repository<Booking>,
+    @InjectRepository(Payment)
+    private readonly paymentRepo: Repository<Payment>,
+    @InjectRepository(Refund)
+    private readonly refundRepo: Repository<Refund>,
+    @InjectRepository(MarkupRule)
+    private readonly markupRuleRepo: Repository<MarkupRule>,
+    @InjectRepository(PaymentWebhookEvent)
+    private readonly webhookEventRepo: Repository<PaymentWebhookEvent>,
+    private readonly duffelService: DuffelService,
+    private readonly paymobService: PaymobService,
+    private readonly stateMachine: BookingStateMachineService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
+
+  // ── Users ───────────────────────────────────────────────────────
+
+  async listUsers(query: ListUsersQueryDto): Promise<{
+    users: Record<string, unknown>[];
+    total: number;
+    limit: number;
+    offset: number;
+  }> {
+    const limit = query.limit ?? 20;
+    const offset = query.offset ?? 0;
+
+    const where: FindOptionsWhere<User> = {};
+    if (query.email) where.email = query.email;
+    if (query.role) where.role = query.role;
+    if (query.is_active !== undefined) where.isActive = query.is_active;
+
+    const [users, total] = await this.userRepo.findAndCount({
+      where,
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+
+    return {
+      users: users.map((u) => this.mapUser(u)),
+      total,
+      limit,
+      offset,
+    };
+  }
+
+  /**
+   * Activate/deactivate a user account. Deactivation also revokes all of the
+   * user's refresh tokens, so the session ends at the next token refresh
+   * (access tokens self-expire within their TTL).
+   */
+  async updateUser(
+    adminUserId: string,
+    userId: string,
+    isActive: boolean,
+  ): Promise<Record<string, unknown>> {
+    if (userId === adminUserId && !isActive) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message: 'Admins cannot deactivate their own account.',
+      });
+    }
+
+    const updated = await this.entityManager.transaction(async (manager) => {
+      const user = await manager.getRepository(User).findOneBy({ id: userId });
+      if (!user) {
+        throw new NotFoundException({
+          code: ErrorCode.NOT_FOUND,
+          message: 'User not found.',
+        });
+      }
+
+      user.isActive = isActive;
+      const saved = await manager.save(User, user);
+
+      if (!isActive) {
+        await manager
+          .getRepository(RefreshToken)
+          .update({ userId, revokedAt: IsNull() }, { revokedAt: new Date() });
+      }
+
+      await this.auditLogService.logAction(
+        manager,
+        adminUserId,
+        'user.update',
+        'user',
+        userId,
+        { is_active: isActive },
+      );
+
+      return saved;
+    });
+
+    this.logger.log(
+      `Admin ${adminUserId} ${isActive ? 'activated' : 'deactivated'} user ${userId}`,
+    );
+
+    return this.mapUser(updated);
+  }
+
+  // ── Bookings ────────────────────────────────────────────────────
+
+  async listBookings(query: ListBookingsQueryDto): Promise<{
+    bookings: Record<string, unknown>[];
+    total: number;
+    limit: number;
+    offset: number;
+  }> {
+    const limit = query.limit ?? 20;
+    const offset = query.offset ?? 0;
+
+    const where: FindOptionsWhere<Booking> = {};
+    if (query.status) where.status = query.status;
+    if (query.user_id) where.userId = query.user_id;
+    if (query.reference) where.bookingReference = query.reference;
+
+    const [bookings, total] = await this.bookingRepo.findAndCount({
+      where,
+      relations: { user: true },
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+
+    return {
+      bookings: bookings.map((b) => ({
+        id: b.id,
+        user_id: b.userId,
+        user_email: b.user?.email ?? null,
+        status: b.status,
+        booking_reference: b.bookingReference,
+        supplier_order_id: b.supplierOrderId,
+        base_amount: b.baseAmount,
+        markup_amount: b.markupAmount,
+        total_amount: b.totalAmount,
+        currency: b.currency,
+        created_at: b.createdAt,
+        updated_at: b.updatedAt,
+      })),
+      total,
+      limit,
+      offset,
+    };
+  }
+
+  /**
+   * T7 manual cancel for confirmed bookings that aren't auto-approvable.
+   * Cancels the order at Duffel first (two-step quote + confirm), then
+   * transitions the booking and writes the audit row in one transaction.
+   */
+  async cancelBooking(
+    adminUserId: string,
+    bookingId: string,
+    reason?: string,
+  ): Promise<Record<string, unknown>> {
+    const booking = await this.bookingRepo.findOneBy({ id: bookingId });
+    if (!booking) {
+      throw new NotFoundException({
+        code: ErrorCode.NOT_FOUND,
+        message: 'Booking not found.',
+      });
+    }
+
+    if (booking.status !== BookingStatus.Confirmed) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message: `Only confirmed bookings can be cancelled. Current status: ${booking.status}.`,
+      });
+    }
+
+    // Cancel at the supplier first — if Duffel rejects or is unavailable,
+    // the booking must stay confirmed.
+    let supplierRefundAmount = 0;
+    if (booking.supplierOrderId) {
+      const result = await this.duffelService.cancelOrder(
+        booking.supplierOrderId,
+      );
+      supplierRefundAmount = result.refundAmount;
+    }
+
+    const cancelReason = reason ?? 'admin_manual_cancel';
+
+    await this.entityManager.transaction(async (manager) => {
+      await this.stateMachine.transitionTo(
+        manager,
+        booking.id,
+        BookingStatus.Cancelled,
+        adminUserId,
+        cancelReason,
+      );
+
+      await this.auditLogService.logAction(
+        manager,
+        adminUserId,
+        'booking.cancel',
+        'booking',
+        booking.id,
+        {
+          reason: cancelReason,
+          supplier_order_id: booking.supplierOrderId,
+          supplier_refund_amount: supplierRefundAmount,
+        },
+      );
+    });
+
+    this.logger.log(
+      `Admin ${adminUserId} cancelled booking ${booking.id} (supplier refund: ${supplierRefundAmount} ${booking.currency})`,
+    );
+
+    return {
+      id: booking.id,
+      status: BookingStatus.Cancelled,
+      supplier_refund_amount: supplierRefundAmount,
+      currency: booking.currency,
+    };
+  }
+
+  // ── Payments ────────────────────────────────────────────────────
+
+  /**
+   * Executes a manual refund through the payment gateway (Paymob), records
+   * the Refund row, rolls up the Payment status, and — when the booking is
+   * fully refunded from a cancelled/order_failed state — transitions it to
+   * `refunded`.
+   */
+  async refundPayment(
+    adminUserId: string,
+    paymentId: string,
+    amount: number,
+    reason?: string,
+  ): Promise<Record<string, unknown>> {
+    const payment = await this.paymentRepo.findOneBy({ id: paymentId });
+    if (!payment) {
+      throw new NotFoundException({
+        code: ErrorCode.NOT_FOUND,
+        message: 'Payment not found.',
+      });
+    }
+
+    if (
+      payment.status !== PaymentStatus.Succeeded &&
+      payment.status !== PaymentStatus.PartiallyRefunded
+    ) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message: `Payment in status ${payment.status} cannot be refunded.`,
+      });
+    }
+
+    const alreadyRefunded = await this.sumSucceededRefunds(payment.id);
+    if (alreadyRefunded + amount > payment.amount) {
+      throw new UnprocessableEntityException({
+        code: ErrorCode.VALIDATION_ERROR,
+        message: `Refund of ${amount} exceeds the remaining refundable amount (${payment.amount - alreadyRefunded}).`,
+      });
+    }
+
+    const transactionId = await this.resolvePaymobTransactionId(payment.id);
+
+    // Execute at the gateway first — DB rows are only written for refunds
+    // Paymob actually accepted.
+    const { refundId } = await this.paymobService.refundTransaction(
+      transactionId,
+      amount,
+    );
+
+    const fullyRefunded = alreadyRefunded + amount >= payment.amount;
+
+    const refund = await this.entityManager.transaction(async (manager) => {
+      const row = new Refund();
+      row.paymentId = payment.id;
+      row.providerRefundId = refundId;
+      row.amount = amount;
+      row.currency = payment.currency;
+      row.status = RefundStatus.Succeeded;
+      row.reason = reason ?? 'admin_manual_refund';
+      row.initiatedByUserId = adminUserId;
+      const saved = await manager.save(Refund, row);
+
+      payment.status = fullyRefunded
+        ? PaymentStatus.Refunded
+        : PaymentStatus.PartiallyRefunded;
+      await manager.save(Payment, payment);
+
+      // Full refund closes out cancelled / order_failed bookings.
+      if (fullyRefunded) {
+        const booking = await manager
+          .getRepository(Booking)
+          .findOneBy({ id: payment.bookingId });
+        if (
+          booking &&
+          (booking.status === BookingStatus.Cancelled ||
+            booking.status === BookingStatus.OrderFailed)
+        ) {
+          await this.stateMachine.transitionTo(
+            manager,
+            booking.id,
+            BookingStatus.Refunded,
+            adminUserId,
+            'admin_manual_refund',
+          );
+        }
+      }
+
+      await this.auditLogService.logAction(
+        manager,
+        adminUserId,
+        'payment.refund',
+        'payment',
+        payment.id,
+        {
+          refund_id: saved.id,
+          provider_refund_id: refundId,
+          amount,
+          currency: payment.currency,
+          reason: reason ?? null,
+          fully_refunded: fullyRefunded,
+        },
+      );
+
+      return saved;
+    });
+
+    this.logger.log(
+      `Admin ${adminUserId} refunded ${amount} ${payment.currency} on payment ${payment.id} (provider refund ${refundId})`,
+    );
+
+    return {
+      id: refund.id,
+      payment_id: payment.id,
+      provider_refund_id: refund.providerRefundId,
+      amount: refund.amount,
+      currency: refund.currency,
+      status: refund.status,
+      payment_status: payment.status,
+    };
+  }
+
+  // ── Markup rules ────────────────────────────────────────────────
+
+  async listMarkupRules(): Promise<Record<string, unknown>[]> {
+    const rules = await this.markupRuleRepo.find({
+      order: { createdAt: 'DESC' },
+    });
+    return rules.map((r) => this.mapMarkupRule(r));
+  }
+
+  /**
+   * Creates a markup rule. Activating it deactivates the previously active
+   * rule inside the same transaction (the partial unique index on
+   * is_active = true is the backstop).
+   */
+  async createMarkupRule(
+    adminUserId: string,
+    dto: CreateMarkupRuleDto,
+  ): Promise<Record<string, unknown>> {
+    this.validateMarkupValue(dto.type, dto.value);
+
+    const saved = await this.entityManager.transaction(async (manager) => {
+      if (dto.is_active) {
+        await this.deactivateActiveRule(manager);
+      }
+
+      const rule = new MarkupRule();
+      rule.type = dto.type;
+      rule.value = String(dto.value);
+      rule.isActive = dto.is_active ?? false;
+      rule.createdByUserId = adminUserId;
+      const created = await manager.save(MarkupRule, rule);
+
+      await this.auditLogService.logAction(
+        manager,
+        adminUserId,
+        'markup_rule.create',
+        'markup_rule',
+        created.id,
+        { type: dto.type, value: dto.value, is_active: created.isActive },
+      );
+
+      return created;
+    });
+
+    return this.mapMarkupRule(saved);
+  }
+
+  async updateMarkupRule(
+    adminUserId: string,
+    ruleId: string,
+    dto: UpdateMarkupRuleDto,
+  ): Promise<Record<string, unknown>> {
+    const saved = await this.entityManager.transaction(async (manager) => {
+      const rule = await manager
+        .getRepository(MarkupRule)
+        .findOneBy({ id: ruleId });
+      if (!rule) {
+        throw new NotFoundException({
+          code: ErrorCode.NOT_FOUND,
+          message: 'Markup rule not found.',
+        });
+      }
+
+      if (dto.value !== undefined) {
+        this.validateMarkupValue(rule.type, dto.value);
+        rule.value = String(dto.value);
+      }
+
+      if (dto.is_active === true && !rule.isActive) {
+        await this.deactivateActiveRule(manager);
+        rule.isActive = true;
+      } else if (dto.is_active === false) {
+        rule.isActive = false;
+      }
+
+      const updated = await manager.save(MarkupRule, rule);
+
+      await this.auditLogService.logAction(
+        manager,
+        adminUserId,
+        'markup_rule.update',
+        'markup_rule',
+        rule.id,
+        { value: dto.value ?? null, is_active: dto.is_active ?? null },
+      );
+
+      return updated;
+    });
+
+    return this.mapMarkupRule(saved);
+  }
+
+  // ── Health ──────────────────────────────────────────────────────
+
+  /**
+   * Duffel operational dashboard: API auth status + hourly error rate,
+   * webhook processing backlog, and bookings stuck in `paid`.
+   */
+  async getDuffelHealth(): Promise<Record<string, unknown>> {
+    const metrics = await this.duffelService.getMetrics();
+
+    const stuckCutoff = new Date(Date.now() - STUCK_PAID_WINDOW_MS);
+    const stuckInPaid = await this.bookingRepo.countBy({
+      status: BookingStatus.Paid,
+      updatedAt: LessThan(stuckCutoff),
+    });
+
+    const unprocessedCount = await this.webhookEventRepo.countBy({
+      processedAt: IsNull(),
+    });
+    const oldestUnprocessed = await this.webhookEventRepo.findOne({
+      where: { processedAt: IsNull() },
+      order: { receivedAt: 'ASC' },
+    });
+    const oldestAgeSeconds = oldestUnprocessed
+      ? Math.round(
+          (Date.now() - new Date(oldestUnprocessed.receivedAt).getTime()) /
+            1000,
+        )
+      : 0;
+
+    return {
+      duffel: {
+        configured: metrics.configured,
+        requests_last_hour: metrics.requestsLastHour,
+        errors_last_hour: metrics.errorsLastHour,
+        recent_error_rate: metrics.recentErrorRate,
+      },
+      webhooks: {
+        unprocessed_count: unprocessedCount,
+        oldest_unprocessed_age_seconds: oldestAgeSeconds,
+      },
+      bookings_stuck_in_paid: stuckInPaid,
+    };
+  }
+
+  // ── Internals ───────────────────────────────────────────────────
+
+  private async sumSucceededRefunds(paymentId: string): Promise<number> {
+    const refunds = await this.refundRepo.findBy({
+      paymentId,
+      status: RefundStatus.Succeeded,
+    });
+    return refunds.reduce((sum, r) => sum + r.amount, 0);
+  }
+
+  /**
+   * The Paymob refund API needs the transaction id (webhook payload obj.id).
+   * Attempts only store the Paymob order id, so it is read back from the
+   * stored `transaction.succeeded` webhook event.
+   */
+  private async resolvePaymobTransactionId(paymentId: string): Promise<number> {
+    const event = await this.webhookEventRepo.findOne({
+      where: { paymentId, eventType: 'transaction.succeeded' },
+      order: { receivedAt: 'DESC' },
+    });
+
+    const payload = event?.payload as { obj?: { id?: unknown } } | undefined;
+    const rawId: unknown = payload?.obj?.id;
+    const transactionId = typeof rawId === 'number' ? rawId : Number(rawId);
+
+    if (!rawId || Number.isNaN(transactionId)) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message:
+          'No succeeded gateway transaction found for this payment; cannot refund.',
+      });
+    }
+
+    return transactionId;
+  }
+
+  private async deactivateActiveRule(manager: EntityManager): Promise<void> {
+    await manager
+      .getRepository(MarkupRule)
+      .update({ isActive: true }, { isActive: false });
+  }
+
+  private validateMarkupValue(type: MarkupType, value: number): void {
+    if (type === MarkupType.Percentage && value > 100) {
+      throw new UnprocessableEntityException({
+        code: ErrorCode.VALIDATION_ERROR,
+        message: 'Percentage markup cannot exceed 100.',
+      });
+    }
+  }
+
+  private mapUser(user: User): Record<string, unknown> {
+    return {
+      id: user.id,
+      email: user.email,
+      full_name: user.fullName,
+      phone: user.phone,
+      role: user.role,
+      is_active: user.isActive,
+      email_verified_at: user.emailVerifiedAt,
+      created_at: user.createdAt,
+    };
+  }
+
+  private mapMarkupRule(rule: MarkupRule): Record<string, unknown> {
+    return {
+      id: rule.id,
+      type: rule.type,
+      value: parseFloat(rule.value),
+      is_active: rule.isActive,
+      created_by_user_id: rule.createdByUserId,
+      created_at: rule.createdAt,
+      updated_at: rule.updatedAt,
+    };
+  }
+}

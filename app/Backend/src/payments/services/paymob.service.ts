@@ -89,6 +89,10 @@ export class PaymobService {
     }
   }
 
+  isConfigured(): boolean {
+    return !!this.apiKey && !!this.integrationId;
+  }
+
   /**
    * Runs the Paymob three-step intention flow:
    * auth token -> order registration -> payment key.
@@ -202,6 +206,31 @@ export class PaymobService {
       return false;
     }
     return timingSafeEqual(expectedBuf, receivedBuf);
+  }
+
+  /**
+   * Refund a processed transaction.
+   * POST /acceptance/void_refund/refund
+   */
+  async refundTransaction(
+    transactionId: number,
+    amountCents: number,
+  ): Promise<{ refundId: string }> {
+    this.assertConfigured();
+    const token = await this.authenticate();
+
+    const result = await this.postJson<{ id: number }>(
+      '/acceptance/void_refund/refund',
+      {
+        auth_token: token,
+        transaction_id: transactionId,
+        amount_cents: amountCents,
+      },
+    );
+
+    return {
+      refundId: String(result.id),
+    };
   }
 
   // ── Internals ─────────────────────────────────────────────────────
