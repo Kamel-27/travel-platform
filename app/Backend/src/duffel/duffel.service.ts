@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call */
 import {
   Injectable,
   Logger,
@@ -50,6 +50,7 @@ export interface NormalizedOffer {
   passenger_identity_documents_required: boolean;
   slices: NormalizedSlice[];
   conditions: NormalizedConditions;
+  passengers: { id: string; type: string }[];
 }
 
 @Injectable()
@@ -324,6 +325,11 @@ export class DuffelService {
         (raw.passenger_identity_documents_required as boolean) ?? false,
       slices,
       conditions,
+      passengers:
+        raw.passengers?.map((p: any) => ({
+          id: p.id as string,
+          type: p.type as string,
+        })) ?? [],
     };
   }
 
