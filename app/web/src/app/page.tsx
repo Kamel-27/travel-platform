@@ -1,138 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-
-// ---------------------------------------------------------------------------
-// Airport data (shared with flights page)
-// ---------------------------------------------------------------------------
-
-interface Airport {
-  code: string;
-  city: string;
-  cityAr: string;
-  country: string;
-  countryAr: string;
-}
-
-const AIRPORTS: Airport[] = [
-  { code: "RUH", city: "Riyadh", cityAr: "الرياض", country: "Saudi Arabia", countryAr: "السعودية" },
-  { code: "JED", city: "Jeddah", cityAr: "جدة", country: "Saudi Arabia", countryAr: "السعودية" },
-  { code: "DMM", city: "Dammam", cityAr: "الدمام", country: "Saudi Arabia", countryAr: "السعودية" },
-  { code: "MED", city: "Medina", cityAr: "المدينة المنورة", country: "Saudi Arabia", countryAr: "السعودية" },
-  { code: "DXB", city: "Dubai", cityAr: "دبي", country: "UAE", countryAr: "الإمارات" },
-  { code: "AUH", city: "Abu Dhabi", cityAr: "أبوظبي", country: "UAE", countryAr: "الإمارات" },
-  { code: "SHJ", city: "Sharjah", cityAr: "الشارقة", country: "UAE", countryAr: "الإمارات" },
-  { code: "DOH", city: "Doha", cityAr: "الدوحة", country: "Qatar", countryAr: "قطر" },
-  { code: "BAH", city: "Bahrain", cityAr: "البحرين", country: "Bahrain", countryAr: "البحرين" },
-  { code: "KWI", city: "Kuwait", cityAr: "الكويت", country: "Kuwait", countryAr: "الكويت" },
-  { code: "MCT", city: "Muscat", cityAr: "مسقط", country: "Oman", countryAr: "عمان" },
-  { code: "AMM", city: "Amman", cityAr: "عمّان", country: "Jordan", countryAr: "الأردن" },
-  { code: "BEY", city: "Beirut", cityAr: "بيروت", country: "Lebanon", countryAr: "لبنان" },
-  { code: "CAI", city: "Cairo", cityAr: "القاهرة", country: "Egypt", countryAr: "مصر" },
-  { code: "IST", city: "Istanbul", cityAr: "إسطنبول", country: "Turkey", countryAr: "تركيا" },
-  { code: "LHR", city: "London", cityAr: "لندن", country: "United Kingdom", countryAr: "بريطانيا" },
-  { code: "CDG", city: "Paris", cityAr: "باريس", country: "France", countryAr: "فرنسا" },
-  { code: "JFK", city: "New York", cityAr: "نيويورك", country: "United States", countryAr: "أمريكا" },
-  { code: "BKK", city: "Bangkok", cityAr: "بانكوك", country: "Thailand", countryAr: "تايلاند" },
-  { code: "KUL", city: "Kuala Lumpur", cityAr: "كوالالمبور", country: "Malaysia", countryAr: "ماليزيا" },
-];
-
-const POPULAR_CODES = ["RUH", "JED", "DXB", "DOH", "CAI", "IST", "LHR", "CDG"];
-
-function searchAirports(query: string): Airport[] {
-  if (!query.trim()) return AIRPORTS.filter((a) => POPULAR_CODES.includes(a.code));
-  const q = query.toLowerCase();
-  return AIRPORTS.filter(
-    (a) =>
-      a.code.toLowerCase().includes(q) ||
-      a.city.toLowerCase().includes(q) ||
-      a.cityAr.includes(q) ||
-      a.country.toLowerCase().includes(q) ||
-      a.countryAr.includes(q)
-  ).slice(0, 8);
-}
-
-function getAirportByCode(code: string): Airport | undefined {
-  return AIRPORTS.find((a) => a.code === code.toUpperCase());
-}
-
-function getDisplayLabel(code: string): string {
-  const airport = getAirportByCode(code);
-  return airport ? `${airport.cityAr} (${airport.code})` : code;
-}
-
-function HomeAirportInput({
-  icon,
-  value,
-  onChange,
-  placeholder,
-}: {
-  icon: string;
-  value: string;
-  onChange: (code: string) => void;
-  placeholder: string;
-}) {
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const results = useMemo<Airport[]>(() => searchAirports(query), [query]);
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
-
-  const displayValue = value ? getDisplayLabel(value) : "";
-
-  return (
-    <div className="relative" ref={ref}>
-      <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline">{icon}</span>
-      <input
-        className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 focus:border-primary focus:ring-0 font-body-md text-body-md transition-all"
-        value={open ? query : displayValue}
-        onChange={(e) => { setQuery(e.target.value); if (!open) setOpen(true); }}
-        onFocus={() => { setOpen(true); setQuery(""); }}
-        placeholder={placeholder}
-      />
-      {open && results.length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
-          {!query.trim() && (
-            <div className="px-3 py-1.5 text-on-surface-variant font-label-sm text-label-sm border-b border-outline-variant/50">
-              المطارات الشائعة
-            </div>
-          )}
-          {results.map((airport) => (
-            <button
-              key={airport.code}
-              type="button"
-              className="w-full text-right px-3 py-2.5 hover:bg-primary-container/40 transition-colors flex items-center gap-3 cursor-pointer"
-              onMouseDown={(e) => { e.preventDefault(); onChange(airport.code); setQuery(""); setOpen(false); }}
-            >
-              <span className="material-symbols-outlined text-outline text-[20px]">flight</span>
-              <div className="flex-1">
-                <div className="font-body-md text-on-surface">
-                  {airport.cityAr}
-                  <span className="text-on-surface-variant font-label-sm mr-2">{airport.countryAr}</span>
-                </div>
-              </div>
-              <span className="font-title-md text-primary font-bold">{airport.code}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
+import AirportInput from "@/components/AirportInput";
+import { useAuth } from "@/lib/auth-context";
 
 export default function HomepagePage() {
 
   const router = useRouter();
+  const { isAuthenticated, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('flights');
   const [flightOrigin, setFlightOrigin] = useState("RUH");
   const [flightDest, setFlightDest] = useState("DXB");
@@ -185,9 +62,18 @@ export default function HomepagePage() {
 <button className="material-symbols-outlined p-2 hover:bg-surface-container transition-colors rounded-full" data-icon="notifications">notifications</button>
 <span className="font-label-md text-label-md px-2">USD / AR</span>
 </div>
-<Link href="/signin" className="bg-primary text-on-primary px-md py-2 rounded-lg font-label-md text-label-md scale-98 active:scale-95 transition-transform duration-200 text-center flex items-center justify-center">
-  تسجيل الدخول
-</Link>
+{isAuthenticated ? (
+  <div className="flex items-center gap-sm">
+    <Link href="/user-dashboard" className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors">حسابي</Link>
+    <button onClick={() => logout()} className="bg-surface-container-high text-on-surface px-md py-2 rounded-lg font-label-md text-label-md hover:bg-surface-container-highest transition-all">
+      تسجيل الخروج
+    </button>
+  </div>
+) : (
+  <Link href="/signin" className="bg-primary text-on-primary px-md py-2 rounded-lg font-label-md text-label-md scale-98 active:scale-95 transition-transform duration-200 text-center flex items-center justify-center">
+    تسجيل الدخول
+  </Link>
+)}
 </div>
 </div>
 </header>
@@ -237,11 +123,11 @@ export default function HomepagePage() {
     <div className="grid grid-cols-1 md:grid-cols-12 gap-base items-end">
       <div className="md:col-span-3 space-y-xs">
         <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">من أين؟</label>
-        <HomeAirportInput icon="flight_takeoff" value={flightOrigin} onChange={setFlightOrigin} placeholder="اختر مطار المغادرة" />
+        <AirportInput icon="flight_takeoff" value={flightOrigin} onChange={setFlightOrigin} placeholder="اختر مطار المغادرة" />
       </div>
       <div className="md:col-span-3 space-y-xs">
         <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">إلى أين؟</label>
-        <HomeAirportInput icon="flight_land" value={flightDest} onChange={setFlightDest} placeholder="اختر مطار الوصول" />
+        <AirportInput icon="flight_land" value={flightDest} onChange={setFlightDest} placeholder="اختر مطار الوصول" />
       </div>
       <div className={tripType === "round-trip" ? "md:col-span-2 space-y-xs" : "md:col-span-5 space-y-xs"}>
         <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">{tripType === "round-trip" ? "الذهاب" : "التاريخ"}</label>

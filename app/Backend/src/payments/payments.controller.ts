@@ -1,8 +1,8 @@
 import { Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { JwtPayload } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { User } from '../users/user.entity';
 import { PaymentsService } from './services/payments.service';
 
 @Controller('bookings')
@@ -16,7 +16,7 @@ export class PaymentsController {
   @Post(':id/payment-intent')
   @UseGuards(JwtAuthGuard)
   async createPaymentIntent(
-    @CurrentUser() user: User,
+    @CurrentUser() user: JwtPayload,
     @Param('id') bookingId: string,
   ): Promise<any> {
     return this.paymentsService.createOrGetPaymentAttempt(user, bookingId);
@@ -29,7 +29,7 @@ export class PaymentsController {
   @Get(':id/payment')
   @UseGuards(JwtAuthGuard)
   async getPaymentRollup(
-    @CurrentUser() user: User,
+    @CurrentUser() user: JwtPayload,
     @Param('id') bookingId: string,
   ): Promise<any> {
     return this.paymentsService.getPaymentRollup(user, bookingId);

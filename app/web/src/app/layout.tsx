@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import DesignSwitcher from "./switcher";
+import { AuthProvider } from "@/lib/auth-context";
 
 export const metadata: Metadata = {
   title: "سفريات | Safariyat - وجهتك الأولى للسفر",
@@ -28,8 +28,7 @@ export default function RootLayout({
         />
       </head>
       <body className="safariyat min-h-screen bg-background text-on-surface">
-        {children}
-        <DesignSwitcher />
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );

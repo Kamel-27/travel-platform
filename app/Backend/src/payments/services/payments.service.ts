@@ -29,6 +29,7 @@ import { Refund } from '../entities/refund.entity';
 import { User, UserRole } from '../../users/user.entity';
 import { ErrorCode } from '../../common/dto/error-response.dto';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
+import type { JwtPayload } from '../../auth/guards/jwt-auth.guard';
 
 interface CreateAttemptResult {
   provider: string;
@@ -64,7 +65,7 @@ export class PaymentsService {
    * Enforces rules around booking statuses and offer expiration dates.
    */
   async createOrGetPaymentAttempt(
-    user: User,
+    user: JwtPayload,
     bookingId: string,
   ): Promise<CreateAttemptResult> {
     const outcome = await this.entityManager.transaction<CreateAttemptOutcome>(
@@ -84,7 +85,7 @@ export class PaymentsService {
           });
         }
 
-        if (booking.userId !== user.id) {
+        if (booking.userId !== user.sub) {
           throw new ForbiddenException({
             code: ErrorCode.FORBIDDEN,
             message: 'Access denied to this booking.',
@@ -119,7 +120,7 @@ export class PaymentsService {
             manager,
             booking.id,
             BookingStatus.Failed,
-            user.id,
+            user.sub,
             'offer_expired',
           );
           return { expired: true };
@@ -141,11 +142,16 @@ export class PaymentsService {
 
         // 4. Register Paymob order + payment key.
         // Paymob requires billing data; the lead adult passenger carries the
-        // contact fields T2 already validated.
+        // contact fields T2 already validated. The account's own name/email
+        // are only a defensive fallback, so look them up here rather than
+        // widen the JwtPayload the guard hands us.
+        const accountUser = await manager
+          .getRepository(User)
+          .findOneBy({ id: user.sub });
         const billing = await this.resolveBillingData(
           manager,
           booking.id,
-          user,
+          accountUser,
         );
 
         // merchant_order_id must be unique per Paymob order, so retries
@@ -195,7 +201,7 @@ export class PaymentsService {
   /**
    * Retrieves payment rollup summary (Payment, PaymentAttempts, Refunds).
    */
-  async getPaymentRollup(user: User, bookingId: string): Promise<any> {
+  async getPaymentRollup(user: JwtPayload, bookingId: string): Promise<any> {
     const booking = await this.entityManager
       .getRepository(Booking)
       .findOneBy({ id: bookingId });
@@ -206,7 +212,7 @@ export class PaymentsService {
       });
     }
 
-    if (booking.userId !== user.id && user.role !== UserRole.TechnicalAdmin) {
+    if (booking.userId !== user.sub && user.role !== UserRole.TechnicalAdmin) {
       throw new ForbiddenException({
         code: ErrorCode.FORBIDDEN,
         message: 'Access denied to this booking payment details.',
@@ -258,7 +264,7 @@ export class PaymentsService {
   private async resolveBillingData(
     manager: EntityManager,
     bookingId: string,
-    user: User,
+    user: User | null,
   ): Promise<{
     first_name: string;
     last_name: string;
@@ -273,9 +279,9 @@ export class PaymentsService {
       passengers.find((p) => p.type === PassengerType.Adult) ?? passengers[0];
 
     return {
-      first_name: lead?.givenName || user.fullName || 'NA',
+      first_name: lead?.givenName || user?.fullName || 'NA',
       last_name: lead?.familyName || 'NA',
-      email: lead?.email || user.email,
+      email: lead?.email || user?.email || 'NA',
       phone_number: lead?.phoneNumber || 'NA',
     };
   }

@@ -18,7 +18,8 @@ import { randomUUID } from 'crypto';
 import { REDIS_CLIENT } from '../../redis/redis.module';
 import { DuffelService } from '../../duffel/duffel.service';
 import { ErrorCode } from '../../common/dto/error-response.dto';
-import { User, UserRole } from '../../users/user.entity';
+import { UserRole } from '../../users/user.entity';
+import type { JwtPayload } from '../../auth/guards/jwt-auth.guard';
 import { Booking, BookingStatus, Supplier } from '../entities/booking.entity';
 import { FlightOfferSnapshot } from '../entities/flight-offer-snapshot.entity';
 import { Slice } from '../entities/slice.entity';
@@ -76,7 +77,7 @@ export class BookingsService {
    * T1: Revalidates offer against Duffel, locks/checks rate limits,
    * calculates markup, and stores Booking (pending) + FlightOfferSnapshot.
    */
-  async createBooking(user: User, offerId: string): Promise<any> {
+  async createBooking(user: JwtPayload, offerId: string): Promise<any> {
     // 1. Check outbound rate limit
     await this.checkOutboundRateLimit();
 
@@ -104,7 +105,7 @@ export class BookingsService {
     const booking = await this.entityManager.transaction(async (manager) => {
       // A. Create Booking row
       const newBooking = new Booking();
-      newBooking.userId = user.id;
+      newBooking.userId = user.sub;
       newBooking.markupRuleId = ruleId;
       newBooking.status = BookingStatus.Pending;
       newBooking.supplier = Supplier.Duffel;
@@ -168,7 +169,7 @@ export class BookingsService {
       await this.stateMachine.recordInitialHistory(
         manager,
         savedBooking.id,
-        user.id,
+        user.sub,
       );
 
       return savedBooking;
@@ -195,7 +196,7 @@ export class BookingsService {
    * Returns a dummy Stripe client secret to fulfill the checkout contract.
    */
   async savePassengers(
-    user: User,
+    user: JwtPayload,
     bookingId: string,
     passengerInputs: PassengerInputDto[],
   ): Promise<any> {
@@ -215,7 +216,7 @@ export class BookingsService {
         });
       }
 
-      if (booking.userId !== user.id) {
+      if (booking.userId !== user.sub) {
         throw new ForbiddenException({
           code: ErrorCode.FORBIDDEN,
           message: 'Access denied to this booking.',
@@ -248,7 +249,7 @@ export class BookingsService {
           manager,
           booking.id,
           BookingStatus.Failed,
-          user.id,
+          user.sub,
           'offer_expired',
         );
         throw new ConflictException({
@@ -376,7 +377,7 @@ export class BookingsService {
         manager,
         booking.id,
         BookingStatus.AwaitingPayment,
-        user.id,
+        user.sub,
         'Passengers details saved',
       );
 
@@ -395,14 +396,14 @@ export class BookingsService {
    * Retrieves cursor-paginated list of user's bookings, newest first.
    */
   async getBookings(
-    user: User,
+    user: JwtPayload,
     limit = 10,
     cursor?: string,
   ): Promise<{ data: Booking[]; next_cursor: string | null }> {
     const queryBuilder = this.bookingRepo
       .createQueryBuilder('booking')
       .leftJoinAndSelect('booking.markupRule', 'markupRule')
-      .where('booking.userId = :userId', { userId: user.id })
+      .where('booking.userId = :userId', { userId: user.sub })
       .orderBy('booking.createdAt', 'DESC')
       .addOrderBy('booking.id', 'DESC')
       .take(limit + 1);
@@ -442,7 +443,7 @@ export class BookingsService {
   /**
    * Resolves complete detail of a single booking, verifying ownership/admin rights.
    */
-  async getBookingDetail(user: User, bookingId: string): Promise<any> {
+  async getBookingDetail(user: JwtPayload, bookingId: string): Promise<any> {
     const booking = await this.bookingRepo.findOne({
       where: { id: bookingId },
       relations: { markupRule: true },
@@ -455,7 +456,7 @@ export class BookingsService {
       });
     }
 
-    if (booking.userId !== user.id && user.role !== UserRole.TechnicalAdmin) {
+    if (booking.userId !== user.sub && user.role !== UserRole.TechnicalAdmin) {
       throw new ForbiddenException({
         code: ErrorCode.FORBIDDEN,
         message: 'Access denied to this booking.',
@@ -549,7 +550,10 @@ export class BookingsService {
    * cancelled service). This is an estimate — the real cancel call
    * recomputes from Duffel's actual response, never trusting this figure.
    */
-  async getCancellationQuote(user: User, bookingId: string): Promise<any> {
+  async getCancellationQuote(
+    user: JwtPayload,
+    bookingId: string,
+  ): Promise<any> {
     const booking = await this.bookingRepo.findOneBy({ id: bookingId });
     if (!booking) {
       throw new NotFoundException({
@@ -557,7 +561,7 @@ export class BookingsService {
         message: 'Booking not found.',
       });
     }
-    if (booking.userId !== user.id) {
+    if (booking.userId !== user.sub) {
       throw new ForbiddenException({
         code: ErrorCode.FORBIDDEN,
         message: 'Access denied to this booking.',
@@ -586,7 +590,7 @@ export class BookingsService {
    * returns 202-equivalent without touching Duffel or booking state.
    */
   async cancelBooking(
-    user: User,
+    user: JwtPayload,
     bookingId: string,
     reason?: string,
   ): Promise<any> {
@@ -597,7 +601,7 @@ export class BookingsService {
         message: 'Booking not found.',
       });
     }
-    if (booking.userId !== user.id) {
+    if (booking.userId !== user.sub) {
       throw new ForbiddenException({
         code: ErrorCode.FORBIDDEN,
         message: 'Access denied to this booking.',
@@ -621,7 +625,7 @@ export class BookingsService {
       await this.bookingRepo.save(booking);
 
       this.logger.log(
-        `User ${user.id} requested cancellation of booking ${booking.id} — routed to technical_admin (not auto-approvable).`,
+        `User ${user.sub} requested cancellation of booking ${booking.id} — routed to technical_admin (not auto-approvable).`,
       );
 
       return {
@@ -668,7 +672,7 @@ export class BookingsService {
           manager,
           booking.id,
           BookingStatus.Cancelled,
-          user.id,
+          user.sub,
           cancelReason,
         );
 
@@ -677,13 +681,13 @@ export class BookingsService {
           refundId,
           amount: customerReceivesAmount,
           reason: cancelReason,
-          initiatedByUserId: user.id,
+          initiatedByUserId: user.sub,
         });
       },
     );
 
     this.logger.log(
-      `User ${user.id} cancelled booking ${booking.id} (customer receives ${customerReceivesAmount} ${booking.currency})`,
+      `User ${user.sub} cancelled booking ${booking.id} (customer receives ${customerReceivesAmount} ${booking.currency})`,
     );
 
     return {
@@ -704,7 +708,7 @@ export class BookingsService {
    * always null in Phase 1: PDF generation + blob storage are still an M4
    * TODO stub (contract deviation, documented in the PR).
    */
-  async getDocuments(user: User, bookingId: string): Promise<any> {
+  async getDocuments(user: JwtPayload, bookingId: string): Promise<any> {
     const booking = await this.bookingRepo.findOneBy({ id: bookingId });
     if (!booking) {
       throw new NotFoundException({
@@ -712,7 +716,7 @@ export class BookingsService {
         message: 'Booking not found.',
       });
     }
-    if (booking.userId !== user.id && user.role !== UserRole.TechnicalAdmin) {
+    if (booking.userId !== user.sub && user.role !== UserRole.TechnicalAdmin) {
       throw new ForbiddenException({
         code: ErrorCode.FORBIDDEN,
         message: 'Access denied to this booking.',

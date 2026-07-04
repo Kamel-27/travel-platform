@@ -1,429 +1,347 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { api, ApiError } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
+import { setReturnPath } from "@/lib/return-path";
+import { formatMoney } from "@/lib/money";
+import { formatFlightTime, formatIsoDuration } from "@/lib/datetime";
+import { getAirportLabel } from "@/lib/airports";
+import type { Booking, NormalizedOffer, PassengerInput, PassengerType } from "@/lib/types";
 
-export default function CheckoutPage() {
-  const [passenger, setPassenger] = useState({
-    firstName: "",
-    lastName: "",
-    passportNumber: "",
-    passportExpiry: "",
-    birthDate: "",
-  });
+type Phase = "loading" | "offer_error" | "review" | "creating" | "passengers";
 
-  const [contact, setContact] = useState({
-    email: "",
-    phone: "",
-  });
+function errorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 410) return "انتهت صلاحية هذا العرض، يرجى البحث عن رحلة جديدة";
+    if (err.status === 503) return "الخدمة غير متاحة حالياً، يرجى المحاولة لاحقاً";
+    return err.message;
+  }
+  return "حدث خطأ غير متوقع";
+}
 
-  // Extras pricing states
-  const [insurance, setInsurance] = useState(false);
-  const [extraBaggage, setExtraBaggage] = useState(false);
-  const [hotMeals, setHotMeals] = useState(false);
+const EMPTY_PASSENGER = (type: PassengerType): PassengerInput => ({
+  type,
+  title: "mr",
+  gender: "m",
+  given_name: "",
+  family_name: "",
+  date_of_birth: "",
+  email: "",
+  phone_number: "",
+});
 
-  // Pricing calculations
-  const baseFlightPrice = 1250;
-  const flightTaxes = 180;
-  const insurancePrice = 75;
-  const baggagePrice = 150;
-  const mealsPrice = 60;
+function CheckoutInner() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const { isAuthenticated } = useAuth();
+  const offerId = searchParams.get("offer_id");
+  const idempotencyKeyRef = useRef<string>(crypto.randomUUID());
 
-  const getExtrasTotal = () => {
-    let total = 0;
-    if (insurance) total += insurancePrice;
-    if (extraBaggage) total += baggagePrice;
-    if (hotMeals) total += mealsPrice;
-    return total;
+  const [phase, setPhase] = useState<Phase>(offerId ? "loading" : "offer_error");
+  const [offer, setOffer] = useState<NormalizedOffer | null>(null);
+  const [offerError, setOfferError] = useState<string | null>(
+    offerId ? null : "لم يتم تحديد رحلة للحجز",
+  );
+  const [booking, setBooking] = useState<Booking | null>(null);
+  const [passengers, setPassengers] = useState<PassengerInput[]>([]);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSubmittingPassengers, setIsSubmittingPassengers] = useState(false);
+  const requiresDocuments = booking?.passenger_requirements?.passenger_identity_documents_required ?? false;
+
+  useEffect(() => {
+    if (!offerId) return;
+    let cancelled = false;
+    void Promise.resolve().then(async () => {
+      try {
+        const result = await api.get<{ data: NormalizedOffer }>(
+          `/flights/offers/${encodeURIComponent(offerId)}`,
+          { skipAuth: true, skipAuthRetry: true },
+        );
+        if (cancelled) return;
+        setOffer(result.data);
+        setPhase("review");
+      } catch (err) {
+        if (cancelled) return;
+        setOfferError(errorMessage(err));
+        setPhase("offer_error");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [offerId]);
+
+  const handleSignInToContinue = () => {
+    setReturnPath(`/checkout?offer_id=${encodeURIComponent(offerId ?? "")}`);
+    router.push("/signin");
   };
 
-  const totalPrice = baseFlightPrice + flightTaxes + getExtrasTotal();
+  const handleCreateBooking = useCallback(async () => {
+    if (!offerId) return;
+    setPhase("creating");
+    setSubmitError(null);
+    try {
+      const result = await api.post<Booking>(
+        "/bookings",
+        { offer_id: offerId },
+        { headers: { "Idempotency-Key": idempotencyKeyRef.current } },
+      );
+      setBooking(result);
+      const types = (result.passenger_requirements?.passengers ?? []).map((p) => p.type as PassengerType);
+      setPassengers(types.map((t) => EMPTY_PASSENGER(t)));
+      setPhase("passengers");
+    } catch (err) {
+      setSubmitError(errorMessage(err));
+      setPhase(err instanceof ApiError && err.status === 410 ? "offer_error" : "review");
+    }
+  }, [offerId]);
 
-  const handlePassengerChange = (field: string, value: string) => {
-    setPassenger((prev) => ({ ...prev, [field]: value }));
+  const updatePassenger = (index: number, patch: Partial<PassengerInput>) => {
+    setPassengers((prev) => prev.map((p, i) => (i === index ? { ...p, ...patch } : p)));
   };
 
-  const handleContactChange = (field: string, value: string) => {
-    setContact((prev) => ({ ...prev, [field]: value }));
+  const adultIndices = useMemo(
+    () => passengers.map((p, i) => ({ p, i })).filter(({ p }) => p.type === "adult"),
+    [passengers],
+  );
+
+  const handleSubmitPassengers = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!booking) return;
+    setIsSubmittingPassengers(true);
+    setSubmitError(null);
+    try {
+      await api.put(`/bookings/${booking.id}/passengers`, { passengers });
+      router.push(`/checkout/payment?booking_id=${booking.id}`);
+    } catch (err) {
+      setSubmitError(errorMessage(err));
+      setIsSubmittingPassengers(false);
+    }
   };
+
+  if (phase === "loading") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <span className="material-symbols-outlined text-primary text-5xl animate-spin">progress_activity</span>
+      </div>
+    );
+  }
+
+  if (phase === "offer_error") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-base text-center p-4">
+        <span className="material-symbols-outlined text-error text-5xl">error</span>
+        <p className="font-title-md text-title-md text-on-surface">{offerError}</p>
+        <Link href="/flights" className="bg-primary text-on-primary px-md py-sm rounded-lg font-label-md text-label-md">
+          العودة للبحث
+        </Link>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-background text-on-surface font-sans" dir="rtl">
-      {/* TopNavBar */}
-      <header className="bg-surface-container-lowest dark:bg-inverse-surface shadow-sm sticky top-0 z-50 border-b border-outline-variant">
-        <div className="flex justify-between items-center w-full px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto h-16">
-          <div className="flex items-center gap-md">
-            <Link href="/" className="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary dark:text-inverse-primary">
-              سفريات
-            </Link>
-            <nav className="hidden md:flex items-center gap-base">
-              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors px-xs" href="/">
-                رحلات طيران
-              </Link>
-              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors px-xs" href="/hotels">
-                فنادق
-              </Link>
-              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors px-xs" href="/support">
-                الدعم والمساعدة
-              </Link>
-              <Link className="text-primary dark:text-inverse-primary font-bold border-b-2 border-primary dark:border-inverse-primary pb-1 font-label-md text-label-md px-xs" href="/manage-bookings">
-                رحلاتي
-              </Link>
-            </nav>
-          </div>
-          <div className="flex items-center gap-sm">
-            <div className="hidden md:flex items-center gap-xs text-on-surface-variant">
-              <span className="material-symbols-outlined hover:text-primary cursor-pointer">language</span>
-              <span className="material-symbols-outlined hover:text-primary cursor-pointer">currency_exchange</span>
-              <span className="material-symbols-outlined hover:text-primary cursor-pointer">notifications</span>
-            </div>
-            <Link href="/signin" className="bg-primary text-on-primary px-md py-xs rounded-lg font-label-md text-label-md scale-98 active:scale-95 transition-all text-center">
-              تسجيل الدخول
-            </Link>
-          </div>
+    <div className="min-h-screen bg-background text-on-surface" dir="rtl">
+      <header className="bg-surface-container-lowest shadow-sm border-b border-outline-variant">
+        <div className="max-w-4xl mx-auto px-4 h-16 flex items-center">
+          <Link href="/" className="font-headline-md text-headline-md font-bold text-primary">سفريات</Link>
         </div>
       </header>
 
-      {/* Main Content Canvas */}
-      <main className="max-w-max-width mx-auto px-margin-mobile md:px-margin-desktop pt-lg pb-xl">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-lg">
-          {/* Right Column: Form (Main Action) */}
-          <div className="lg:col-span-8 space-y-md">
-            <h1 className="font-headline-lg text-headline-lg text-primary font-bold mb-base">إتمام بيانات الحجز</h1>
-            
-            {/* Section 1: Passenger Details */}
-            <section className="bg-surface-container-lowest p-md rounded-xl border border-outline-variant shadow-sm">
-              <div className="flex items-center gap-sm mb-md border-b border-outline-variant/30 pb-sm">
-                <span className="material-symbols-outlined text-primary text-2xl">person</span>
-                <h2 className="font-title-lg text-title-lg font-bold">بيانات المسافر 1 (بالغ)</h2>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
-                <div className="space-y-xs">
-                  <label className="font-label-md text-label-md text-on-surface-variant block font-medium">الاسم الأول بالإنجليزية</label>
-                  <div className="relative">
-                    <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline">badge</span>
-                    <input 
-                      className="w-full pr-10 pl-4 py-3 bg-surface rounded-lg border border-outline-variant font-body-md outline-none focus:border-primary focus:ring-1 focus:ring-primary" 
-                      placeholder="e.g. MOHAMMED" 
-                      type="text"
-                      value={passenger.firstName}
-                      onChange={(e) => handlePassengerChange("firstName", e.target.value)}
-                    />
-                  </div>
+      <main className="max-w-4xl mx-auto px-4 py-lg grid grid-cols-1 md:grid-cols-3 gap-lg">
+        <section className="md:col-span-2 space-y-md">
+          {(phase === "review" || phase === "creating") && (
+            <div className="bg-surface-container-lowest rounded-xl border border-outline-variant p-md space-y-base">
+              <h2 className="font-title-lg text-title-lg">مراجعة الحجز</h2>
+              {submitError && <p className="font-label-sm text-label-sm text-error">{submitError}</p>}
+              {isAuthenticated ? (
+                <button
+                  onClick={handleCreateBooking}
+                  disabled={phase === "creating"}
+                  className="w-full bg-primary text-on-primary py-3 rounded-lg font-label-md text-label-md disabled:opacity-60"
+                >
+                  {phase === "creating" ? "جارِ إنشاء الحجز..." : "متابعة الحجز"}
+                </button>
+              ) : (
+                <button
+                  onClick={handleSignInToContinue}
+                  className="w-full bg-primary text-on-primary py-3 rounded-lg font-label-md text-label-md"
+                >
+                  سجّل الدخول للمتابعة
+                </button>
+              )}
+            </div>
+          )}
+
+          {phase === "passengers" && booking && (
+            <form onSubmit={handleSubmitPassengers} className="space-y-md">
+              {submitError && (
+                <div className="bg-error-container/20 border border-error rounded-xl p-md">
+                  <p className="font-label-sm text-label-sm text-error">{submitError}</p>
                 </div>
-                <div className="space-y-xs">
-                  <label className="font-label-md text-label-md text-on-surface-variant block font-medium">اسم العائلة بالإنجليزية</label>
-                  <div className="relative">
-                    <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline">badge</span>
-                    <input 
-                      className="w-full pr-10 pl-4 py-3 bg-surface rounded-lg border border-outline-variant font-body-md outline-none focus:border-primary focus:ring-1 focus:ring-primary" 
-                      placeholder="e.g. ALOTAIBI" 
-                      type="text"
-                      value={passenger.lastName}
-                      onChange={(e) => handlePassengerChange("lastName", e.target.value)}
+              )}
+              {passengers.map((passenger, index) => (
+                <div key={index} className="bg-surface-container-lowest rounded-xl border border-outline-variant p-md space-y-sm">
+                  <h3 className="font-title-md text-title-md">
+                    المسافر {index + 1} ({passenger.type === "adult" ? "بالغ" : passenger.type === "child" ? "طفل" : "رضيع"})
+                  </h3>
+                  <div className="grid grid-cols-2 gap-sm">
+                    <select
+                      value={passenger.title}
+                      onChange={(e) => updatePassenger(index, { title: e.target.value as PassengerInput["title"] })}
+                      className="bg-surface-container-low border border-outline-variant rounded-lg py-2 px-3"
+                    >
+                      <option value="mr">السيد</option>
+                      <option value="mrs">السيدة</option>
+                      <option value="ms">الآنسة</option>
+                      <option value="miss">آنسة</option>
+                    </select>
+                    <select
+                      value={passenger.gender}
+                      onChange={(e) => updatePassenger(index, { gender: e.target.value as PassengerInput["gender"] })}
+                      className="bg-surface-container-low border border-outline-variant rounded-lg py-2 px-3"
+                    >
+                      <option value="m">ذكر</option>
+                      <option value="f">أنثى</option>
+                    </select>
+                    <input
+                      required
+                      placeholder="الاسم الأول"
+                      value={passenger.given_name}
+                      onChange={(e) => updatePassenger(index, { given_name: e.target.value })}
+                      className="bg-surface-container-low border border-outline-variant rounded-lg py-2 px-3"
                     />
-                  </div>
-                </div>
-                <div className="space-y-xs">
-                  <label className="font-label-md text-label-md text-on-surface-variant block font-medium">رقم جواز السفر</label>
-                  <div className="relative">
-                    <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline">travel</span>
-                    <input 
-                      className="w-full pr-10 pl-4 py-3 bg-surface rounded-lg border border-outline-variant font-body-md outline-none focus:border-primary focus:ring-1 focus:ring-primary" 
-                      placeholder="e.g. L1234567" 
-                      type="text"
-                      value={passenger.passportNumber}
-                      onChange={(e) => handlePassengerChange("passportNumber", e.target.value)}
+                    <input
+                      required
+                      placeholder="اسم العائلة"
+                      value={passenger.family_name}
+                      onChange={(e) => updatePassenger(index, { family_name: e.target.value })}
+                      className="bg-surface-container-low border border-outline-variant rounded-lg py-2 px-3"
                     />
-                  </div>
-                </div>
-                <div className="space-y-xs">
-                  <label className="font-label-md text-label-md text-on-surface-variant block font-medium">تاريخ انتهاء الجواز</label>
-                  <div className="relative">
-                    <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline">event</span>
-                    <input 
-                      className="w-full pr-10 pl-4 py-3 bg-surface rounded-lg border border-outline-variant font-body-md outline-none focus:border-primary focus:ring-1 focus:ring-primary" 
+                    <input
+                      required
                       type="date"
-                      value={passenger.passportExpiry}
-                      onChange={(e) => handlePassengerChange("passportExpiry", e.target.value)}
+                      value={passenger.date_of_birth}
+                      onChange={(e) => updatePassenger(index, { date_of_birth: e.target.value })}
+                      className="bg-surface-container-low border border-outline-variant rounded-lg py-2 px-3"
                     />
-                  </div>
-                </div>
-                <div className="space-y-xs md:col-span-2">
-                  <label className="font-label-md text-label-md text-on-surface-variant block font-medium">تاريخ الميلاد</label>
-                  <div className="relative">
-                    <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline">cake</span>
-                    <input 
-                      className="w-full pr-10 pl-4 py-3 bg-surface rounded-lg border border-outline-variant font-body-md outline-none focus:border-primary focus:ring-1 focus:ring-primary" 
-                      type="date"
-                      value={passenger.birthDate}
-                      onChange={(e) => handlePassengerChange("birthDate", e.target.value)}
-                    />
-                  </div>
-                </div>
-              </div>
-            </section>
-            
-            {/* Section 2: Contact Information */}
-            <section className="bg-surface-container-lowest p-md rounded-xl border border-outline-variant shadow-sm">
-              <div className="flex items-center gap-sm mb-md border-b border-outline-variant/30 pb-sm">
-                <span className="material-symbols-outlined text-primary text-2xl">contact_mail</span>
-                <h2 className="font-title-lg text-title-lg font-bold">معلومات التواصل</h2>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
-                <div className="space-y-xs">
-                  <label className="font-label-md text-label-md text-on-surface-variant block font-medium">البريد الإلكتروني</label>
-                  <div className="relative">
-                    <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline">mail</span>
-                    <input 
-                      className="w-full pr-10 pl-4 py-3 bg-surface rounded-lg border border-outline-variant font-body-md outline-none focus:border-primary focus:ring-1 focus:ring-primary text-right" 
-                      placeholder="example@email.com" 
+                    <input
+                      required
                       type="email"
-                      value={contact.email}
-                      onChange={(e) => handleContactChange("email", e.target.value)}
+                      dir="ltr"
+                      placeholder="email@example.com"
+                      value={passenger.email}
+                      onChange={(e) => updatePassenger(index, { email: e.target.value })}
+                      className="bg-surface-container-low border border-outline-variant rounded-lg py-2 px-3"
                     />
+                    <input
+                      required
+                      type="tel"
+                      dir="ltr"
+                      placeholder="+9665XXXXXXXX"
+                      value={passenger.phone_number}
+                      onChange={(e) => updatePassenger(index, { phone_number: e.target.value })}
+                      className="bg-surface-container-low border border-outline-variant rounded-lg py-2 px-3 col-span-2"
+                    />
+                    {passenger.type === "infant" && (
+                      <select
+                        required
+                        value={passenger.responsible_adult_index ?? ""}
+                        onChange={(e) => updatePassenger(index, { responsible_adult_index: Number(e.target.value) })}
+                        className="bg-surface-container-low border border-outline-variant rounded-lg py-2 px-3 col-span-2"
+                      >
+                        <option value="" disabled>البالغ المسؤول</option>
+                        {adultIndices.map(({ i }) => (
+                          <option key={i} value={i}>المسافر {i + 1}</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
-                </div>
-                <div className="space-y-xs">
-                  <label className="font-label-md text-label-md text-on-surface-variant block font-medium">رقم الهاتف</label>
-                  <div className="flex gap-xs" dir="ltr">
-                    <div className="w-24 bg-surface border border-outline-variant rounded-lg flex items-center justify-center gap-xs font-body-md text-on-surface">
-                      <span className="material-symbols-outlined text-sm">flag</span>
-                      <span>+966</span>
-                    </div>
-                    <div className="relative flex-1">
-                      <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline">phone</span>
-                      <input 
-                        className="w-full pr-10 pl-4 py-3 bg-surface rounded-lg border border-outline-variant font-body-md outline-none focus:border-primary focus:ring-1 focus:ring-primary text-left" 
-                        placeholder="50XXXXXXX" 
-                        type="tel"
-                        value={contact.phone}
-                        onChange={(e) => handleContactChange("phone", e.target.value)}
+
+                  {requiresDocuments && (
+                    <div className="grid grid-cols-2 gap-sm pt-sm border-t border-outline-variant/50">
+                      <input
+                        required
+                        placeholder="نوع الوثيقة (passport)"
+                        value={passenger.document?.type ?? ""}
+                        onChange={(e) => updatePassenger(index, { document: { ...passenger.document, type: e.target.value } as PassengerInput["document"] })}
+                        className="bg-surface-container-low border border-outline-variant rounded-lg py-2 px-3"
+                      />
+                      <input
+                        required
+                        placeholder="رقم جواز السفر"
+                        value={passenger.document?.number ?? ""}
+                        onChange={(e) => updatePassenger(index, { document: { ...passenger.document, number: e.target.value } as PassengerInput["document"] })}
+                        className="bg-surface-container-low border border-outline-variant rounded-lg py-2 px-3"
+                      />
+                      <input
+                        required
+                        type="date"
+                        placeholder="تاريخ الانتهاء"
+                        value={passenger.document?.expiry ?? ""}
+                        onChange={(e) => updatePassenger(index, { document: { ...passenger.document, expiry: e.target.value } as PassengerInput["document"] })}
+                        className="bg-surface-container-low border border-outline-variant rounded-lg py-2 px-3"
+                      />
+                      <input
+                        required
+                        placeholder="الجنسية (رمز الدولة، مثال EG)"
+                        maxLength={2}
+                        value={passenger.document?.nationality ?? ""}
+                        onChange={(e) => updatePassenger(index, { document: { ...passenger.document, nationality: e.target.value.toUpperCase() } as PassengerInput["document"] })}
+                        className="bg-surface-container-low border border-outline-variant rounded-lg py-2 px-3"
                       />
                     </div>
-                  </div>
-                </div>
-              </div>
-            </section>
-            
-            {/* Section 3: Extra Services */}
-            <section className="bg-surface-container-lowest p-md rounded-xl border border-outline-variant shadow-sm">
-              <div className="flex items-center gap-sm mb-md border-b border-outline-variant/30 pb-sm">
-                <span className="material-symbols-outlined text-primary text-2xl">add_moderator</span>
-                <h2 className="font-title-lg text-title-lg font-bold">خدمات إضافية</h2>
-              </div>
-              <div className="space-y-base">
-                {/* Toggle 1 */}
-                <div className="flex items-center justify-between p-sm border border-outline-variant rounded-lg hover:bg-surface-container-low transition-colors">
-                  <div className="flex items-center gap-sm">
-                    <span className="material-symbols-outlined text-secondary text-2xl">health_and_safety</span>
-                    <div>
-                      <p className="font-body-md text-body-md font-bold">تأمين السفر (+{insurancePrice} SAR)</p>
-                      <p className="font-label-sm text-label-sm text-on-surface-variant">تغطية طبية وحوادث طارئة طوال مدة الرحلة</p>
-                    </div>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                      className="sr-only peer" 
-                      type="checkbox"
-                      checked={insurance}
-                      onChange={(e) => setInsurance(e.target.checked)}
-                    />
-                    <div className="w-11 h-6 bg-outline-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                  </label>
-                </div>
-                {/* Toggle 2 */}
-                <div className="flex items-center justify-between p-sm border border-outline-variant rounded-lg hover:bg-surface-container-low transition-colors">
-                  <div className="flex items-center gap-sm">
-                    <span className="material-symbols-outlined text-secondary text-2xl">luggage</span>
-                    <div>
-                      <p className="font-body-md text-body-md font-bold">حقيبة إضافية 23 كجم (+{baggagePrice} SAR)</p>
-                      <p className="font-label-sm text-label-sm text-on-surface-variant">أضف وزناً إضافياً مريحاً لمشترياتك واحتياجاتك</p>
-                    </div>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                      className="sr-only peer" 
-                      type="checkbox"
-                      checked={extraBaggage}
-                      onChange={(e) => setExtraBaggage(e.target.checked)}
-                    />
-                    <div className="w-11 h-6 bg-outline-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                  </label>
-                </div>
-                {/* Toggle 3 */}
-                <div className="flex items-center justify-between p-sm border border-outline-variant rounded-lg hover:bg-surface-container-low transition-colors">
-                  <div className="flex items-center gap-sm">
-                    <span className="material-symbols-outlined text-secondary text-2xl">restaurant</span>
-                    <div>
-                      <p className="font-body-md text-body-md font-bold">وجبات ساخنة بريميوم (+{mealsPrice} SAR)</p>
-                      <p className="font-label-sm text-label-sm text-on-surface-variant">اختر وجبتك المفضلة اللذيذة من قائمتنا الجوية</p>
-                    </div>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                      className="sr-only peer" 
-                      type="checkbox"
-                      checked={hotMeals}
-                      onChange={(e) => setHotMeals(e.target.checked)}
-                    />
-                    <div className="w-11 h-6 bg-outline-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                  </label>
-                </div>
-              </div>
-            </section>
-            
-            {/* Bottom CTA Desktop */}
-            <div className="hidden lg:flex justify-end pt-base">
-              <Link 
-                href="/checkout/payment" 
-                className="bg-primary text-on-primary px-12 py-4 rounded-xl font-headline-md text-headline-md flex items-center gap-base hover:bg-primary-container active:scale-95 transition-all shadow-md font-bold"
-              >
-                <span>الاستمرار إلى الدفع</span>
-                <span className="material-symbols-outlined">lock</span>
-              </Link>
-            </div>
-          </div>
-
-          {/* Left Column: Sticky Summary */}
-          <div className="lg:col-span-4">
-            <div className="lg:sticky lg:top-24 flex flex-col gap-md">
-              {/* Flight Card */}
-              <div className="bg-surface-container-lowest p-md rounded-xl border border-outline-variant shadow-sm overflow-hidden">
-                <div className="flex items-center justify-between mb-sm border-b border-outline-variant/30 pb-sm">
-                  <span className="font-headline-md text-headline-md text-primary font-bold">ملخص رحلتك</span>
-                  <span className="font-label-sm text-label-sm bg-secondary-container text-on-secondary-container px-2 py-1 rounded">طيران الرياض</span>
-                </div>
-                <div className="flex justify-between items-center mb-base mt-md">
-                  <div className="text-right">
-                    <p className="font-headline-md text-headline-md font-bold text-on-surface">RUH</p>
-                    <p className="font-label-sm text-label-sm text-on-surface-variant">الرياض</p>
-                    <p className="font-title-lg text-title-lg mt-xs font-bold text-on-surface">08:00 ص</p>
-                  </div>
-                  <div className="flex flex-col items-center flex-1 px-base">
-                    <span className="font-label-sm text-label-sm text-on-surface-variant mb-1">2س 15د</span>
-                    <div className="w-full h-[2px] bg-outline-variant relative">
-                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full border-2 border-primary bg-white"></div>
-                      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full border-2 border-primary bg-white"></div>
-                      <span className="material-symbols-outlined absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white text-primary text-xl">flight_takeoff</span>
-                    </div>
-                    <span className="font-label-sm text-label-sm text-on-surface-variant mt-1">مباشر</span>
-                  </div>
-                  <div className="text-left">
-                    <p className="font-headline-md text-headline-md font-bold text-on-surface">DXB</p>
-                    <p className="font-label-sm text-label-sm text-on-surface-variant">دبي</p>
-                    <p className="font-title-lg text-title-lg mt-xs font-bold text-on-surface">11:15 ص</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-sm py-base border-t border-outline-variant/30 mt-md pt-sm">
-                  <div className="flex items-center gap-xs">
-                    <span className="material-symbols-outlined text-outline text-lg">person</span>
-                    <span className="font-label-md text-label-md text-on-surface">مسافر 1</span>
-                  </div>
-                  <div className="flex items-center gap-xs">
-                    <span className="material-symbols-outlined text-outline text-lg">luggage</span>
-                    <span className="font-label-md text-label-md text-on-surface">23 كجم + حقيبة يد</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Price Breakdown */}
-              <div className="bg-surface-container-lowest p-md rounded-xl border border-outline-variant shadow-sm">
-                <h3 className="font-title-lg text-title-lg mb-md font-bold border-b border-outline-variant/30 pb-sm">ملخص السعر</h3>
-                <div className="space-y-sm mb-md">
-                  <div className="flex justify-between font-body-md text-body-md">
-                    <span className="text-on-surface-variant">سعر التذكرة (بالغ ×1)</span>
-                    <span className="text-on-surface">{baseFlightPrice.toLocaleString()} SAR</span>
-                  </div>
-                  <div className="flex justify-between font-body-md text-body-md">
-                    <span className="text-on-surface-variant">الضرائب والرسوم</span>
-                    <span className="text-on-surface">{flightTaxes.toLocaleString()} SAR</span>
-                  </div>
-
-                  {/* Extras Breakdown */}
-                  {(insurance || extraBaggage || hotMeals) && (
-                    <div className="border-t border-dashed border-outline-variant/40 pt-sm space-y-sm">
-                      <p className="font-label-sm text-label-sm text-outline font-bold">الخدمات الإضافية المختارة:</p>
-                      {insurance && (
-                        <div className="flex justify-between font-body-md text-body-md text-secondary">
-                          <span>تأمين السفر</span>
-                          <span>{insurancePrice} SAR</span>
-                        </div>
-                      )}
-                      {extraBaggage && (
-                        <div className="flex justify-between font-body-md text-body-md text-secondary">
-                          <span>حقيبة إضافية 23 كجم</span>
-                          <span>{baggagePrice} SAR</span>
-                        </div>
-                      )}
-                      {hotMeals && (
-                        <div className="flex justify-between font-body-md text-body-md text-secondary">
-                          <span>وجبات ساخنة بريميوم</span>
-                          <span>{mealsPrice} SAR</span>
-                        </div>
-                      )}
-                    </div>
                   )}
-
-                  <div className="flex justify-between font-body-md text-body-md pt-sm border-t border-outline-variant font-bold text-title-lg">
-                    <span>الإجمالي الكلي</span>
-                    <span className="text-primary font-bold text-2xl">{totalPrice.toLocaleString()} SAR</span>
-                  </div>
                 </div>
-                
-                <div className="space-y-xs pt-base border-t border-outline-variant/30">
-                  <label className="font-label-md text-label-md text-on-surface-variant block font-medium">هل لديك كوبون خصم؟</label>
-                  <div className="flex gap-xs">
-                    <input className="flex-1 px-4 py-2 bg-surface rounded-lg border border-outline-variant font-body-md outline-none focus:border-primary text-center" placeholder="أدخل الرمز" type="text"/>
-                    <button className="bg-secondary text-on-secondary px-4 py-2 rounded-lg font-label-md text-label-md hover:opacity-90 active:scale-95 transition-colors">تطبيق</button>
-                  </div>
-                </div>
-              </div>
+              ))}
 
-              {/* Trust/Security Info */}
-              <div className="bg-surface-container-low p-sm rounded-lg flex items-start gap-sm border border-outline-variant/30">
-                <span className="material-symbols-outlined text-tertiary mt-0.5 shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>verified_user</span>
-                <p className="font-label-sm text-label-sm text-on-surface-variant leading-tight">جميع معاملاتك مشفرة وآمنة بنسبة 100% وفقاً لأعلى معايير الأمن السيبراني العالمية.</p>
+              <button
+                type="submit"
+                disabled={isSubmittingPassengers}
+                className="w-full bg-primary text-on-primary py-3 rounded-lg font-label-md text-label-md disabled:opacity-60"
+              >
+                {isSubmittingPassengers ? "جارِ الحفظ..." : "المتابعة للدفع"}
+              </button>
+            </form>
+          )}
+        </section>
+
+        {offer && (
+          <aside className="md:col-span-1">
+            <div className="bg-surface-container-lowest rounded-xl border border-outline-variant p-md space-y-sm sticky top-4">
+              <h3 className="font-title-md text-title-md">{offer.airline.name}</h3>
+              {offer.slices.map((slice, i) => (
+                <div key={i} className="text-label-sm font-label-sm text-on-surface-variant border-t border-outline-variant/50 pt-sm first:border-t-0 first:pt-0">
+                  <p>{getAirportLabel(slice.origin)} → {getAirportLabel(slice.destination)}</p>
+                  <p>{formatFlightTime(slice.segments[0].departing_at.local)} · {formatIsoDuration(slice.duration)}</p>
+                </div>
+              ))}
+              <div className="border-t border-outline-variant pt-sm flex justify-between items-center">
+                <span className="font-label-md text-label-md">الإجمالي</span>
+                <span className="font-headline-md text-headline-md text-primary">
+                  {formatMoney(offer.total.amount, offer.total.currency)}
+                </span>
               </div>
             </div>
-          </div>
-        </div>
+          </aside>
+        )}
       </main>
-
-      {/* Mobile Bottom Navigation/CTA (Fixed) */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-surface-container-lowest border-t border-outline-variant/50 p-margin-mobile z-50 shadow-lg">
-        <div className="flex items-center justify-between gap-md">
-          <div className="flex flex-col text-right">
-            <span className="font-label-sm text-label-sm text-on-surface-variant">الإجمالي</span>
-            <span className="font-headline-md text-headline-md text-primary font-bold">{totalPrice.toLocaleString()} SAR</span>
-          </div>
-          <Link 
-            href="/checkout/payment" 
-            className="bg-primary text-on-primary flex-1 py-3 rounded-lg font-title-lg text-title-lg flex items-center justify-center gap-xs font-bold active:scale-95 transition-transform"
-          >
-            <span>ادفع الآن</span>
-            <span className="material-symbols-outlined">chevron_left</span>
-          </Link>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <footer className="bg-surface-container dark:bg-surface-dim border-t border-outline-variant mt-xl">
-        <div className="w-full py-lg px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto flex flex-col md:flex-row justify-between items-center gap-base">
-          <div className="flex flex-col items-center md:items-start gap-xs">
-            <span className="font-headline-md text-headline-md font-extrabold text-primary">سفريات</span>
-            <p className="font-body-md text-body-md text-on-surface-variant text-center md:text-right mt-1">وجهتك الأولى لاستكشاف العالم بكل سهولة، أمن، وراحة تامة.</p>
-          </div>
-          <div className="flex flex-wrap justify-center gap-md my-sm">
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/">عن سفريات</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/">سياسة الخصوصية</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/">الشروط والأحكام</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/support">اتصل بنا</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity" href="/support">الأسئلة الشائعة</Link>
-          </div>
-          <p className="font-label-sm text-label-sm text-on-surface-variant">© 2026 سفريات. جميع الحقوق محفوظة.</p>
-        </div>
-      </footer>
     </div>
+  );
+}
+
+export default function CheckoutPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-background">
+          <span className="material-symbols-outlined text-primary text-5xl animate-spin">progress_activity</span>
+        </div>
+      }
+    >
+      <CheckoutInner />
+    </Suspense>
   );
 }

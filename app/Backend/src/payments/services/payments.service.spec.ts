@@ -14,13 +14,20 @@ import { Booking, BookingStatus } from '../../bookings/entities/booking.entity';
 import { FlightOfferSnapshot } from '../../bookings/entities/flight-offer-snapshot.entity';
 import { Passenger } from '../../bookings/entities/passenger.entity';
 import { User, UserRole } from '../../users/user.entity';
+import type { JwtPayload } from '../../auth/guards/jwt-auth.guard';
 
 describe('PaymentsService', () => {
   let service: PaymentsService;
   let paymobService: PaymobService;
   let mockEntityManager: any;
 
-  const mockUser: User = {
+  // Shape of request.user as JwtAuthGuard actually sets it — {sub, role}.
+  const mockCurrentUser: JwtPayload = {
+    sub: 'user_123',
+    role: UserRole.User,
+  };
+
+  const mockAccountUser: User = {
     id: 'user_123',
     email: 'test@example.com',
     emailVerifiedAt: new Date(),
@@ -71,6 +78,11 @@ describe('PaymentsService', () => {
         if (cls === Passenger) {
           return {
             find: jest.fn().mockResolvedValue([]),
+          };
+        }
+        if (cls === User) {
+          return {
+            findOneBy: jest.fn().mockResolvedValue(mockAccountUser),
           };
         }
         return {};
@@ -132,7 +144,7 @@ describe('PaymentsService', () => {
   describe('createOrGetPaymentAttempt', () => {
     it('should successfully create a paymob order and return payment details', async () => {
       const result = await service.createOrGetPaymentAttempt(
-        mockUser,
+        mockCurrentUser,
         'booking_123',
       );
 
@@ -149,7 +161,7 @@ describe('PaymentsService', () => {
     });
 
     it('should throw ForbiddenException if user does not own booking', async () => {
-      const anotherUser = { ...mockUser, id: 'user_456' };
+      const anotherUser = { ...mockCurrentUser, sub: 'user_456' };
       await expect(
         service.createOrGetPaymentAttempt(anotherUser, 'booking_123'),
       ).rejects.toThrow(ForbiddenException);
@@ -176,7 +188,7 @@ describe('PaymentsService', () => {
       });
 
       await expect(
-        service.createOrGetPaymentAttempt(mockUser, 'booking_123'),
+        service.createOrGetPaymentAttempt(mockCurrentUser, 'booking_123'),
       ).rejects.toThrow(ConflictException);
     });
   });

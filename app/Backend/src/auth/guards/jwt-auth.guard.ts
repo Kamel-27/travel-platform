@@ -7,11 +7,12 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { ErrorCode } from '../../common/dto/error-response.dto';
+import type { UserRole } from '../../users/user.entity';
 
 /** Shape attached to request.user after successful JWT verification. */
 export interface JwtPayload {
   sub: string;
-  role: string;
+  role: UserRole;
 }
 
 /**
