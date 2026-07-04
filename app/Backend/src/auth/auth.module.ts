@@ -45,6 +45,7 @@ import { GoogleAuthService } from './services/google-auth.service';
     AccountResolutionService,
     JwtModule,
     GoogleAuthService,
+    MailService,
   ],
 })
 export class AuthModule {}

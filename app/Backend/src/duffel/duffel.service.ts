@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { ErrorCode } from '../common/dto/error-response.dto';
 
@@ -124,6 +125,7 @@ export interface NormalizedOffer {
 export class DuffelService {
   private readonly logger = new Logger(DuffelService.name);
   private readonly apiKey: string | undefined;
+  private readonly webhookSecret: string | undefined;
   private readonly baseUrl = 'https://api.duffel.com';
   private readonly duffelVersion = 'v2';
 
@@ -132,6 +134,7 @@ export class DuffelService {
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {
     this.apiKey = this.config.get<string>('DUFFEL_API_KEY');
+    this.webhookSecret = this.config.get<string>('DUFFEL_WEBHOOK_SECRET');
   }
 
   isConfigured(): boolean {
@@ -452,6 +455,91 @@ export class DuffelService {
       this.logger.error('Duffel listOrders failed', err);
       return [];
     }
+  }
+
+  /**
+   * Fetch a single order — the authoritative source for post-purchase
+   * webhook processing (order.created matching, schedule-change diffing).
+   * GET /air/orders/:id
+   */
+  async getOrder(orderId: string): Promise<Record<string, unknown>> {
+    this.assertConfigured();
+
+    try {
+      const response = await fetch(
+        `${this.baseUrl}/air/orders/${encodeURIComponent(orderId)}`,
+        {
+          method: 'GET',
+          headers: this.getHeaders(),
+          signal: AbortSignal.timeout(15_000),
+        },
+      );
+
+      if (!response.ok) {
+        await this.handleErrorResponse(response);
+      }
+
+      const json = (await response.json()) as Record<string, unknown>;
+      await this.recordMetric(false);
+      return json['data'] as Record<string, unknown>;
+    } catch (err: unknown) {
+      await this.recordMetric(true);
+      if (err instanceof HttpException) {
+        throw err;
+      }
+      this.logger.error(`Duffel getOrder failed for ID ${orderId}`, err);
+      throw new ServiceUnavailableException({
+        code: ErrorCode.SUPPLIER_UNAVAILABLE,
+        message: 'Order lookup is temporarily unavailable.',
+      });
+    }
+  }
+
+  /**
+   * Verify a Duffel webhook signature before any DB write.
+   *
+   * Header format: `X-Duffel-Signature: t=<unix-seconds>,v1=<hex-hmac>`.
+   * Signed payload is `${t}.${rawBody}`, HMAC-SHA256 with the webhook
+   * secret, hex-encoded, compared with a timing-safe check
+   * (docs/duffel_api_integration_guide.md, Duffel's receiving-webhooks guide).
+   */
+  verifyWebhookSignature(
+    rawBody: Buffer | string,
+    signatureHeader: string | undefined,
+  ): boolean {
+    if (!this.webhookSecret) {
+      throw new ServiceUnavailableException({
+        code: ErrorCode.SUPPLIER_UNAVAILABLE,
+        message: 'Duffel webhook verification is currently unconfigured.',
+      });
+    }
+    if (!signatureHeader) {
+      return false;
+    }
+
+    const parts = Object.fromEntries(
+      signatureHeader.split(',').map((part) => {
+        const [key, value] = part.split('=');
+        return [key?.trim(), value?.trim()];
+      }),
+    );
+    const timestamp = parts['t'];
+    const signature = parts['v1'];
+    if (!timestamp || !signature) {
+      return false;
+    }
+
+    const signedPayload = `${timestamp}.${rawBody.toString()}`;
+    const expected = createHmac('sha256', this.webhookSecret)
+      .update(signedPayload)
+      .digest('hex');
+
+    const expectedBuf = Buffer.from(expected, 'hex');
+    const receivedBuf = Buffer.from(signature, 'hex');
+    if (expectedBuf.length !== receivedBuf.length) {
+      return false;
+    }
+    return timingSafeEqual(expectedBuf, receivedBuf);
   }
 
   /**

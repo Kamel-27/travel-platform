@@ -31,4 +31,26 @@ export class MailService {
     this.logger.log(link);
     this.logger.log('────────────────────────────────────────');
   }
+
+  /**
+   * "Send" an airline schedule-change notification (prd.md §5.5/§5.7).
+   * Dev mode: logs old vs new segment times rather than emailing.
+   */
+  sendScheduleChangeEmail(
+    email: string,
+    bookingId: string,
+    bookingReference: string | null,
+    changes: { flightNumber: string; oldLocal: string; newLocal: string }[],
+  ): void {
+    this.logger.log('────────────────────────────────────────');
+    this.logger.log(
+      `Schedule change for ${email} (booking ${bookingId}${bookingReference ? `, PNR ${bookingReference}` : ''}):`,
+    );
+    for (const change of changes) {
+      this.logger.log(
+        `  ${change.flightNumber}: ${change.oldLocal} → ${change.newLocal}`,
+      );
+    }
+    this.logger.log('────────────────────────────────────────');
+  }
 }

@@ -116,6 +116,14 @@ export class Booking {
   })
   cancellationRequestReason: string | null;
 
+  /** Set when Duffel reports an airline-initiated schedule change (M7, prd.md §5.5). */
+  @Column({
+    name: 'schedule_change_detected_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  scheduleChangeDetectedAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

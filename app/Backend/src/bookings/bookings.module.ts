@@ -13,12 +13,14 @@ import { Segment } from './entities/segment.entity';
 import { Passenger } from './entities/passenger.entity';
 import { BookingStatusHistory } from './entities/booking-status-history.entity';
 import { Document } from './entities/document.entity';
+import { SupplierWebhookEvent } from './entities/supplier-webhook-event.entity';
 import { Payment } from '../payments/entities/payment.entity';
 import { Refund } from '../payments/entities/refund.entity';
 import { PaymentWebhookEvent } from '../payments/entities/payment-webhook-event.entity';
 import { PaymobModule } from '../payments/paymob.module';
 
 import { BookingsController } from './bookings.controller';
+import { DuffelWebhooksController } from './duffel-webhooks.controller';
 import { BookingsService } from './services/bookings.service';
 import { MarkupService } from './services/markup.service';
 import { BookingStateMachineService } from './services/booking-state-machine.service';
@@ -27,6 +29,8 @@ import { OrderFulfillmentService } from './services/order-fulfillment.service';
 import { OrderFulfillmentProcessor } from './queues/order-fulfillment.processor';
 import { DuffelReconciliationService } from './services/duffel-reconciliation.service';
 import { RefundExecutionService } from './services/refund-execution.service';
+import { DuffelWebhookProcessor } from './queues/duffel-webhook.processor';
+import { DuffelWebhookSweepService } from './services/duffel-webhook-sweep.service';
 
 @Module({
   imports: [
@@ -40,6 +44,7 @@ import { RefundExecutionService } from './services/refund-execution.service';
       Passenger,
       BookingStatusHistory,
       Document,
+      SupplierWebhookEvent,
       Payment,
       Refund,
       PaymentWebhookEvent,
@@ -47,11 +52,12 @@ import { RefundExecutionService } from './services/refund-execution.service';
     AuthModule,
     DuffelModule,
     PaymobModule,
-    BullModule.registerQueue({
-      name: 'order_fulfillment_queue',
-    }),
+    BullModule.registerQueue(
+      { name: 'order_fulfillment_queue' },
+      { name: 'duffel_webhook_queue' },
+    ),
   ],
-  controllers: [BookingsController],
+  controllers: [BookingsController, DuffelWebhooksController],
   providers: [
     BookingsService,
     MarkupService,
@@ -61,6 +67,8 @@ import { RefundExecutionService } from './services/refund-execution.service';
     OrderFulfillmentProcessor,
     DuffelReconciliationService,
     RefundExecutionService,
+    DuffelWebhookProcessor,
+    DuffelWebhookSweepService,
   ],
   exports: [
     BookingsService,

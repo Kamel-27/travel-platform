@@ -109,39 +109,59 @@ export class DuffelReconciliationService {
     booking: Booking,
     order: Record<string, unknown>,
   ): Promise<void> {
+    await this.entityManager.transaction(async (manager) => {
+      await this.confirmBookingFromOrder(
+        manager,
+        booking,
+        order,
+        'Reconciliation sweep found Duffel order',
+      );
+    });
+  }
+
+  /**
+   * Shared T5 (paid → confirmed) application, reused by both this sweep and
+   * the `order.created` Duffel webhook fast path (duffel-webhook.processor.ts)
+   * — replay-safe: BookingStateMachineService.transitionTo no-ops if the
+   * booking is already in the target state.
+   */
+  async confirmBookingFromOrder(
+    manager: EntityManager,
+    booking: Booking,
+    order: Record<string, unknown>,
+    reason = 'Duffel order.created webhook confirmed order',
+  ): Promise<void> {
     const orderId = order['id'] as string;
     const bookingReference = (order['booking_reference'] as string) ?? '';
     const rawDocuments = (order['documents'] as any[]) ?? [];
 
-    await this.entityManager.transaction(async (manager) => {
-      // Set supplier order data
-      await manager.getRepository(Booking).update(booking.id, {
-        supplierOrderId: orderId,
-        bookingReference,
-      });
-
-      // T5: paid → confirmed
-      await this.stateMachine.transitionTo(
-        manager,
-        booking.id,
-        BookingStatus.Confirmed,
-        null,
-        'Reconciliation sweep found Duffel order',
-      );
-
-      // Create Document rows
-      for (const doc of rawDocuments) {
-        const document = new Document();
-        document.bookingId = booking.id;
-        document.type = doc.type as string;
-        document.uniqueIdentifier = doc.unique_identifier as string;
-        document.supplierPassengerIds = (doc.passenger_ids as string[]) ?? [];
-        await manager.save(Document, document);
-      }
+    // Set supplier order data
+    await manager.getRepository(Booking).update(booking.id, {
+      supplierOrderId: orderId,
+      bookingReference,
     });
 
+    // T5: paid → confirmed
+    await this.stateMachine.transitionTo(
+      manager,
+      booking.id,
+      BookingStatus.Confirmed,
+      null,
+      reason,
+    );
+
+    // Create Document rows
+    for (const doc of rawDocuments) {
+      const document = new Document();
+      document.bookingId = booking.id;
+      document.type = doc.type as string;
+      document.uniqueIdentifier = doc.unique_identifier as string;
+      document.supplierPassengerIds = (doc.passenger_ids as string[]) ?? [];
+      await manager.save(Document, document);
+    }
+
     this.logger.log(
-      `Reconciliation: Booking ${booking.id} → confirmed (order: ${orderId}, PNR: ${bookingReference})`,
+      `Booking ${booking.id} → confirmed (order: ${orderId}, PNR: ${bookingReference})`,
     );
   }
 

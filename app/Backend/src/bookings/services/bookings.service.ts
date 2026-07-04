@@ -481,6 +481,7 @@ export class BookingsService {
       base_amount: booking.baseAmount,
       markup_amount: booking.markupAmount,
       currency: booking.currency,
+      schedule_change_detected_at: booking.scheduleChangeDetectedAt,
       created_at: booking.createdAt,
       updated_at: booking.updatedAt,
       snapshot: snapshot
