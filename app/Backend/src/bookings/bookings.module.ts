@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bullmq';
 
+import { AuthModule } from '../auth/auth.module';
 import { DuffelModule } from '../duffel/duffel.module';
 import { User } from '../users/user.entity';
 import { MarkupRule } from './entities/markup-rule.entity';
@@ -14,6 +15,8 @@ import { BookingStatusHistory } from './entities/booking-status-history.entity';
 import { Document } from './entities/document.entity';
 import { Payment } from '../payments/entities/payment.entity';
 import { Refund } from '../payments/entities/refund.entity';
+import { PaymentWebhookEvent } from '../payments/entities/payment-webhook-event.entity';
+import { PaymobModule } from '../payments/paymob.module';
 
 import { BookingsController } from './bookings.controller';
 import { BookingsService } from './services/bookings.service';
@@ -23,6 +26,7 @@ import { ExpirySweepService } from './services/expiry-sweep.service';
 import { OrderFulfillmentService } from './services/order-fulfillment.service';
 import { OrderFulfillmentProcessor } from './queues/order-fulfillment.processor';
 import { DuffelReconciliationService } from './services/duffel-reconciliation.service';
+import { RefundExecutionService } from './services/refund-execution.service';
 
 @Module({
   imports: [
@@ -38,8 +42,11 @@ import { DuffelReconciliationService } from './services/duffel-reconciliation.se
       Document,
       Payment,
       Refund,
+      PaymentWebhookEvent,
     ]),
+    AuthModule,
     DuffelModule,
+    PaymobModule,
     BullModule.registerQueue({
       name: 'order_fulfillment_queue',
     }),
@@ -53,12 +60,14 @@ import { DuffelReconciliationService } from './services/duffel-reconciliation.se
     OrderFulfillmentService,
     OrderFulfillmentProcessor,
     DuffelReconciliationService,
+    RefundExecutionService,
   ],
   exports: [
     BookingsService,
     MarkupService,
     BookingStateMachineService,
     OrderFulfillmentService,
+    RefundExecutionService,
   ],
 })
 export class BookingsModule {}

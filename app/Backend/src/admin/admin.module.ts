@@ -12,7 +12,6 @@ import { Booking } from '../bookings/entities/booking.entity';
 import { MarkupRule } from '../bookings/entities/markup-rule.entity';
 import { Payment } from '../payments/entities/payment.entity';
 import { PaymentWebhookEvent } from '../payments/entities/payment-webhook-event.entity';
-import { Refund } from '../payments/entities/refund.entity';
 import { AuditLog } from './entities/audit-log.entity';
 
 import { AdminController } from './admin.controller';
@@ -28,7 +27,6 @@ import { AuditLogService } from './services/audit-log.service';
       MarkupRule,
       Payment,
       PaymentWebhookEvent,
-      Refund,
       AuditLog,
     ]),
     AuthModule,

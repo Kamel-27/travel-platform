@@ -13,6 +13,7 @@ import { AuditLogService } from './audit-log.service';
 import { DuffelService } from '../../duffel/duffel.service';
 import { PaymobService } from '../../payments/services/paymob.service';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
+import { RefundExecutionService } from '../../bookings/services/refund-execution.service';
 import { Booking, BookingStatus } from '../../bookings/entities/booking.entity';
 import {
   MarkupRule,
@@ -118,6 +119,14 @@ describe('AdminService', () => {
     mockManagerRefreshTokenRepo = {
       update: jest.fn().mockResolvedValue(undefined),
     };
+    // RefundExecutionService.recordRefund reads/writes Payment and Refund
+    // through the transaction manager, not the direct-injected repos above.
+    const mockManagerPaymentRepo = {
+      findOneBy: jest.fn().mockResolvedValue({ ...succeededPayment }),
+    };
+    const mockManagerRefundRepo = {
+      findBy: jest.fn().mockResolvedValue([]),
+    };
 
     mockManager = {
       save: jest
@@ -130,6 +139,8 @@ describe('AdminService', () => {
         if (cls === Booking) return mockManagerBookingRepo;
         if (cls === User) return mockManagerUserRepo;
         if (cls === RefreshToken) return mockManagerRefreshTokenRepo;
+        if (cls === Payment) return mockManagerPaymentRepo;
+        if (cls === Refund) return mockManagerRefundRepo;
         return { findOneBy: jest.fn().mockResolvedValue(null) };
       }),
     };
@@ -179,6 +190,9 @@ describe('AdminService', () => {
         { provide: PaymobService, useValue: paymobService },
         { provide: BookingStateMachineService, useValue: stateMachine },
         { provide: AuditLogService, useValue: auditLogService },
+        // Real instance — it's the extracted-and-shared logic under test
+        // here too, wired to the same mock repos/gateway/state-machine.
+        RefundExecutionService,
       ],
     }).compile();
 
@@ -476,6 +490,14 @@ describe('AdminService', () => {
           };
         }
         if (cls === MarkupRule) return mockManagerMarkupRepo;
+        if (cls === Payment) {
+          return {
+            findOneBy: jest.fn().mockResolvedValue({ ...succeededPayment }),
+          };
+        }
+        if (cls === Refund) {
+          return { findBy: jest.fn().mockResolvedValue([]) };
+        }
         return { findOneBy: jest.fn().mockResolvedValue(null) };
       });
 

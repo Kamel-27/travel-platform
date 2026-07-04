@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsOptional,
@@ -23,6 +24,12 @@ export class ListBookingsQueryDto {
   @IsOptional()
   @IsString()
   reference?: string;
+
+  /** Surfaces non-auto-approvable customer cancellation requests. */
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  cancellation_requested?: boolean;
 
   @IsOptional()
   @Type(() => Number)

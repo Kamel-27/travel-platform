@@ -33,6 +33,9 @@ export enum Supplier {
 @Unique('ux_bookings_supplier_order_id', ['supplierOrderId'])
 @Index('ix_bookings_user_created', ['userId', 'createdAt'])
 @Index('ix_bookings_booking_reference', ['bookingReference'])
+@Index('ix_bookings_cancellation_requested', ['cancellationRequestedAt'], {
+  where: '"cancellation_requested_at" IS NOT NULL',
+})
 @Check(
   'ck_bookings_total_match',
   '"total_amount" = "base_amount" + "markup_amount"',
@@ -97,6 +100,21 @@ export class Booking {
 
   @Column({ type: 'char', length: 3 })
   currency: string;
+
+  /** Set when a non-auto-approvable cancellation is routed to technical_admin. */
+  @Column({
+    name: 'cancellation_requested_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  cancellationRequestedAt: Date | null;
+
+  @Column({
+    name: 'cancellation_request_reason',
+    type: 'varchar',
+    nullable: true,
+  })
+  cancellationRequestReason: string | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
