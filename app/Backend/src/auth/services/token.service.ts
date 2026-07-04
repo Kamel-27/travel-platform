@@ -37,6 +37,11 @@ export class TokenService {
   private readonly accessTtlSeconds: number;
   private readonly refreshTtlDays: number;
   private readonly isProduction: boolean;
+  // Frontend (Vercel) and backend (Railway) live on different domains in
+  // production, so the refresh cookie must be SameSite=None (requires
+  // Secure) to survive the cross-site fetch from api-client.ts; 'lax' only
+  // works in dev because everything there is same-site (localhost).
+  private readonly cookieSameSite: 'lax' | 'none';
 
   constructor(
     private readonly jwtService: JwtService,
@@ -50,6 +55,7 @@ export class TokenService {
     );
     this.refreshTtlDays = this.config.get<number>('REFRESH_TOKEN_TTL_DAYS', 30);
     this.isProduction = this.config.get('NODE_ENV') === 'production';
+    this.cookieSameSite = this.isProduction ? 'none' : 'lax';
   }
 
   // ─── Public API ───────────────────────────────────────────────────
@@ -195,7 +201,7 @@ export class TokenService {
     res.cookie('refresh_token', rawToken, {
       httpOnly: true,
       secure: this.isProduction,
-      sameSite: 'lax',
+      sameSite: this.cookieSameSite,
       path: '/api/v1/auth',
       maxAge: this.refreshTtlDays * 24 * 60 * 60 * 1000,
     });
@@ -215,7 +221,7 @@ export class TokenService {
     res.clearCookie('refresh_token', {
       httpOnly: true,
       secure: this.isProduction,
-      sameSite: 'lax',
+      sameSite: this.cookieSameSite,
       path: '/api/v1/auth',
     });
   }
