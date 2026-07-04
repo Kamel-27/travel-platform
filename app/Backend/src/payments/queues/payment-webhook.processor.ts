@@ -14,6 +14,7 @@ import {
 } from '../entities/payment-attempt.entity';
 import { Booking, BookingStatus } from '../../bookings/entities/booking.entity';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
+import { toPaymobGatewayAmount } from '../services/paymob.service';
 
 @Processor('payment_webhook_queue')
 export class PaymentWebhookProcessor extends WorkerHost {
@@ -132,9 +133,16 @@ export class PaymentWebhookProcessor extends WorkerHost {
       // 3. Process outcomes
       if (webhookEvent.eventType === 'transaction.succeeded') {
         const paidAmount = transaction.amount_cents as number;
-        if (paidAmount !== booking.totalAmount) {
+        // The gateway order was registered with the sandbox-converted EGP
+        // amount, so the webhook must be verified against that same figure.
+        const expectedAmount = toPaymobGatewayAmount(
+          booking.totalAmount,
+          booking.currency,
+        ).amountCents;
+
+        if (paidAmount !== expectedAmount) {
           this.logger.error(
-            `Paymob payment amount mismatch. Event has ${paidAmount}, Booking expects ${booking.totalAmount}.`,
+            `Paymob payment amount mismatch. Event has ${paidAmount}, Booking expects ${expectedAmount} (original: ${booking.totalAmount} ${booking.currency}).`,
           );
           throw new Error('Paymob payment amount mismatch');
         }

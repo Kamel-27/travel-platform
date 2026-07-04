@@ -21,7 +21,8 @@ import { FlightOfferSnapshot } from '../entities/flight-offer-snapshot.entity';
 import { Passenger, PassengerType } from '../entities/passenger.entity';
 import { Document } from '../entities/document.entity';
 import { Payment } from '../../payments/entities/payment.entity';
-import { User, UserRole } from '../../users/user.entity';
+import { UserRole } from '../../users/user.entity';
+import type { JwtPayload } from '../../auth/guards/jwt-auth.guard';
 
 describe('BookingsService', () => {
   let service: BookingsService;
@@ -35,16 +36,12 @@ describe('BookingsService', () => {
   let mockPaymentRepo: any;
   let mockSnapshotRepo: any;
 
-  const mockUser: User = {
-    id: 'user_123',
-    email: 'test@example.com',
-    emailVerifiedAt: new Date(),
-    fullName: 'Test User',
-    phone: null,
+  // Shape of request.user as JwtAuthGuard actually sets it — {sub, role},
+  // not a full User entity (BookingsService used to wrongly assume the
+  // latter and read `.id`, which was always undefined at runtime).
+  const mockCurrentUser: JwtPayload = {
+    sub: 'user_123',
     role: UserRole.User,
-    isActive: true,
-    createdAt: new Date(),
-    updatedAt: new Date(),
   };
 
   const mockNormalizedOffer = {
@@ -221,7 +218,7 @@ describe('BookingsService', () => {
 
   describe('createBooking', () => {
     it('should successfully create a pending booking with snapshot, slices, and segments', async () => {
-      const result = await service.createBooking(mockUser, 'off_1');
+      const result = await service.createBooking(mockCurrentUser, 'off_1');
 
       expect(duffelService.fetchOffer).toHaveBeenCalledWith('off_1');
       expect(markupService.calculateMarkup).toHaveBeenCalledWith(10000);
@@ -242,9 +239,9 @@ describe('BookingsService', () => {
         expiredOffer,
       );
 
-      await expect(service.createBooking(mockUser, 'off_1')).rejects.toThrow(
-        HttpException,
-      );
+      await expect(
+        service.createBooking(mockCurrentUser, 'off_1'),
+      ).rejects.toThrow(HttpException);
     });
   });
 
@@ -264,7 +261,7 @@ describe('BookingsService', () => {
 
     it('should successfully save passenger details and transition status to awaiting_payment', async () => {
       const result = await service.savePassengers(
-        mockUser,
+        mockCurrentUser,
         'booking_123',
         validPassengerInputs,
       );
@@ -282,7 +279,7 @@ describe('BookingsService', () => {
 
     it('should throw BadRequestException if passenger count is incorrect', async () => {
       await expect(
-        service.savePassengers(mockUser, 'booking_123', []),
+        service.savePassengers(mockCurrentUser, 'booking_123', []),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -328,7 +325,7 @@ describe('BookingsService', () => {
         mockSnapshotRepo.findOneBy.mockResolvedValue(allowedSnapshot());
 
         const quote = await service.getCancellationQuote(
-          mockUser,
+          mockCurrentUser,
           'booking_123',
         );
 
@@ -346,7 +343,7 @@ describe('BookingsService', () => {
         mockSnapshotRepo.findOneBy.mockResolvedValue(notAllowedSnapshot());
 
         const quote = await service.getCancellationQuote(
-          mockUser,
+          mockCurrentUser,
           'booking_123',
         );
 
@@ -360,7 +357,7 @@ describe('BookingsService', () => {
         mockBookingRepo.findOneBy.mockResolvedValue(other);
 
         await expect(
-          service.getCancellationQuote(mockUser, 'booking_123'),
+          service.getCancellationQuote(mockCurrentUser, 'booking_123'),
         ).rejects.toThrow(ForbiddenException);
       });
 
@@ -370,7 +367,7 @@ describe('BookingsService', () => {
         mockBookingRepo.findOneBy.mockResolvedValue(pendingBooking);
 
         await expect(
-          service.getCancellationQuote(mockUser, 'booking_123'),
+          service.getCancellationQuote(mockCurrentUser, 'booking_123'),
         ).rejects.toThrow(ConflictException);
       });
 
@@ -378,7 +375,7 @@ describe('BookingsService', () => {
         mockBookingRepo.findOneBy.mockResolvedValue(null);
 
         await expect(
-          service.getCancellationQuote(mockUser, 'missing'),
+          service.getCancellationQuote(mockCurrentUser, 'missing'),
         ).rejects.toThrow(NotFoundException);
       });
     });
@@ -394,7 +391,10 @@ describe('BookingsService', () => {
           currency: 'USD',
         });
 
-        const result = await service.cancelBooking(mockUser, 'booking_123');
+        const result = await service.cancelBooking(
+          mockCurrentUser,
+          'booking_123',
+        );
 
         expect(duffelService.cancelOrder).toHaveBeenCalledWith('ord_1');
         // supplier refund (8000, from the mocked Duffel response) + full markup (500)
@@ -420,7 +420,7 @@ describe('BookingsService', () => {
         mockSnapshotRepo.findOneBy.mockResolvedValue(notAllowedSnapshot());
 
         const result = await service.cancelBooking(
-          mockUser,
+          mockCurrentUser,
           'booking_123',
           'changed my mind',
         );
@@ -441,7 +441,7 @@ describe('BookingsService', () => {
         mockBookingRepo.findOneBy.mockResolvedValue(pendingBooking);
 
         await expect(
-          service.cancelBooking(mockUser, 'booking_123'),
+          service.cancelBooking(mockCurrentUser, 'booking_123'),
         ).rejects.toThrow(ConflictException);
       });
     });
@@ -462,7 +462,7 @@ describe('BookingsService', () => {
         },
       ]);
 
-      const result = await service.getDocuments(mockUser, 'booking_123');
+      const result = await service.getDocuments(mockCurrentUser, 'booking_123');
 
       expect(result.data).toEqual([
         {
@@ -482,7 +482,7 @@ describe('BookingsService', () => {
       });
 
       await expect(
-        service.getDocuments(mockUser, 'booking_123'),
+        service.getDocuments(mockCurrentUser, 'booking_123'),
       ).rejects.toThrow(ForbiddenException);
     });
   });

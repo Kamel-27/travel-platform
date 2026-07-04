@@ -16,8 +16,8 @@ import Redis from 'ioredis';
 
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { JwtPayload } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { User } from '../users/user.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { SavePassengersDto } from './dto/save-passengers.dto';
 import { CancelBookingSelfDto } from './dto/cancel-booking-self.dto';
@@ -38,7 +38,7 @@ export class BookingsController {
   @Post()
   @UseGuards(JwtAuthGuard)
   async createBooking(
-    @CurrentUser() user: User,
+    @CurrentUser() user: JwtPayload,
     @Body() dto: CreateBookingDto,
     @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<any> {
@@ -86,7 +86,7 @@ export class BookingsController {
   @Put(':id/passengers')
   @UseGuards(JwtAuthGuard)
   async savePassengers(
-    @CurrentUser() user: User,
+    @CurrentUser() user: JwtPayload,
     @Param('id') bookingId: string,
     @Body() dto: SavePassengersDto,
   ): Promise<any> {
@@ -100,7 +100,7 @@ export class BookingsController {
   @Get()
   @UseGuards(JwtAuthGuard)
   async getBookings(
-    @CurrentUser() user: User,
+    @CurrentUser() user: JwtPayload,
     @Query('limit') limitStr?: string,
     @Query('cursor') cursor?: string,
   ): Promise<any> {
@@ -115,7 +115,7 @@ export class BookingsController {
   @Get(':id')
   @UseGuards(JwtAuthGuard)
   async getBookingDetail(
-    @CurrentUser() user: User,
+    @CurrentUser() user: JwtPayload,
     @Param('id') bookingId: string,
   ): Promise<any> {
     return this.bookingsService.getBookingDetail(user, bookingId);
@@ -129,7 +129,7 @@ export class BookingsController {
   @Get(':id/cancellation-quote')
   @UseGuards(JwtAuthGuard)
   async getCancellationQuote(
-    @CurrentUser() user: User,
+    @CurrentUser() user: JwtPayload,
     @Param('id') bookingId: string,
   ): Promise<any> {
     return this.bookingsService.getCancellationQuote(user, bookingId);
@@ -143,7 +143,7 @@ export class BookingsController {
   @Post(':id/cancel')
   @UseGuards(JwtAuthGuard)
   async cancelBooking(
-    @CurrentUser() user: User,
+    @CurrentUser() user: JwtPayload,
     @Param('id') bookingId: string,
     @Body() dto: CancelBookingSelfDto,
   ): Promise<any> {
@@ -158,7 +158,7 @@ export class BookingsController {
   @Get(':id/documents')
   @UseGuards(JwtAuthGuard)
   async getDocuments(
-    @CurrentUser() user: User,
+    @CurrentUser() user: JwtPayload,
     @Param('id') bookingId: string,
   ): Promise<any> {
     return this.bookingsService.getDocuments(user, bookingId);
