@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { BullModule } from '@nestjs/bullmq';
 import * as Joi from 'joi';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -10,6 +11,7 @@ import { HealthModule } from './health/health.module';
 import { RedisModule } from './redis/redis.module';
 import { FlightsModule } from './flights/flights.module';
 import { BookingsModule } from './bookings/bookings.module';
+import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [
@@ -32,15 +34,29 @@ import { BookingsModule } from './bookings/bookings.module';
         GOOGLE_CLIENT_SECRET: Joi.string().allow('').optional(),
         GOOGLE_REDIRECT_URI: Joi.string().uri().allow('').optional(),
         DUFFEL_API_KEY: Joi.string().allow('').optional(),
+        PAYMOB_API_BASE: Joi.string().uri().allow('').optional(),
+        PAYMOB_API_KEY: Joi.string().allow('').optional(),
+        PAYMOB_INTEGRATION_ID: Joi.string().allow('').optional(),
+        PAYMOB_IFRAME_ID: Joi.string().allow('').optional(),
+        PAYMOB_HMAC_SECRET: Joi.string().allow('').optional(),
       }),
     }),
     ScheduleModule.forRoot(),
+    BullModule.forRootAsync({
+      useFactory: (config: ConfigService) => ({
+        connection: {
+          url: config.getOrThrow<string>('REDIS_URL'),
+        },
+      }),
+      inject: [ConfigService],
+    }),
     DatabaseModule,
     RedisModule,
     HealthModule,
     AuthModule,
     FlightsModule,
     BookingsModule,
+    PaymentsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
