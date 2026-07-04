@@ -24,9 +24,24 @@ import { FlightOfferSnapshot } from '../entities/flight-offer-snapshot.entity';
 import { Slice } from '../entities/slice.entity';
 import { Segment } from '../entities/segment.entity';
 import { Passenger, PassengerType } from '../entities/passenger.entity';
+import { Document } from '../entities/document.entity';
+import { Payment } from '../../payments/entities/payment.entity';
 import { MarkupService } from './markup.service';
 import { BookingStateMachineService } from './booking-state-machine.service';
+import { RefundExecutionService } from './refund-execution.service';
 import { PassengerInputDto } from '../dto/save-passengers.dto';
+
+interface CancellationConditionPenalty {
+  amount?: number;
+  currency?: string;
+}
+
+interface CancellationConditions {
+  refund_before_departure?: {
+    allowed?: boolean;
+    penalty?: CancellationConditionPenalty;
+  };
+}
 
 @Injectable()
 export class BookingsService {
@@ -46,9 +61,14 @@ export class BookingsService {
     private readonly snapshotRepo: Repository<FlightOfferSnapshot>,
     @InjectRepository(Passenger)
     private readonly passengerRepo: Repository<Passenger>,
+    @InjectRepository(Document)
+    private readonly documentRepo: Repository<Document>,
+    @InjectRepository(Payment)
+    private readonly paymentRepo: Repository<Payment>,
     private readonly duffelService: DuffelService,
     private readonly markupService: MarkupService,
     private readonly stateMachine: BookingStateMachineService,
+    private readonly refundExecutionService: RefundExecutionService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -516,6 +536,256 @@ export class BookingsService {
             }
           : null,
       })),
+    };
+  }
+
+  // ── Cancellation (T7, customer self-service) ───────────────────────
+
+  /**
+   * Read-only cancellation quote. Auto-approval rule and refund amount
+   * formula per prd.md §5.4 / sequence_diagrams.md §5: auto-approved when
+   * the supplier's conditions permit refund; customer always receives the
+   * supplier refund plus the full markup (never charged margin on a
+   * cancelled service). This is an estimate — the real cancel call
+   * recomputes from Duffel's actual response, never trusting this figure.
+   */
+  async getCancellationQuote(user: User, bookingId: string): Promise<any> {
+    const booking = await this.bookingRepo.findOneBy({ id: bookingId });
+    if (!booking) {
+      throw new NotFoundException({
+        code: ErrorCode.NOT_FOUND,
+        message: 'Booking not found.',
+      });
+    }
+    if (booking.userId !== user.id) {
+      throw new ForbiddenException({
+        code: ErrorCode.FORBIDDEN,
+        message: 'Access denied to this booking.',
+      });
+    }
+    if (booking.status !== BookingStatus.Confirmed) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message: `Only confirmed bookings can be cancelled. Current status: ${booking.status}.`,
+      });
+    }
+
+    const snapshot = await this.snapshotRepo.findOneBy({
+      bookingId: booking.id,
+    });
+    return this.computeCancellationQuote(booking, snapshot);
+  }
+
+  /**
+   * T7: Cancels a confirmed booking at the customer's request.
+   * Auto-approvable: cancels at Duffel first (external call, never inside a
+   * DB transaction), then in one transaction transitions confirmed→cancelled
+   * and executes the gateway refund via the shared RefundExecutionService
+   * (same logic AdminService uses for manual refunds).
+   * Not auto-approvable: records the request for technical_admin review and
+   * returns 202-equivalent without touching Duffel or booking state.
+   */
+  async cancelBooking(
+    user: User,
+    bookingId: string,
+    reason?: string,
+  ): Promise<any> {
+    const booking = await this.bookingRepo.findOneBy({ id: bookingId });
+    if (!booking) {
+      throw new NotFoundException({
+        code: ErrorCode.NOT_FOUND,
+        message: 'Booking not found.',
+      });
+    }
+    if (booking.userId !== user.id) {
+      throw new ForbiddenException({
+        code: ErrorCode.FORBIDDEN,
+        message: 'Access denied to this booking.',
+      });
+    }
+    if (booking.status !== BookingStatus.Confirmed) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message: `Only confirmed bookings can be cancelled. Current status: ${booking.status}.`,
+      });
+    }
+
+    const snapshot = await this.snapshotRepo.findOneBy({
+      bookingId: booking.id,
+    });
+    const quote = this.computeCancellationQuote(booking, snapshot);
+
+    if (quote.requires_admin) {
+      booking.cancellationRequestedAt = new Date();
+      booking.cancellationRequestReason = reason ?? null;
+      await this.bookingRepo.save(booking);
+
+      this.logger.log(
+        `User ${user.id} requested cancellation of booking ${booking.id} — routed to technical_admin (not auto-approvable).`,
+      );
+
+      return {
+        id: booking.id,
+        status: booking.status,
+        requires_admin: true,
+        message:
+          'Your cancellation request has been sent to our support team for manual review.',
+      };
+    }
+
+    // Auto-approvable — cancel at the supplier first. If Duffel rejects or
+    // is unavailable, the booking must stay confirmed (no state written yet).
+    let supplierRefundAmount = 0;
+    if (booking.supplierOrderId) {
+      const result = await this.duffelService.cancelOrder(
+        booking.supplierOrderId,
+      );
+      supplierRefundAmount = result.refundAmount;
+    }
+
+    const payment = await this.paymentRepo.findOneBy({ bookingId: booking.id });
+    if (!payment) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message: 'No payment found for this booking; cannot process refund.',
+      });
+    }
+
+    // Refund policy (prd.md §5.4): customer receives the supplier refund
+    // plus the full markup — the platform never keeps margin on a
+    // cancelled service.
+    const customerReceivesAmount = supplierRefundAmount + booking.markupAmount;
+    const cancelReason = reason ?? 'customer_cancel';
+
+    const { refundId } = await this.refundExecutionService.executeGatewayRefund(
+      payment.id,
+      customerReceivesAmount,
+    );
+
+    const { fullyRefunded } = await this.entityManager.transaction(
+      async (manager) => {
+        await this.stateMachine.transitionTo(
+          manager,
+          booking.id,
+          BookingStatus.Cancelled,
+          user.id,
+          cancelReason,
+        );
+
+        return this.refundExecutionService.recordRefund(manager, {
+          paymentId: payment.id,
+          refundId,
+          amount: customerReceivesAmount,
+          reason: cancelReason,
+          initiatedByUserId: user.id,
+        });
+      },
+    );
+
+    this.logger.log(
+      `User ${user.id} cancelled booking ${booking.id} (customer receives ${customerReceivesAmount} ${booking.currency})`,
+    );
+
+    return {
+      id: booking.id,
+      status: fullyRefunded ? BookingStatus.Refunded : BookingStatus.Cancelled,
+      requires_admin: false,
+      supplier_refund_amount: supplierRefundAmount,
+      customer_receives: {
+        amount: customerReceivesAmount,
+        currency: booking.currency,
+      },
+      currency: booking.currency,
+    };
+  }
+
+  /**
+   * GET /bookings/:id/documents — e-ticket/document list. `file_url` is
+   * always null in Phase 1: PDF generation + blob storage are still an M4
+   * TODO stub (contract deviation, documented in the PR).
+   */
+  async getDocuments(user: User, bookingId: string): Promise<any> {
+    const booking = await this.bookingRepo.findOneBy({ id: bookingId });
+    if (!booking) {
+      throw new NotFoundException({
+        code: ErrorCode.NOT_FOUND,
+        message: 'Booking not found.',
+      });
+    }
+    if (booking.userId !== user.id && user.role !== UserRole.TechnicalAdmin) {
+      throw new ForbiddenException({
+        code: ErrorCode.FORBIDDEN,
+        message: 'Access denied to this booking.',
+      });
+    }
+
+    const documents = await this.documentRepo.find({ where: { bookingId } });
+
+    return {
+      data: documents.map((d) => ({
+        id: d.id,
+        // The Document entity has no `source` column yet — every row today
+        // comes from Duffel order fulfillment, so this is hardcoded until a
+        // `generated` (self-issued) document type exists.
+        source: 'supplier',
+        type: d.type,
+        supplier_document_id: d.uniqueIdentifier,
+        file_url: null,
+      })),
+    };
+  }
+
+  private computeCancellationQuote(
+    booking: Booking,
+    snapshot: FlightOfferSnapshot | null,
+  ): {
+    refundable: boolean;
+    requires_admin: boolean;
+    penalty: { amount: number; currency: string } | null;
+    customer_receives: { amount: number; currency: string } | null;
+  } {
+    const conditions = snapshot?.conditions as
+      CancellationConditions | undefined;
+    const refundCondition = conditions?.refund_before_departure;
+    const allowed = refundCondition?.allowed === true;
+    const rawPenalty = refundCondition?.penalty;
+    const penalty =
+      rawPenalty?.amount !== undefined && rawPenalty?.currency
+        ? { amount: rawPenalty.amount, currency: rawPenalty.currency }
+        : null;
+
+    // Defensive: a penalty in a different currency than the booking would
+    // make the subtraction below meaningless — route to admin instead of
+    // guessing at a conversion.
+    const currencyMismatch =
+      penalty !== null && penalty.currency !== booking.currency;
+
+    if (!allowed || currencyMismatch) {
+      return {
+        refundable: allowed,
+        requires_admin: true,
+        penalty,
+        customer_receives: null,
+      };
+    }
+
+    // Estimate only: total_amount already includes the markup, so
+    // (total_amount - penalty) is equivalent to (supplier refund + full
+    // markup) per prd.md §5.4. The real POST /cancel recomputes from
+    // Duffel's actual cancellation response rather than trusting this.
+    const estimatedCustomerReceives = Math.max(
+      0,
+      booking.totalAmount - (penalty?.amount ?? 0),
+    );
+
+    return {
+      refundable: true,
+      requires_admin: false,
+      penalty,
+      customer_receives: {
+        amount: estimatedCustomerReceives,
+        currency: booking.currency,
+      },
     };
   }
 

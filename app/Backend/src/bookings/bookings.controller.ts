@@ -20,6 +20,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '../users/user.entity';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import { SavePassengersDto } from './dto/save-passengers.dto';
+import { CancelBookingSelfDto } from './dto/cancel-booking-self.dto';
 import { BookingsService } from './services/bookings.service';
 import { ErrorCode } from '../common/dto/error-response.dto';
 
@@ -118,5 +119,48 @@ export class BookingsController {
     @Param('id') bookingId: string,
   ): Promise<any> {
     return this.bookingsService.getBookingDetail(user, bookingId);
+  }
+
+  /**
+   * GET /bookings/:id/cancellation-quote
+   * Read-only cancellation quote (penalty, refundable amount, whether it's
+   * auto-approvable or needs technical_admin review).
+   */
+  @Get(':id/cancellation-quote')
+  @UseGuards(JwtAuthGuard)
+  async getCancellationQuote(
+    @CurrentUser() user: User,
+    @Param('id') bookingId: string,
+  ): Promise<any> {
+    return this.bookingsService.getCancellationQuote(user, bookingId);
+  }
+
+  /**
+   * POST /bookings/:id/cancel (T7)
+   * Customer self-service cancellation. Auto-approvable fares cancel at
+   * Duffel and refund immediately; others are routed to technical_admin.
+   */
+  @Post(':id/cancel')
+  @UseGuards(JwtAuthGuard)
+  async cancelBooking(
+    @CurrentUser() user: User,
+    @Param('id') bookingId: string,
+    @Body() dto: CancelBookingSelfDto,
+  ): Promise<any> {
+    return this.bookingsService.cancelBooking(user, bookingId, dto.reason);
+  }
+
+  /**
+   * GET /bookings/:id/documents
+   * E-ticket/document list. `file_url` is always null in Phase 1 (PDF
+   * generation + blob storage are still an M4 TODO stub).
+   */
+  @Get(':id/documents')
+  @UseGuards(JwtAuthGuard)
+  async getDocuments(
+    @CurrentUser() user: User,
+    @Param('id') bookingId: string,
+  ): Promise<any> {
+    return this.bookingsService.getDocuments(user, bookingId);
   }
 }

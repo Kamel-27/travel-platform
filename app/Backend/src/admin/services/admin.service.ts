@@ -11,6 +11,7 @@ import {
   FindOptionsWhere,
   IsNull,
   LessThan,
+  Not,
   Repository,
 } from 'typeorm';
 
@@ -23,10 +24,9 @@ import {
 } from '../../bookings/entities/markup-rule.entity';
 import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
 import { PaymentWebhookEvent } from '../../payments/entities/payment-webhook-event.entity';
-import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
 import { DuffelService } from '../../duffel/duffel.service';
-import { PaymobService } from '../../payments/services/paymob.service';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
+import { RefundExecutionService } from '../../bookings/services/refund-execution.service';
 import { AuditLogService } from './audit-log.service';
 import { ErrorCode } from '../../common/dto/error-response.dto';
 import {
@@ -52,15 +52,13 @@ export class AdminService {
     private readonly bookingRepo: Repository<Booking>,
     @InjectRepository(Payment)
     private readonly paymentRepo: Repository<Payment>,
-    @InjectRepository(Refund)
-    private readonly refundRepo: Repository<Refund>,
     @InjectRepository(MarkupRule)
     private readonly markupRuleRepo: Repository<MarkupRule>,
     @InjectRepository(PaymentWebhookEvent)
     private readonly webhookEventRepo: Repository<PaymentWebhookEvent>,
     private readonly duffelService: DuffelService,
-    private readonly paymobService: PaymobService,
     private readonly stateMachine: BookingStateMachineService,
+    private readonly refundExecutionService: RefundExecutionService,
     private readonly auditLogService: AuditLogService,
   ) {}
 
@@ -164,6 +162,8 @@ export class AdminService {
     if (query.status) where.status = query.status;
     if (query.user_id) where.userId = query.user_id;
     if (query.reference) where.bookingReference = query.reference;
+    if (query.cancellation_requested)
+      where.cancellationRequestedAt = Not(IsNull());
 
     const [bookings, total] = await this.bookingRepo.findAndCount({
       where,
@@ -185,6 +185,8 @@ export class AdminService {
         markup_amount: b.markupAmount,
         total_amount: b.totalAmount,
         currency: b.currency,
+        cancellation_requested_at: b.cancellationRequestedAt,
+        cancellation_request_reason: b.cancellationRequestReason,
         created_at: b.createdAt,
         updated_at: b.updatedAt,
       })),
@@ -298,60 +300,27 @@ export class AdminService {
       });
     }
 
-    const alreadyRefunded = await this.sumSucceededRefunds(payment.id);
-    if (alreadyRefunded + amount > payment.amount) {
-      throw new UnprocessableEntityException({
-        code: ErrorCode.VALIDATION_ERROR,
-        message: `Refund of ${amount} exceeds the remaining refundable amount (${payment.amount - alreadyRefunded}).`,
-      });
-    }
-
-    const transactionId = await this.resolvePaymobTransactionId(payment.id);
-
     // Execute at the gateway first — DB rows are only written for refunds
-    // Paymob actually accepted.
-    const { refundId } = await this.paymobService.refundTransaction(
-      transactionId,
+    // Paymob actually accepted. Also validates the amount against the
+    // remaining refundable balance.
+    const refundReason = reason ?? 'admin_manual_refund';
+    const { refundId } = await this.refundExecutionService.executeGatewayRefund(
+      payment.id,
       amount,
     );
 
-    const fullyRefunded = alreadyRefunded + amount >= payment.amount;
-
-    const refund = await this.entityManager.transaction(async (manager) => {
-      const row = new Refund();
-      row.paymentId = payment.id;
-      row.providerRefundId = refundId;
-      row.amount = amount;
-      row.currency = payment.currency;
-      row.status = RefundStatus.Succeeded;
-      row.reason = reason ?? 'admin_manual_refund';
-      row.initiatedByUserId = adminUserId;
-      const saved = await manager.save(Refund, row);
-
-      payment.status = fullyRefunded
-        ? PaymentStatus.Refunded
-        : PaymentStatus.PartiallyRefunded;
-      await manager.save(Payment, payment);
-
-      // Full refund closes out cancelled / order_failed bookings.
-      if (fullyRefunded) {
-        const booking = await manager
-          .getRepository(Booking)
-          .findOneBy({ id: payment.bookingId });
-        if (
-          booking &&
-          (booking.status === BookingStatus.Cancelled ||
-            booking.status === BookingStatus.OrderFailed)
-        ) {
-          await this.stateMachine.transitionTo(
-            manager,
-            booking.id,
-            BookingStatus.Refunded,
-            adminUserId,
-            'admin_manual_refund',
-          );
-        }
-      }
+    const {
+      refund,
+      payment: updatedPayment,
+      fullyRefunded,
+    } = await this.entityManager.transaction(async (manager) => {
+      const result = await this.refundExecutionService.recordRefund(manager, {
+        paymentId: payment.id,
+        refundId,
+        amount,
+        reason: refundReason,
+        initiatedByUserId: adminUserId,
+      });
 
       await this.auditLogService.logAction(
         manager,
@@ -360,16 +329,16 @@ export class AdminService {
         'payment',
         payment.id,
         {
-          refund_id: saved.id,
+          refund_id: result.refund.id,
           provider_refund_id: refundId,
           amount,
           currency: payment.currency,
-          reason: reason ?? null,
-          fully_refunded: fullyRefunded,
+          reason: refundReason,
+          fully_refunded: result.fullyRefunded,
         },
       );
 
-      return saved;
+      return result;
     });
 
     this.logger.log(
@@ -383,7 +352,8 @@ export class AdminService {
       amount: refund.amount,
       currency: refund.currency,
       status: refund.status,
-      payment_status: payment.status,
+      payment_status: updatedPayment.status,
+      fully_refunded: fullyRefunded,
     };
   }
 
@@ -524,40 +494,6 @@ export class AdminService {
   }
 
   // ── Internals ───────────────────────────────────────────────────
-
-  private async sumSucceededRefunds(paymentId: string): Promise<number> {
-    const refunds = await this.refundRepo.findBy({
-      paymentId,
-      status: RefundStatus.Succeeded,
-    });
-    return refunds.reduce((sum, r) => sum + r.amount, 0);
-  }
-
-  /**
-   * The Paymob refund API needs the transaction id (webhook payload obj.id).
-   * Attempts only store the Paymob order id, so it is read back from the
-   * stored `transaction.succeeded` webhook event.
-   */
-  private async resolvePaymobTransactionId(paymentId: string): Promise<number> {
-    const event = await this.webhookEventRepo.findOne({
-      where: { paymentId, eventType: 'transaction.succeeded' },
-      order: { receivedAt: 'DESC' },
-    });
-
-    const payload = event?.payload as { obj?: { id?: unknown } } | undefined;
-    const rawId: unknown = payload?.obj?.id;
-    const transactionId = typeof rawId === 'number' ? rawId : Number(rawId);
-
-    if (!rawId || Number.isNaN(transactionId)) {
-      throw new ConflictException({
-        code: ErrorCode.ILLEGAL_TRANSITION,
-        message:
-          'No succeeded gateway transaction found for this payment; cannot refund.',
-      });
-    }
-
-    return transactionId;
-  }
 
   private async deactivateActiveRule(manager: EntityManager): Promise<void> {
     await manager
