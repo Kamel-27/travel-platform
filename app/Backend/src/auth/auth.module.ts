@@ -11,6 +11,7 @@ import { AccountResolutionService } from './services/account-resolution.service'
 import { MagicLinkService } from './services/magic-link.service';
 import { MailService } from './services/mail.service';
 import { TokenService } from './services/token.service';
+import { GoogleAuthService } from './services/google-auth.service';
 
 @Module({
   imports: [
@@ -36,7 +37,13 @@ import { TokenService } from './services/token.service';
     AccountResolutionService,
     MagicLinkService,
     MailService,
+    GoogleAuthService,
   ],
-  exports: [TokenService, AccountResolutionService, JwtModule],
+  exports: [
+    TokenService,
+    AccountResolutionService,
+    JwtModule,
+    GoogleAuthService,
+  ],
 })
 export class AuthModule {}
