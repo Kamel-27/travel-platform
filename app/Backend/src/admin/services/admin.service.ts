@@ -14,6 +14,8 @@ import {
   Repository,
 } from 'typeorm';
 
+import { User } from '../../users/user.entity';
+import { RefreshToken } from '../../auth/entities/refresh-token.entity';
 import { Booking, BookingStatus } from '../../bookings/entities/booking.entity';
 import {
   MarkupRule,
@@ -32,6 +34,7 @@ import {
   UpdateMarkupRuleDto,
 } from '../dto/markup-rule.dto';
 import { ListBookingsQueryDto } from '../dto/list-bookings-query.dto';
+import { ListUsersQueryDto } from '../dto/list-users-query.dto';
 
 /** Bookings stuck in `paid` longer than this show up in the health report. */
 const STUCK_PAID_WINDOW_MS = 15 * 60 * 1000;
@@ -43,6 +46,8 @@ export class AdminService {
   constructor(
     @InjectEntityManager()
     private readonly entityManager: EntityManager,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     @InjectRepository(Booking)
     private readonly bookingRepo: Repository<Booking>,
     @InjectRepository(Payment)
@@ -58,6 +63,91 @@ export class AdminService {
     private readonly stateMachine: BookingStateMachineService,
     private readonly auditLogService: AuditLogService,
   ) {}
+
+  // ── Users ───────────────────────────────────────────────────────
+
+  async listUsers(query: ListUsersQueryDto): Promise<{
+    users: Record<string, unknown>[];
+    total: number;
+    limit: number;
+    offset: number;
+  }> {
+    const limit = query.limit ?? 20;
+    const offset = query.offset ?? 0;
+
+    const where: FindOptionsWhere<User> = {};
+    if (query.email) where.email = query.email;
+    if (query.role) where.role = query.role;
+    if (query.is_active !== undefined) where.isActive = query.is_active;
+
+    const [users, total] = await this.userRepo.findAndCount({
+      where,
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+
+    return {
+      users: users.map((u) => this.mapUser(u)),
+      total,
+      limit,
+      offset,
+    };
+  }
+
+  /**
+   * Activate/deactivate a user account. Deactivation also revokes all of the
+   * user's refresh tokens, so the session ends at the next token refresh
+   * (access tokens self-expire within their TTL).
+   */
+  async updateUser(
+    adminUserId: string,
+    userId: string,
+    isActive: boolean,
+  ): Promise<Record<string, unknown>> {
+    if (userId === adminUserId && !isActive) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message: 'Admins cannot deactivate their own account.',
+      });
+    }
+
+    const updated = await this.entityManager.transaction(async (manager) => {
+      const user = await manager.getRepository(User).findOneBy({ id: userId });
+      if (!user) {
+        throw new NotFoundException({
+          code: ErrorCode.NOT_FOUND,
+          message: 'User not found.',
+        });
+      }
+
+      user.isActive = isActive;
+      const saved = await manager.save(User, user);
+
+      if (!isActive) {
+        await manager
+          .getRepository(RefreshToken)
+          .update({ userId, revokedAt: IsNull() }, { revokedAt: new Date() });
+      }
+
+      await this.auditLogService.logAction(
+        manager,
+        adminUserId,
+        'user.update',
+        'user',
+        userId,
+        { is_active: isActive },
+      );
+
+      return saved;
+    });
+
+    this.logger.log(
+      `Admin ${adminUserId} ${isActive ? 'activated' : 'deactivated'} user ${userId}`,
+    );
+
+    return this.mapUser(updated);
+  }
 
   // ── Bookings ────────────────────────────────────────────────────
 
@@ -482,6 +572,19 @@ export class AdminService {
         message: 'Percentage markup cannot exceed 100.',
       });
     }
+  }
+
+  private mapUser(user: User): Record<string, unknown> {
+    return {
+      id: user.id,
+      email: user.email,
+      full_name: user.fullName,
+      phone: user.phone,
+      role: user.role,
+      is_active: user.isActive,
+      email_verified_at: user.emailVerifiedAt,
+      created_at: user.createdAt,
+    };
   }
 
   private mapMarkupRule(rule: MarkupRule): Record<string, unknown> {

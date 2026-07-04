@@ -21,6 +21,8 @@ import {
 import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
 import { PaymentWebhookEvent } from '../../payments/entities/payment-webhook-event.entity';
 import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
+import { User, UserRole } from '../../users/user.entity';
+import { RefreshToken } from '../../auth/entities/refresh-token.entity';
 
 const ADMIN_ID = 'admin_user_001';
 
@@ -66,6 +68,19 @@ describe('AdminService', () => {
     payload: { obj: { id: 987654 } },
   };
 
+  const regularUser: Partial<User> = {
+    id: 'user_001',
+    email: 'customer@example.com',
+    fullName: 'Jane Doe',
+    phone: '+201000000000',
+    role: UserRole.User,
+    isActive: true,
+  };
+
+  let mockUserRepo: any;
+  let mockManagerUserRepo: any;
+  let mockManagerRefreshTokenRepo: any;
+
   beforeEach(async () => {
     mockBookingRepo = {
       findOneBy: jest.fn().mockResolvedValue(confirmedBooking),
@@ -86,12 +101,22 @@ describe('AdminService', () => {
       countBy: jest.fn().mockResolvedValue(0),
     };
 
+    mockUserRepo = {
+      findAndCount: jest.fn().mockResolvedValue([[], 0]),
+    };
+
     mockManagerMarkupRepo = {
       findOneBy: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue(undefined),
     };
     const mockManagerBookingRepo = {
       findOneBy: jest.fn().mockResolvedValue(null),
+    };
+    mockManagerUserRepo = {
+      findOneBy: jest.fn().mockResolvedValue({ ...regularUser }),
+    };
+    mockManagerRefreshTokenRepo = {
+      update: jest.fn().mockResolvedValue(undefined),
     };
 
     mockManager = {
@@ -103,6 +128,8 @@ describe('AdminService', () => {
       getRepository: jest.fn().mockImplementation((cls: unknown) => {
         if (cls === MarkupRule) return mockManagerMarkupRepo;
         if (cls === Booking) return mockManagerBookingRepo;
+        if (cls === User) return mockManagerUserRepo;
+        if (cls === RefreshToken) return mockManagerRefreshTokenRepo;
         return { findOneBy: jest.fn().mockResolvedValue(null) };
       }),
     };
@@ -136,6 +163,7 @@ describe('AdminService', () => {
       providers: [
         AdminService,
         { provide: EntityManager, useValue: mockEntityManager },
+        { provide: getRepositoryToken(User), useValue: mockUserRepo },
         { provide: getRepositoryToken(Booking), useValue: mockBookingRepo },
         { provide: getRepositoryToken(Payment), useValue: mockPaymentRepo },
         { provide: getRepositoryToken(Refund), useValue: mockRefundRepo },
@@ -159,6 +187,92 @@ describe('AdminService', () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  // ── users ─────────────────────────────────────────────────────
+
+  describe('listUsers', () => {
+    it('applies email/role/is_active filters and maps rows', async () => {
+      mockUserRepo.findAndCount.mockResolvedValue([
+        [{ ...regularUser, createdAt: new Date() }],
+        1,
+      ]);
+
+      const result = await service.listUsers({
+        email: 'customer@example.com',
+        role: UserRole.User,
+        is_active: true,
+        limit: 5,
+      });
+
+      expect(mockUserRepo.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            email: 'customer@example.com',
+            role: UserRole.User,
+            isActive: true,
+          },
+          take: 5,
+        }),
+      );
+      expect(result.total).toBe(1);
+      expect(result.users[0]).toMatchObject({
+        id: 'user_001',
+        email: 'customer@example.com',
+        is_active: true,
+      });
+    });
+  });
+
+  describe('updateUser', () => {
+    it('throws 404 when the user does not exist', async () => {
+      mockManagerUserRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        service.updateUser(ADMIN_ID, 'missing', false),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('rejects an admin deactivating their own account', async () => {
+      await expect(
+        service.updateUser(ADMIN_ID, ADMIN_ID, false),
+      ).rejects.toThrow(ConflictException);
+      expect(mockEntityManager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('deactivation revokes refresh tokens and writes the audit row', async () => {
+      const result = await service.updateUser(ADMIN_ID, 'user_001', false);
+
+      expect(mockManager.save).toHaveBeenCalledWith(
+        User,
+        expect.objectContaining({ id: 'user_001', isActive: false }),
+      );
+      expect(mockManagerRefreshTokenRepo.update).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user_001' }),
+        expect.objectContaining({ revokedAt: expect.any(Date) }),
+      );
+      expect(auditLogService.logAction).toHaveBeenCalledWith(
+        mockManager,
+        ADMIN_ID,
+        'user.update',
+        'user',
+        'user_001',
+        { is_active: false },
+      );
+      expect(result).toMatchObject({ id: 'user_001', is_active: false });
+    });
+
+    it('reactivation does not touch refresh tokens', async () => {
+      mockManagerUserRepo.findOneBy.mockResolvedValue({
+        ...regularUser,
+        isActive: false,
+      });
+
+      const result = await service.updateUser(ADMIN_ID, 'user_001', true);
+
+      expect(mockManagerRefreshTokenRepo.update).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ is_active: true });
+    });
   });
 
   // ── listBookings ──────────────────────────────────────────────

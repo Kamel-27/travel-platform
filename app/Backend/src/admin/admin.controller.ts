@@ -18,6 +18,8 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserRole } from '../users/user.entity';
 import { AdminService } from './services/admin.service';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
+import { ListUsersQueryDto } from './dto/list-users-query.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
 import { RefundPaymentDto } from './dto/refund-payment.dto';
 import {
@@ -35,6 +37,22 @@ import {
 @Roles(UserRole.TechnicalAdmin)
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
+
+  /** GET /admin/users?email=&role=&is_active= */
+  @Get('users')
+  listUsers(@Query() query: ListUsersQueryDto) {
+    return this.adminService.listUsers(query);
+  }
+
+  /** PATCH /admin/users/:id — activate/deactivate an account. */
+  @Patch('users/:id')
+  updateUser(
+    @CurrentUser() admin: JwtPayload,
+    @Param('id', ParseUUIDPipe) userId: string,
+    @Body() dto: UpdateUserDto,
+  ) {
+    return this.adminService.updateUser(admin.sub, userId, dto.is_active);
+  }
 
   /** GET /admin/bookings?status=&user_id=&reference= */
   @Get('bookings')
