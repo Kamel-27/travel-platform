@@ -1,263 +1,479 @@
+/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps, @typescript-eslint/no-unused-vars */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-
+import { useAuth } from "@/lib/auth-context";
+import { api, ApiError } from "@/lib/api-client";
+import { formatMoney } from "@/lib/money";
+import { formatFlightTime, formatFlightDate, formatIsoDuration } from "@/lib/datetime";
+import { getAirportLabel } from "@/lib/airports";
+import type { Booking, CancellationQuote } from "@/lib/types";
 
 export default function UserDashboardPage() {
+  const { user, isAuthenticated, isLoading, logout } = useAuth();
+
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [loadingBookings, setLoadingBookings] = useState(true);
+  const [bookingsError, setBookingsError] = useState<string | null>(null);
+
+  // Cancellation Modal State
+  const [cancellingBooking, setCancellingBooking] = useState<Booking | null>(null);
+  const [quote, setQuote] = useState<CancellationQuote | null>(null);
+  const [loadingQuote, setLoadingQuote] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState("customer_cancel");
+  const [submittingCancel, setSubmittingCancel] = useState(false);
+  const [cancelSuccessMsg, setCancelSuccessMsg] = useState<string | null>(null);
+
+  const loadBookings = useCallback(async () => {
+    try {
+      setLoadingBookings(true);
+      const res = await api.get<{ data: Booking[] }>("/bookings?limit=50");
+      setBookings(res.data);
+      setBookingsError(null);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        setBookingsError(err.message || "فشل تحميل قائمة الحجوزات.");
+      } else {
+        setBookingsError("حدث خطأ أثناء تحميل الحجوزات.");
+      }
+    } finally {
+      setLoadingBookings(false);
+    }
+  }, []);
+
+  // Fetch bookings on mount
+  useEffect(() => {
+    if (isAuthenticated) {
+      void loadBookings();
+    }
+  }, [isAuthenticated, loadBookings]);
+
+  // Fetch cancellation quote when booking selection changes
+  useEffect(() => {
+    if (!cancellingBooking) {
+      setQuote(null);
+      setQuoteError(null);
+      return;
+    }
+
+    let isMounted = true;
+    setLoadingQuote(true);
+    setQuoteError(null);
+
+    api.get<CancellationQuote>(`/bookings/${cancellingBooking.id}/cancellation-quote`)
+      .then((data) => {
+        if (!isMounted) return;
+        setQuote(data);
+        setLoadingQuote(false);
+      })
+      .catch((err: unknown) => {
+        if (!isMounted) return;
+        if (err instanceof ApiError) {
+          setQuoteError(err.message || "فشل تحميل تفاصيل الاسترجاع.");
+        } else {
+          setQuoteError("حدث خطأ أثناء تحميل تفاصيل الاسترجاع.");
+        }
+        setLoadingQuote(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [cancellingBooking]);
+
+  const handleCancelSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancellingBooking) return;
+
+    setSubmittingCancel(true);
+    setQuoteError(null);
+
+    try {
+      const result = await api.post<{ requires_admin: boolean; message?: string }>(
+        `/bookings/${cancellingBooking.id}/cancel`,
+        { reason: cancelReason }
+      );
+
+      if (result.requires_admin) {
+        setCancelSuccessMsg(result.message || "تم تقديم طلب الإلغاء للمراجعة اليدوية بنجاح.");
+      } else {
+        setCancelSuccessMsg("تم إلغاء الحجز ومعالجة عملية الاسترداد المالي بنجاح!");
+      }
+
+      // Reload bookings to update status
+      void loadBookings();
+
+      setTimeout(() => {
+        setCancellingBooking(null);
+        setCancelSuccessMsg(null);
+      }, 3000);
+
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        setQuoteError(err.message || "فشل إرسال طلب الإلغاء.");
+      } else {
+        setQuoteError("حدث خطأ أثناء إلغاء الحجز.");
+      }
+    } finally {
+      setSubmittingCancel(false);
+    }
+  };
+
+  const isUpcoming = (b: Booking) => {
+    if (["cancelled", "failed", "order_failed", "refunded"].includes(b.status)) return false;
+    if (b.status === "awaiting_payment" || b.status === "paid") return true;
+    if (!b.snapshot) return false;
+    // Check if there is at least one future segment
+    return b.snapshot.slices.some((slice) =>
+      slice.segments.some((seg) => new Date(seg.departing_at.local) > new Date())
+    );
+  };
+
+  const upcomingBookings = bookings.filter(isUpcoming);
+  const pastBookings = bookings.filter((b) => !isUpcoming(b));
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-md" dir="rtl">
+        <span className="material-symbols-outlined text-primary text-5xl animate-spin">progress_activity</span>
+        <p className="font-title-md">جاري تحميل ملفك الشخصي...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-base text-center p-4" dir="rtl">
+        <span className="material-symbols-outlined text-outline text-5xl">lock</span>
+        <p className="font-title-md">يرجى تسجيل الدخول للوصول إلى لوحة التحكم الخاصة بك.</p>
+        <Link href="/signin" className="mt-md bg-primary text-on-primary px-lg py-md rounded-xl font-bold font-title-lg shadow-md hover:opacity-90 active:scale-95 transition-all">
+          تسجيل الدخول
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <>
-      
-<header className="bg-surface-container-lowest dark:bg-inverse-surface shadow-sm sticky top-0 z-50">
-<nav className="flex justify-between items-center w-full px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto h-16">
-<div className="flex items-center gap-lg">
-<Link href="/" className="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary dark:text-inverse-primary">سفريات</Link>
-<div className="hidden md:flex gap-md">
-<Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/">رحلات طيران</Link>
-<Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/hotels">فنادق</Link>
-<Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/#offers">عروض</Link>
-<Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/manage-bookings">رحلاتي</Link>
-</div>
-</div>
-<div className="flex items-center gap-sm">
-<div className="flex items-center gap-xs text-on-surface-variant">
-<span className="material-symbols-outlined" data-icon="language">language</span>
-<span className="material-symbols-outlined" data-icon="currency_exchange">currency_exchange</span>
-<span className="material-symbols-outlined" data-icon="notifications">notifications</span>
-</div>
-<div className="h-10 w-10 rounded-full bg-secondary-container flex items-center justify-center overflow-hidden border border-outline-variant">
-<img alt="صورة الملف الشخصي للمستخدم" className="h-full w-full object-cover" data-alt="A professional close-up headshot of a middle-aged man with a friendly expression, set against a blurred, high-end office background. The lighting is soft and flattering, highlighting the clean textures of his skin and sharp attire. The overall aesthetic is corporate yet approachable, using a palette of soft whites and deep navy blues to align with a premium financial and travel service identity." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBrvws9yeAis6sCOfjvXVGmS66gjPbkYYj7QhGqou3a9cmBBfpKisviQZbs4bkVTrvNi66BJn78dPBPXH0S0BUgVWDoNTNqP-kac4wmOKd8ylzgMOhv1ifUGIMWAfrw-mr1lmqd_k8w-1wv0t9wizdKLshkk2F2pj4ijDmbuwfEWswKHRoskdsaMcW6HTLBu2RNz8jtSgHoHb23qUox1CbzcZqakaKuv7YNznxfxrmEJAajEQ1usswNwmXU90eIcj1Ls5S9vH0GoOVR"/>
-</div>
-</div>
-</nav>
-</header>
-<main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-lg grid grid-cols-1 md:grid-cols-12 gap-lg">
+      <header className="bg-surface-container-lowest dark:bg-inverse-surface shadow-sm sticky top-0 z-50">
+        <nav className="flex justify-between items-center w-full px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto h-16">
+          <div className="flex items-center gap-lg">
+            <Link href="/" className="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary dark:text-inverse-primary">
+              سفريات
+            </Link>
+            <div className="hidden md:flex gap-md">
+              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/">
+                رحلات طيران
+              </Link>
+              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/hotels">
+                فنادق
+              </Link>
+              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/manage-bookings">
+                رحلاتي
+              </Link>
+            </div>
+          </div>
+          <div className="flex items-center gap-sm">
+            <span className="font-label-md text-label-md text-on-surface-variant hidden md:block">
+              {user?.full_name || user?.email}
+            </span>
+            <button
+              onClick={() => logout()}
+              className="bg-surface-container-high text-on-surface px-md py-xs rounded-lg font-label-md text-label-md hover:bg-surface-container-highest transition-all"
+            >
+              تسجيل الخروج
+            </button>
+          </div>
+        </nav>
+      </header>
 
-<aside className="md:col-span-3">
-<div className="bg-surface-container-lowest rounded-xl p-md shadow-sm border border-outline-variant/30 sticky top-24">
-<nav className="flex flex-col gap-base">
-<Link className="flex items-center gap-sm p-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all" href="/manage-bookings">
-<span className="material-symbols-outlined" data-icon="event_available">event_available</span>
-<span className="font-label-md text-label-md">حجوزاتي</span>
-</Link>
-<Link className="flex items-center gap-sm p-sm rounded-lg bg-primary/10 text-primary font-bold transition-all" href="/user-dashboard">
-<span className="material-symbols-outlined" data-icon="person">person</span>
-<span className="font-label-md text-label-md">الملف الشخصي</span>
-</Link>
-<Link className="flex items-center gap-sm p-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all" href="/user-dashboard">
-<span className="material-symbols-outlined" data-icon="account_balance_wallet">account_balance_wallet</span>
-<span className="font-label-md text-label-md">المحفظة</span>
-</Link>
-<Link className="flex items-center gap-sm p-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all" href="/user-dashboard">
-<span className="material-symbols-outlined" data-icon="settings">settings</span>
-<span className="font-label-md text-label-md">الإعدادات</span>
-</Link>
-<div className="h-px bg-outline-variant my-sm"></div>
-<Link className="flex items-center gap-sm p-sm rounded-lg text-error hover:bg-error-container/20 transition-all" href="/signin">
-<span className="material-symbols-outlined" data-icon="logout">logout</span>
-<span className="font-label-md text-label-md">تسجيل الخروج</span>
-</Link>
-</nav>
-</div>
-</aside>
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-lg grid grid-cols-1 md:grid-cols-12 gap-lg" dir="rtl">
+        <aside className="md:col-span-3">
+          <div className="bg-surface-container-lowest rounded-xl p-md shadow-sm border border-outline-variant/30 sticky top-24">
+            <nav className="flex flex-col gap-base">
+              <Link className="flex items-center gap-sm p-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all" href="/manage-bookings">
+                <span className="material-symbols-outlined">event_available</span>
+                <span className="font-label-md text-label-md">حجوزاتي</span>
+              </Link>
+              <Link className="flex items-center gap-sm p-sm rounded-lg bg-primary/10 text-primary font-bold transition-all" href="/user-dashboard">
+                <span className="material-symbols-outlined">person</span>
+                <span className="font-label-md text-label-md">الملف الشخصي</span>
+              </Link>
+              <button
+                onClick={() => logout()}
+                className="flex items-center gap-sm p-sm rounded-lg text-error hover:bg-error-container/20 transition-all border-0 text-right w-full bg-transparent cursor-pointer"
+              >
+                <span className="material-symbols-outlined">logout</span>
+                <span className="font-label-md text-label-md">تسجيل الخروج</span>
+              </button>
+            </nav>
+          </div>
+        </aside>
 
-<div className="md:col-span-9 space-y-lg">
+        <div className="md:col-span-9 space-y-lg">
+          <section className="flex flex-col md:flex-row md:items-end justify-between gap-base">
+            <div>
+              <h1 className="font-headline-lg text-headline-lg text-primary font-bold">أهلاً بك، {user?.full_name || "المسافر"}</h1>
+              <p className="font-body-md text-body-md text-on-surface-variant">
+                {upcomingBookings.length > 0
+                  ? `لديك ${upcomingBookings.length} رحلة قادمة مؤكدة.`
+                  : "لا توجد رحلات قادمة قريبة."}
+              </p>
+            </div>
+            <div>
+              <Link href="/" className="bg-primary text-white px-md py-sm rounded-lg font-label-md text-label-md shadow-sm hover:scale-98 active:scale-95 transition-transform flex items-center gap-xs">
+                <span className="material-symbols-outlined text-[20px]">add</span>
+                <span>حجز رحلة جديدة</span>
+              </Link>
+            </div>
+          </section>
 
-<section className="flex flex-col md:flex-row md:items-end justify-between gap-base">
-<div>
-<h1 className="font-headline-lg text-headline-lg text-primary">أهلاً بك، أحمد</h1>
-<p className="font-body-md text-body-md text-on-surface-variant">لديك رحلتان قادمتان هذا الشهر.</p>
-</div>
-<div className="flex gap-sm">
-<Link href="/" className="bg-primary text-white px-md py-sm rounded-lg font-label-md text-label-md shadow-sm hover:scale-98 active:scale-95 transition-transform flex items-center gap-xs">
-<span className="material-symbols-outlined text-[20px]" data-icon="add">add</span>
-                        حجز جديد
-                    </Link>
-</div>
-</section>
+          {/* Upcoming Trips Section */}
+          <section className="space-y-md">
+            <h2 className="font-title-lg text-title-lg flex items-center gap-xs font-bold text-on-surface">
+              <span className="material-symbols-outlined text-primary">flight_takeoff</span>
+              <span>الرحلات القادمة</span>
+            </h2>
 
-<section>
-<div className="flex items-center justify-between mb-md">
-<h2 className="font-title-lg text-title-lg flex items-center gap-xs">
-<span className="material-symbols-outlined text-primary" data-icon="flight_takeoff">flight_takeoff</span>
-                        الرحلات القادمة
-                    </h2>
-</div>
-<div className="space-y-md">
+            {loadingBookings ? (
+              <div className="p-xl text-center text-on-surface-variant">
+                <span className="material-symbols-outlined text-3xl animate-spin">progress_activity</span>
+                <p className="mt-xs">جاري تحميل الرحلات القادمة...</p>
+              </div>
+            ) : bookingsError ? (
+              <div className="p-md bg-error-container/20 border border-error rounded-xl text-error">
+                {bookingsError}
+              </div>
+            ) : upcomingBookings.length === 0 ? (
+              <div className="p-xl bg-surface-container-lowest rounded-xl border border-outline-variant/30 text-center text-on-surface-variant">
+                <span className="material-symbols-outlined text-5xl text-outline mb-sm">flight</span>
+                <p className="font-body-lg">لا توجد رحلات قادمة. ابدأ بالتخطيط لرحلتك القادمة الآن!</p>
+              </div>
+            ) : (
+              <div className="space-y-md">
+                {upcomingBookings.map((b) => (
+                  <div key={b.id} className="bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm border border-outline-variant/30 hover:border-primary/40 transition-colors group p-md flex flex-col justify-between gap-md">
+                    <div className="flex justify-between items-start flex-wrap gap-sm border-b border-outline-variant/20 pb-sm">
+                      <div>
+                        <h3 className="font-headline-md text-headline-md font-bold text-on-surface">
+                          {b.snapshot?.owner_airline_name || "رحلة طيران"}
+                        </h3>
+                        <p className="text-on-surface-variant font-label-sm mt-1">
+                          رقم الحجز: <span className="font-mono font-bold">#{b.booking_reference || b.id.substring(0, 8).toUpperCase()}</span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-sm">
+                        <span className="text-tertiary font-headline-md text-headline-md font-extrabold">
+                          {formatMoney(b.total_amount, b.currency)}
+                        </span>
+                        {b.status === "confirmed" && (
+                          <span className="bg-green-500/10 border border-green-500/30 text-green-500 font-label-sm text-label-sm px-sm py-1 rounded-full flex items-center gap-xs">
+                            <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                            <span>مؤكد</span>
+                          </span>
+                        )}
+                        {b.status === "awaiting_payment" && (
+                          <span className="bg-orange-500/10 border border-orange-500/30 text-orange-500 font-label-sm text-label-sm px-sm py-1 rounded-full flex items-center gap-xs">
+                            <span className="material-symbols-outlined text-[14px]">hourglass_empty</span>
+                            <span>بانتظار الدفع</span>
+                          </span>
+                        )}
+                        {b.status === "paid" && (
+                          <span className="bg-teal-500/10 border border-teal-500/30 text-teal-500 font-label-sm text-label-sm px-sm py-1 rounded-full flex items-center gap-xs">
+                            <span className="material-symbols-outlined text-[14px]">progress_activity</span>
+                            <span>مدفوع (قيد التأكيد)</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
 
-<div className="bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm border border-outline-variant/30 hover:border-primary/50 transition-colors group">
-<div className="flex flex-col md:flex-row">
-<div className="md:w-1/3 relative h-48 md:h-auto overflow-hidden">
-<img alt="فندق في دبي" className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500" data-alt="A breathtaking view of a luxury rooftop hotel pool overlooking the Burj Khalifa and the glowing Dubai skyline at twilight. The lighting is sophisticated, with warm interior glows contrasting against the cool violet sky. The scene is crisp and high-definition, embodying an elite travel experience with modern architecture and shimmering water textures." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDkrpY6jxBKSUGdwmx5sAq0p3VAQ0qlHC3a_Fev16_BxJ7RuECH_fCkTO0iPxAY7sNHF43ETm3JbMu-XeUe4nongw63j2o1mVXft5HpFXchdlwAooDmJqLaproNLiLxAEnBiodaH02o3KXX9ODY7YYQrcZHEzRgq-oSuE70PZ0uAxWZ9Cm-6lcetzKnIyYFkStxl4qwixom6BjO3V0l3mZqbIvSm9nnZ4-looJQxQKGum6UccIWn_x0mp7rKh1krkE5pnot1V9gbmc0"/>
-<span className="absolute top-sm right-sm bg-primary text-white font-label-sm text-label-sm px-sm py-1 rounded-full flex items-center gap-xs">
-<span className="material-symbols-outlined text-[14px]" data-icon="check_circle" data-weight="fill">check_circle</span>
-                                    مؤكد
-                                </span>
-</div>
-<div className="md:w-2/3 p-md flex flex-col justify-between">
-<div className="flex justify-between items-start">
-<div>
-<h3 className="font-headline-md text-headline-md">فندق جميرا بيتش</h3>
-<p className="text-on-surface-variant font-label-md flex items-center gap-xs mt-1">
-<span className="material-symbols-outlined text-[18px]" data-icon="location_on">location_on</span>
-                                            دبي، الإمارات العربية المتحدة
-                                        </p>
-</div>
-<div className="text-left">
-<p className="text-tertiary font-headline-md text-headline-md">1,250 USD</p>
-<p className="text-on-surface-variant font-label-sm">لليلة الواحدة</p>
-</div>
-</div>
-<div className="mt-lg flex flex-wrap gap-lg border-t border-outline-variant/20 pt-md">
-<div className="flex flex-col">
-<span className="text-on-surface-variant font-label-sm">تاريخ الوصول</span>
-<span className="font-label-md text-primary">15 أكتوبر 2024</span>
-</div>
-<div className="flex flex-col">
-<span className="text-on-surface-variant font-label-sm">تاريخ المغادرة</span>
-<span className="font-label-md text-primary">20 أكتوبر 2024</span>
-</div>
-<div className="flex flex-col">
-<span className="text-on-surface-variant font-label-sm">رقم الحجز</span>
-<span className="font-label-md">#SF-902341</span>
-</div>
-</div>
-<div className="mt-md flex justify-end gap-sm">
-<Link href="/manage-bookings" className="text-primary border border-primary px-md py-base rounded-lg font-label-md hover:bg-primary/5 transition-colors">إدارة الحجز</Link>
-<button className="bg-primary text-white px-md py-base rounded-lg font-label-md hover:opacity-90 transition-opacity">تحميل التذكرة</button>
-</div>
-</div>
-</div>
-</div>
+                    {b.snapshot?.slices.map((slice, i) => (
+                      <div key={slice.id} className="text-sm pl-4 border-l-2 border-primary/20 space-y-xs my-xs">
+                        <p className="font-bold text-white">
+                          {slice.segments.map(seg => getAirportLabel(seg.marketing_carrier)).join(" / ")} · {getAirportLabel(slice.origin)} ← {getAirportLabel(slice.destination)}
+                        </p>
+                        <p className="text-white/60 text-xs">
+                          المغادرة: {formatFlightDate(slice.segments[0].departing_at.local)} · {formatFlightTime(slice.segments[0].departing_at.local)} · {formatIsoDuration(slice.duration)}
+                        </p>
+                      </div>
+                    ))}
 
-<div className="bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm border border-outline-variant/30">
-<div className="flex flex-col md:flex-row">
-<div className="md:w-1/3 relative h-48 md:h-auto overflow-hidden">
-<img alt="طائرة في الجو" className="h-full w-full object-cover" data-alt="A modern commercial aircraft soaring through a clear azure sky during the golden hour. The sunlight reflects off the metallic surface of the plane, creating a warm, vibrant glow. Below, soft, wispy clouds create a sense of altitude and freedom. The composition is dynamic and clean, focused on the elegance of modern flight and the thrill of discovery." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBJsWmzqbvLCt_J8ineoskfRF_arju7vbDp2F9Tb5TGdLcWJNBwLZ4S0eBTmv7S64EA4Z55m1O838nrg-PD3c3EW5ozorEGnEicpEzyWLLOQrHRoYe4k_q4v9nTGFOEMotMusiNiGz-w3Vmtngf6GGcYSwxiLWwFex6zWHI74kH40JVJlFQ5roqlat5XeNrzz_zNVVV-TVZCnm1MjjCWNxIJbT5z1WYYMKsKkhGXgSWZPlP-5DXNqr1LmyYqHk7NwxGWVidmjpWFYiY"/>
-<span className="absolute top-sm right-sm bg-tertiary-container text-white font-label-sm text-label-sm px-sm py-1 rounded-full flex items-center gap-xs">
-<span className="material-symbols-outlined text-[14px]" data-icon="hourglass_empty">hourglass_empty</span>
-                                    قيد الانتظار
-                                </span>
-</div>
-<div className="md:w-2/3 p-md flex flex-col justify-between">
-<div className="flex justify-between items-start">
-<div>
-<h3 className="font-headline-md text-headline-md">رحلة: الرياض (RUH) إلى لندن (LHR)</h3>
-<p className="text-on-surface-variant font-label-md flex items-center gap-xs mt-1">
-<span className="material-symbols-outlined text-[18px]" data-icon="flight_takeoff">flight_takeoff</span>
-                                            الخطوط الجوية السعودية - الدرجة الأولى
-                                        </p>
-</div>
-<div className="text-left">
-<p className="text-tertiary font-headline-md text-headline-md">3,450 USD</p>
-<p className="text-on-surface-variant font-label-sm">ذهاب وعودة</p>
-</div>
-</div>
-<div className="mt-lg grid grid-cols-2 md:grid-cols-4 gap-md border-t border-outline-variant/20 pt-md">
-<div className="flex flex-col">
-<span className="text-on-surface-variant font-label-sm">المغادرة</span>
-<span className="font-label-md text-primary">05 نوفمبر، 08:30</span>
-</div>
-<div className="flex flex-col">
-<span className="text-on-surface-variant font-label-sm">الوصول</span>
-<span className="font-label-md text-primary">05 نوفمبر، 14:15</span>
-</div>
-<div className="flex flex-col">
-<span className="text-on-surface-variant font-label-sm">رقم الرحلة</span>
-<span className="font-label-md">SV 115</span>
-</div>
-<div className="flex flex-col">
-<span className="text-on-surface-variant font-label-sm">الحالة</span>
-<span className="font-label-md text-tertiary-container">بانتظار الدفع</span>
-</div>
-</div>
-<div className="mt-md flex justify-end gap-sm">
-<button className="text-error border border-error px-md py-base rounded-lg font-label-md hover:bg-error-container/10 transition-colors">إلغاء الطلب</button>
-<Link href="/checkout/payment" className="bg-tertiary text-white px-md py-base rounded-lg font-label-md hover:opacity-90 transition-opacity flex items-center justify-center text-center">إكمال الدفع</Link>
-</div>
-</div>
-</div>
-</div>
-</div>
-</section>
+                    <div className="flex justify-between items-center flex-wrap gap-sm border-t border-outline-variant/20 pt-sm mt-xs">
+                      <span className="text-xs text-white/50">تاريخ الإنشاء: {new Date(b.created_at).toLocaleDateString("ar-SA")}</span>
+                      <div className="flex gap-sm">
+                        {b.status === "confirmed" && (
+                          <button
+                            onClick={() => setCancellingBooking(b)}
+                            className="text-error border border-error hover:bg-error-container/20 px-md py-base rounded-lg font-label-md font-bold active:scale-95 transition-all cursor-pointer bg-transparent"
+                          >
+                            إلغاء الحجز
+                          </button>
+                        )}
+                        {b.status === "awaiting_payment" && (
+                          <Link
+                            href={`/checkout/payment?booking_id=${b.id}`}
+                            className="bg-orange-400 hover:bg-orange-500 text-on-tertiary-fixed font-bold font-label-md px-md py-base rounded-lg shadow-sm active:scale-95 transition-all text-center flex items-center justify-center"
+                          >
+                            إكمال الدفع
+                          </Link>
+                        )}
+                        <Link
+                          href={`/checkout/confirmation?booking_id=${b.id}`}
+                          className="text-primary border border-primary hover:bg-primary/5 px-md py-base rounded-lg font-label-md font-bold transition-all text-center flex items-center justify-center"
+                        >
+                          تفاصيل الحجز
+                        </Link>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
 
-<section>
-<div className="flex items-center justify-between mb-md pt-lg">
-<h2 className="font-title-lg text-title-lg flex items-center gap-xs">
-<span className="material-symbols-outlined text-outline" data-icon="history">history</span>
-                        الرحلات السابقة
-                    </h2>
-<Link className="text-primary font-label-md hover:underline transition-all" href="/manage-bookings">عرض الكل</Link>
-</div>
-<div className="grid grid-cols-1 md:grid-cols-2 gap-md">
+          {/* Past Trips Section */}
+          <section className="space-y-md">
+            <h2 className="font-title-lg text-title-lg flex items-center gap-xs font-bold text-on-surface pt-lg">
+              <span className="material-symbols-outlined text-outline">history</span>
+              <span>الرحلات السابقة / الملغاة</span>
+            </h2>
 
-<div className="bg-surface-container-high/50 rounded-xl p-md border border-outline-variant/30 flex items-center gap-md opacity-80 hover:opacity-100 transition-opacity">
-<div className="h-16 w-16 rounded-lg overflow-hidden bg-white shrink-0">
-<img alt="منتجع في المالديف" className="h-full w-full object-cover" data-alt="A serene aerial view of a luxury overwater bungalow resort in the Maldives. The crystal-clear turquoise waters reveal vibrant coral reefs below. The scene is bright and airy, using a soft tropical palette. The lighting is high-key midday sun, emphasizing the purity and tranquility of the paradise setting." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDyEdlTkxpTMejcl1-LxwD9Zs5QPrwopYiPFvw5CR3ol3uJk5-TONvNK0zf40IsP4Z3fzB3FPt02IIqxtta0UeXeC9D24WnaOyNb_Wj1vIowe2w4ViXFfPgG91tPgU9YrDbDEun8m0azA2fVWMgARNeJ_mimhQtKgPFupJevR73rcuduDJ1KI3cNl_m5SCEGI87JRcvpmyzyV-yDZ1fUc31nII6gVR38Pj4RrH4itAi1KrWnad4clgFswPM-lb6iFly8fVc8LhrvgXz"/>
-</div>
-<div className="flex-grow">
-<div className="flex justify-between items-start">
-<h4 className="font-label-md font-bold">منتجع جزر المالديف</h4>
-<span className="text-outline font-label-sm">تمت</span>
-</div>
-<p className="text-on-surface-variant font-label-sm">أغسطس 2024 • 7 ليالي</p>
-</div>
-<span className="material-symbols-outlined text-outline" data-icon="chevron_left">chevron_left</span>
-</div>
+            {loadingBookings ? null : pastBookings.length === 0 ? (
+              <div className="p-md bg-surface-container-high/20 rounded-xl text-center text-white/50 text-sm">
+                لا توجد رحلات سابقة.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
+                {pastBookings.map((b) => (
+                  <div key={b.id} className="bg-surface-container-high/30 rounded-xl p-md border border-outline-variant/30 flex justify-between gap-base items-center opacity-85 hover:opacity-100 transition-opacity">
+                    <div className="flex-grow space-y-[2px]">
+                      <div className="flex justify-between items-start flex-wrap gap-xs">
+                        <h4 className="font-label-md font-bold text-white">
+                          {b.snapshot?.owner_airline_name || "رحلة سابقة"}
+                        </h4>
+                        {b.status === "cancelled" && <span className="text-white/40 text-xs bg-white/5 px-sm py-[2px] rounded-full">ملغى</span>}
+                        {b.status === "refunded" && <span className="text-teal-400 text-xs bg-teal-500/10 px-sm py-[2px] rounded-full">مسترجع</span>}
+                        {(b.status === "failed" || b.status === "order_failed") && <span className="text-red-400 text-xs bg-red-500/10 px-sm py-[2px] rounded-full">فشل</span>}
+                      </div>
+                      <p className="text-on-surface-variant font-label-sm">
+                        {b.snapshot?.slices[0]?.origin} ← {b.snapshot?.slices[0]?.destination}
+                      </p>
+                      {b.snapshot?.slices[0]?.segments[0]?.departing_at.local && (
+                        <p className="text-white/40 text-[10px]">
+                          {formatFlightDate(b.snapshot.slices[0].segments[0].departing_at.local)}
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-white/60 font-bold text-sm shrink-0">
+                      {formatMoney(b.total_amount, b.currency)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      </main>
 
-<div className="bg-surface-container-high/50 rounded-xl p-md border border-outline-variant/30 flex items-center gap-md opacity-80 hover:opacity-100 transition-opacity">
-<div className="h-16 w-16 rounded-lg overflow-hidden bg-white shrink-0">
-<img alt="باريس" className="h-full w-full object-cover grayscale" data-alt="A classic Parisian street scene featuring the Eiffel Tower in the far background. The architecture of the Haussmann buildings is elegant, bathed in the soft, warm light of a summer morning. The atmosphere is romantic and sophisticated, utilizing a muted, pastel-toned color palette with subtle pops of French blue." src="https://lh3.googleusercontent.com/aida-public/AB6AXuB-DzKDrxtIFnuvajb3H3gb0__ubo1gS1H6UysmsWMXogFFd7_McGk2KC04cFm0Nen1J5KZJguYK5Bz5obk3idkBXz-0VHX1c9WQUshprTxr6_Gzrok6isaYozlmn6u4icM1d2hVWZIU5-NU-gpyJ3IzhV08AyKIT156xdsW2dDuiXLnR2Wact256zN_d9IsSGG9MKKOfMNCmaDrBffqGF-LRNosMdnl3fg1jXjeETPVValvGbl5v44R0JrQu07vQAwLCQsYGkfzSIS"/>
-</div>
-<div className="flex-grow">
-<div className="flex justify-between items-start">
-<h4 className="font-label-md font-bold">رحلة باريس</h4>
-<span className="text-error font-label-sm">ملغاة</span>
-</div>
-<p className="text-on-surface-variant font-label-sm">يوليو 2024 • طيران فقط</p>
-</div>
-<span className="material-symbols-outlined text-outline" data-icon="chevron_left">chevron_left</span>
-</div>
-</div>
-</section>
-</div>
-</main>
+      {/* Cancellation Quote Modal */}
+      {cancellingBooking && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" dir="rtl">
+          <div className="bg-[#0b1120] text-white border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-fade-in-up">
+            <header className="p-md border-b border-white/10 flex justify-between items-center">
+              <h3 className="font-title-lg font-bold flex items-center gap-xs">
+                <span className="material-symbols-outlined text-red-500">warning</span>
+                <span>إلغاء حجز الطيران</span>
+              </h3>
+              <button
+                onClick={() => setCancellingBooking(null)}
+                className="text-white/60 hover:text-white bg-transparent border-0 cursor-pointer"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </header>
 
-<footer className="bg-surface-container dark:bg-surface-dim border-t border-outline-variant">
-<div className="w-full py-lg px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-base">
-<div className="text-center md:text-right">
-<span className="font-headline-md text-headline-md font-extrabold text-primary dark:text-primary-fixed-dim">سفريات</span>
-<p className="font-label-sm text-label-sm text-on-surface-variant mt-xs">© 2026 سفريات. جميع الحقوق محفوظة.</p>
-</div>
-<div className="flex flex-wrap justify-center gap-md">
-<Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/">عن سفريات</Link>
-<Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/">سياسة الخصوصية</Link>
-<Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/">الشروط والأحكام</Link>
-<Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/support">اتصل بنا</Link>
-<Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/support">الأسئلة الشائعة</Link>
-</div>
-</div>
-</footer>
+            <form onSubmit={handleCancelSubmit} className="p-md space-y-md">
+              {loadingQuote ? (
+                <div className="py-xl text-center text-white/60 flex flex-col items-center gap-base">
+                  <span className="material-symbols-outlined text-3xl animate-spin">progress_activity</span>
+                  <p>جاري احتساب سياسة استرداد المبلغ...</p>
+                </div>
+              ) : quoteError ? (
+                <div className="bg-error-container/20 border border-error text-error p-md rounded-xl text-sm">
+                  {quoteError}
+                </div>
+              ) : quote ? (
+                <div className="space-y-md">
+                  <div className="bg-white/5 p-md rounded-xl border border-white/10 space-y-xs text-sm text-white/80">
+                    <div className="flex justify-between">
+                      <span>إجمالي سعر الحجز الأصلي:</span>
+                      <span className="font-bold">{formatMoney(cancellingBooking.total_amount, cancellingBooking.currency)}</span>
+                    </div>
+                    <div className="flex justify-between text-red-400">
+                      <span>رسوم الغرامة المفروضة:</span>
+                      <span className="font-bold">{quote.penalty ? formatMoney(quote.penalty.amount, quote.penalty.currency) : "مجهول / لا يوجد"}</span>
+                    </div>
+                    <div className="flex justify-between text-teal-400 font-bold text-base border-t border-white/10 pt-xs mt-xs">
+                      <span>المبلغ المسترد إليك:</span>
+                      <span>{quote.customer_receives ? formatMoney(quote.customer_receives.amount, quote.customer_receives.currency) : "كامل المبلغ"}</span>
+                    </div>
+                  </div>
 
-<div className="md:hidden fixed bottom-0 left-0 right-0 bg-surface-container-lowest border-t border-outline-variant flex justify-around py-sm z-50">
-<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/">
-<span className="material-symbols-outlined" data-icon="home">home</span>
-<span className="text-[10px] font-medium">الرئيسية</span>
-</Link>
-<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/manage-bookings">
-<span className="material-symbols-outlined" data-icon="event_note">event_note</span>
-<span className="text-[10px] font-medium">رحلاتي</span>
-</Link>
-<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/hotels">
-<span className="material-symbols-outlined" data-icon="search">search</span>
-<span className="text-[10px] font-medium">استكشف</span>
-</Link>
-<Link className="flex flex-col items-center gap-xs text-primary" href="/user-dashboard">
-<span className="material-symbols-outlined" data-icon="person" data-weight="fill">person</span>
-<span className="text-[10px] font-bold">حسابي</span>
-</Link>
-</div>
+                  {quote.requires_admin && (
+                    <div className="bg-orange-500/10 border border-orange-500/20 text-orange-400 p-md rounded-xl text-xs leading-relaxed flex gap-base items-start">
+                      <span className="material-symbols-outlined shrink-0 mt-0.5">info</span>
+                      <p>
+                        <strong>ملاحظة هامة:</strong> هذا الحجز يتطلب مراجعة يدوية من قبل الدعم الفني لإكمال عملية الاسترجاع. سيتم تسجيل طلبك ومراجعته خلال 24 ساعة.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="space-y-xs">
+                    <label className="text-sm text-white/60 block">سبب إلغاء الحجز:</label>
+                    <select
+                      value={cancelReason}
+                      onChange={(e) => setCancelReason(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg p-md text-white font-label-md"
+                    >
+                      <option value="customer_cancel">تغيير في خطة السفر</option>
+                      <option value="medical_reason">أسباب طبية طارئة</option>
+                      <option value="scheduling_conflict">تضارب في المواعيد</option>
+                      <option value="other">أخرى</option>
+                    </select>
+                  </div>
+                </div>
+              ) : null}
+
+              {cancelSuccessMsg && (
+                <div className="bg-teal-500/10 border border-teal-500/30 text-teal-400 p-md rounded-xl text-center text-sm font-bold animate-pulse">
+                  {cancelSuccessMsg}
+                </div>
+              )}
+
+              <footer className="flex justify-end gap-sm pt-md border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setCancellingBooking(null)}
+                  className="bg-transparent border border-white/10 hover:bg-white/5 text-white font-label-md px-md py-base rounded-lg cursor-pointer"
+                >
+                  تراجع
+                </button>
+                {quote && !cancelSuccessMsg && (
+                  <button
+                    type="submit"
+                    disabled={submittingCancel || loadingQuote}
+                    className="bg-red-500 hover:bg-red-600 text-white font-bold font-label-md px-lg py-base rounded-lg shadow-md active:scale-95 transition-all cursor-pointer border-0"
+                  >
+                    {submittingCancel ? "جاري الإلغاء..." : "تأكيد إلغاء الحجز"}
+                  </button>
+                )}
+              </footer>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 }

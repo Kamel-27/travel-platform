@@ -1,313 +1,440 @@
+/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps, @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any */
 "use client";
 
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-
+import { useAuth } from "@/lib/auth-context";
+import { api, ApiError } from "@/lib/api-client";
+import { formatMoney } from "@/lib/money";
+import { formatFlightTime, formatFlightDate } from "@/lib/datetime";
+import { getAirportLabel } from "@/lib/airports";
+import type { Booking, CancellationQuote } from "@/lib/types";
 
 export default function ManageBookingsPage() {
+  const { user, isAuthenticated, isLoading, logout } = useAuth();
+
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [loadingBookings, setLoadingBookings] = useState(true);
+  const [bookingsError, setBookingsError] = useState<string | null>(null);
+
+  // Cancellation Modal State
+  const [cancellingBooking, setCancellingBooking] = useState<Booking | null>(null);
+  const [quote, setQuote] = useState<CancellationQuote | null>(null);
+  const [loadingQuote, setLoadingQuote] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState("customer_cancel");
+  const [submittingCancel, setSubmittingCancel] = useState(false);
+  const [cancelSuccessMsg, setCancelSuccessMsg] = useState<string | null>(null);
+
+  const isAdmin = user?.role === "technical_admin";
+
+  const loadBookings = useCallback(async () => {
+    try {
+      setLoadingBookings(true);
+      setBookingsError(null);
+      
+      const endpoint = isAdmin ? "/admin/bookings" : "/bookings";
+      const res = await api.get<any>(endpoint);
+      const list = isAdmin ? res.bookings : res.data;
+      setBookings(list || []);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        setBookingsError(err.message || "فشل تحميل قائمة الحجوزات.");
+      } else {
+        setBookingsError("حدث خطأ غير متوقع أثناء تحميل الحجوزات.");
+      }
+    } finally {
+      setLoadingBookings(false);
+    }
+  }, [isAdmin]);
+
+  // Fetch bookings on mount / auth state change
+  useEffect(() => {
+    if (isAuthenticated) {
+      void loadBookings();
+    }
+  }, [isAuthenticated, loadBookings]);
+
+  // Fetch cancellation quote (only relevant for regular customers or when evaluating cancellation)
+  useEffect(() => {
+    if (!cancellingBooking) {
+      setQuote(null);
+      setQuoteError(null);
+      return;
+    }
+
+    // Admins bypass normal quote display since they override, but let's fetch it defensively
+    let isMounted = true;
+    setLoadingQuote(true);
+    setQuoteError(null);
+
+    const quoteEndpoint = `/bookings/${cancellingBooking.id}/cancellation-quote`;
+
+    api.get<CancellationQuote>(quoteEndpoint)
+      .then((data) => {
+        if (!isMounted) return;
+        setQuote(data);
+        setLoadingQuote(false);
+      })
+      .catch((err: unknown) => {
+        if (!isMounted) return;
+        if (err instanceof ApiError) {
+          setQuoteError(err.message || "فشل احتساب سياسة استرجاع المبلغ الحالية.");
+        } else {
+          setQuoteError("حدث خطأ أثناء تحميل سياسة الاسترجاع.");
+        }
+        setLoadingQuote(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [cancellingBooking]);
+
+  const handleCancelSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancellingBooking) return;
+
+    setSubmittingCancel(true);
+    setQuoteError(null);
+
+    try {
+      // Use different endpoint for admin vs regular customer
+      const cancelEndpoint = isAdmin 
+        ? `/admin/bookings/${cancellingBooking.id}/cancel` 
+        : `/bookings/${cancellingBooking.id}/cancel`;
+
+      const result = await api.post<{ requires_admin?: boolean; message?: string }>(
+        cancelEndpoint,
+        { reason: cancelReason }
+      );
+
+      if (isAdmin) {
+        setCancelSuccessMsg("تم إلغاء الحجز ومعالجة عملية الاسترداد من قبل مسؤول النظام.");
+      } else if (result.requires_admin) {
+        setCancelSuccessMsg(result.message || "تم تقديم طلب الإلغاء للمراجعة اليدوية بنجاح.");
+      } else {
+        setCancelSuccessMsg("تم إلغاء الحجز ومعالجة عملية الاسترداد المالي بنجاح!");
+      }
+
+      // Reload list to update statuses
+      void loadBookings();
+
+      setTimeout(() => {
+        setCancellingBooking(null);
+        setCancelSuccessMsg(null);
+      }, 3000);
+
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        setQuoteError(err.message || "فشل إرسال طلب إلغاء الحجز.");
+      } else {
+        setQuoteError("حدث خطأ أثناء إلغاء الحجز.");
+      }
+    } finally {
+      setSubmittingCancel(false);
+    }
+  };
+
+  const getStatusBadge = (status: Booking["status"]) => {
+    switch (status) {
+      case "confirmed":
+        return <span className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400 px-sm py-1 rounded-full text-label-sm font-label-sm">مؤكد</span>;
+      case "awaiting_payment":
+        return <span className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 px-sm py-1 rounded-full text-label-sm font-label-sm">بانتظار الدفع</span>;
+      case "paid":
+        return <span className="bg-teal-100 dark:bg-teal-900/30 text-teal-800 dark:text-teal-400 px-sm py-1 rounded-full text-label-sm font-label-sm">مدفوع (قيد التأكيد)</span>;
+      case "cancelled":
+      case "refunded":
+        return <span className="bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-400 px-sm py-1 rounded-full text-label-sm font-label-sm">تم الإلغاء</span>;
+      case "failed":
+      case "order_failed":
+        return <span className="bg-error-container/20 text-error px-sm py-1 rounded-full text-label-sm font-label-sm">فشل</span>;
+      default:
+        return <span className="bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-400 px-sm py-1 rounded-full text-label-sm font-label-sm">{status}</span>;
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-md" dir="rtl">
+        <span className="material-symbols-outlined text-primary text-5xl animate-spin">progress_activity</span>
+        <p className="font-title-md">جاري تحميل قائمة الرحلات...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-base text-center p-4" dir="rtl">
+        <span className="material-symbols-outlined text-outline text-5xl">lock</span>
+        <p className="font-title-md">يرجى تسجيل الدخول للوصول إلى رحلاتك وحجوزاتك.</p>
+        <Link href="/signin" className="mt-md bg-primary text-on-primary px-lg py-md rounded-xl font-bold font-title-lg shadow-md hover:opacity-90 active:scale-95 transition-all">
+          تسجيل الدخول
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <>
-      
-<header className="bg-surface-container-lowest dark:bg-inverse-surface shadow-sm sticky top-0 z-50">
-<div className="flex justify-between items-center w-full px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto h-16">
-<div className="flex items-center gap-md">
-<Link href="/" className="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary dark:text-inverse-primary hover:opacity-90 transition-opacity">سفريات</Link>
-<nav className="hidden md:flex gap-md mt-1">
-<Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/">رحلات طيران</Link>
-<Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/hotels">فنادق</Link>
-<Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/#offers">عروض</Link>
-<Link className="text-primary dark:text-inverse-primary font-bold border-b-2 border-primary dark:border-inverse-primary pb-1 font-label-md text-label-md" href="/manage-bookings">رحلاتي</Link>
-</nav>
-</div>
-<div className="flex items-center gap-base">
-<div className="hidden md:flex items-center gap-xs text-on-surface-variant">
-<span className="material-symbols-outlined text-body-md" data-icon="language">language</span>
-<span className="font-label-md text-label-md">AR / USD</span>
-</div>
-<button className="p-base hover:bg-surface-container rounded-full transition-colors relative">
-<span className="material-symbols-outlined" data-icon="notifications">notifications</span>
-<span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full border-2 border-white"></span>
-</button>
-<Link href="/dashboard-overview" className="flex items-center gap-sm pr-base border-r border-outline-variant mr-base hover:opacity-80 transition-opacity">
-<div className="text-left hidden md:block">
-<p className="font-label-md text-label-md font-bold leading-none">أحمد المسؤول</p>
-<p className="text-label-sm text-label-sm text-on-surface-variant">مدير النظام</p>
-</div>
-<img alt="صورة الملف الشخصي" className="w-10 h-10 rounded-full object-cover border-2 border-primary-container" data-alt="A professional headshot of a middle-aged Arab businessman in a modern office environment. He is wearing a crisp white shirt and a charcoal grey blazer. The background is a brightly lit, blurred minimalist corporate workspace with glass walls and soft blue accent colors. The lighting is flattering and high-key, conveying authority and reliability in a corporate modern style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuA7VmntjDodzuIgrnC-IhKbzO_ySxhV7plhLOWbjaJPYFuISe5aelWM4yefDp5pgvF1cIK-DtL7SZO1i0ig-cMsHCnrY2YW99BP6MXKumIIBDnRDZnkvj7YWu8et53yJBhCDZDigJejVln_dV3pzfH2vAN4lxk83Kt0v7J5gxobdGtLsBYaycK_frGMtR538pIvnWewztRK5gFs9ortFyi0qjvSNb_6H1yFPaOOkqqGA2FRjR25cjDCJywCE37Srt3z1OpIkjMrE7s1"/>
-</Link>
-</div>
-</div>
-</header>
-<main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-lg">
+      <header className="bg-surface-container-lowest dark:bg-inverse-surface shadow-sm sticky top-0 z-50">
+        <div className="flex justify-between items-center w-full px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto h-16">
+          <div className="flex items-center gap-md">
+            <Link href="/" className="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary dark:text-inverse-primary hover:opacity-90 transition-opacity">
+              سفريات
+            </Link>
+            <nav className="hidden md:flex gap-md mt-1">
+              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/">
+                رحلات طيران
+              </Link>
+              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/hotels">
+                فنادق
+              </Link>
+              <Link className="text-primary dark:text-inverse-primary font-bold border-b-2 border-primary dark:border-inverse-primary pb-1 font-label-md text-label-md" href="/manage-bookings">
+                رحلاتي
+              </Link>
+            </nav>
+          </div>
+          <div className="flex items-center gap-sm">
+            <span className="font-label-md text-label-md text-on-surface-variant hidden md:block">
+              {isAdmin ? `${user?.full_name} (مسؤول النظام)` : user?.full_name || user?.email}
+            </span>
+            <button
+              onClick={() => logout()}
+              className="bg-surface-container-high text-on-surface px-md py-xs rounded-lg font-label-md text-label-md hover:bg-surface-container-highest transition-all"
+            >
+              تسجيل الخروج
+            </button>
+          </div>
+        </div>
+      </header>
 
-<div className="mb-lg flex flex-col md:flex-row md:items-end justify-between gap-md">
-<div>
-<h1 className="font-headline-lg text-headline-lg text-primary mb-xs">إدارة الحجوزات</h1>
-<p className="font-body-md text-body-md text-on-surface-variant">مرحباً بك، لديك 24 حجزاً جديداً يتطلب المراجعة اليوم.</p>
-</div>
-<div className="flex gap-base">
-<button className="bg-primary text-on-primary px-md py-sm rounded-lg flex items-center gap-xs font-label-md text-label-md hover:brightness-110 transition-all active:scale-95">
-<span className="material-symbols-outlined" data-icon="add">add</span>
-                    إضافة حجز يدوي
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-lg" dir="rtl">
+        <div className="mb-lg flex flex-col md:flex-row md:items-end justify-between gap-md">
+          <div>
+            <h1 className="font-headline-lg text-headline-lg text-primary font-bold">
+              {isAdmin ? "إدارة الحجوزات (لوحة الإشراف)" : "رحلاتي وحجوزاتي"}
+            </h1>
+            <p className="font-body-md text-body-md text-on-surface-variant">
+              {isAdmin 
+                ? "مرحباً بك، تدرج أدناه كافة حجوزات النظام لإدارتها والموافقة على عمليات الاسترداد." 
+                : "تجد أدناه تفاصيل كافة الحجوزات والرحلات التي قمت بها معنا."}
+            </p>
+          </div>
+          {!isAdmin && (
+            <div className="flex gap-base">
+              <Link href="/" className="bg-primary text-on-primary px-md py-sm rounded-lg flex items-center gap-xs font-label-md text-label-md hover:brightness-110 transition-all active:scale-95">
+                <span className="material-symbols-outlined">add</span>
+                <span>إضافة حجز جديد</span>
+              </Link>
+            </div>
+          )}
+        </div>
+
+        {loadingBookings ? (
+          <div className="p-xl text-center text-on-surface-variant">
+            <span className="material-symbols-outlined text-3xl animate-spin">progress_activity</span>
+            <p className="mt-xs">جاري تحميل قائمة الحجوزات...</p>
+          </div>
+        ) : bookingsError ? (
+          <div className="p-md bg-error-container/20 border border-error rounded-xl text-error mb-md">
+            {bookingsError}
+          </div>
+        ) : bookings.length === 0 ? (
+          <div className="p-xl bg-surface-container-lowest rounded-xl border border-outline-variant/30 text-center text-on-surface-variant">
+            <span className="material-symbols-outlined text-5xl text-outline mb-sm">airplane_ticket</span>
+            <p className="font-body-lg">لا توجد أي حجوزات مسجلة.</p>
+          </div>
+        ) : (
+          <div className="bg-surface-container-lowest rounded-xl shadow-sm overflow-hidden border border-outline-variant">
+            <div className="overflow-x-auto">
+              <table className="w-full text-right border-collapse">
+                <thead>
+                  <tr className="bg-surface-container text-on-surface-variant">
+                    <th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">رقم الحجز</th>
+                    {isAdmin && <th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">العميل (ID)</th>}
+                    <th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">مسار الرحلة</th>
+                    <th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">الشركة الناقلة</th>
+                    <th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">تاريخ السفر</th>
+                    <th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">المبلغ</th>
+                    <th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">الحالة</th>
+                    <th className="px-md py-md font-label-md text-label-md border-b border-outline-variant text-center">الإجراءات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-outline-variant">
+                  {bookings.map((b) => (
+                    <tr key={b.id} className="hover:bg-surface-container-low transition-colors group">
+                      <td className="px-md py-md font-label-md text-label-md font-bold text-primary font-mono select-all">
+                        #{b.booking_reference || b.id.substring(0, 8).toUpperCase()}
+                      </td>
+                      {isAdmin && (
+                        <td className="px-md py-md font-body-sm text-xs font-mono text-white/50 max-w-[120px] truncate" title={(b as any).user_email || (b as any).user_id}>
+                          {(b as any).user_email || (b as any).user_id || "N/A"}
+                        </td>
+                      )}
+                      <td className="px-md py-md font-body-md text-body-md font-bold">
+                        {b.snapshot?.slices[0] 
+                          ? `${getAirportLabel(b.snapshot.slices[0].origin)} ← ${getAirportLabel(b.snapshot.slices[0].destination)}`
+                          : "رحلة طيران"}
+                      </td>
+                      <td className="px-md py-md font-body-md text-body-md">
+                        {b.snapshot?.owner_airline_name || "مجهول"}
+                      </td>
+                      <td className="px-md py-md font-body-md text-body-md text-xs">
+                        {b.snapshot?.slices[0]?.segments[0]?.departing_at.local
+                          ? formatFlightDate(b.snapshot.slices[0].segments[0].departing_at.local)
+                          : "مستقبلي"}
+                      </td>
+                      <td className="px-md py-md font-label-md text-label-md font-bold">
+                        {formatMoney(b.total_amount, b.currency)}
+                      </td>
+                      <td className="px-md py-md">
+                        {getStatusBadge(b.status)}
+                      </td>
+                      <td className="px-md py-md">
+                        <div className="flex justify-center gap-xs">
+                          {b.status === "awaiting_payment" && (
+                            <Link 
+                              href={`/checkout/payment?booking_id=${b.id}`}
+                              className="text-xs bg-orange-400 hover:bg-orange-500 text-on-tertiary-fixed font-bold px-md py-[6px] rounded-lg shadow-sm"
+                            >
+                              إكمال الدفع
+                            </Link>
+                          )}
+                          {b.status === "confirmed" && (
+                            <button 
+                              onClick={() => setCancellingBooking(b)}
+                              className="text-xs text-error hover:bg-error-container/20 border border-error px-md py-[4px] rounded-lg font-bold bg-transparent cursor-pointer"
+                              title="إلغاء واسترجاع"
+                            >
+                              إلغاء حجز
+                            </button>
+                          )}
+                          <Link 
+                            href={`/checkout/confirmation?booking_id=${b.id}`}
+                            className="p-xs hover:text-primary transition-colors text-xs flex items-center justify-center border border-white/10 hover:border-primary/50 px-sm py-[4px] rounded-lg"
+                            title="عرض تفاصيل التذكرة"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">visibility</span>
+                          </Link>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Cancellation Quote Modal */}
+      {cancellingBooking && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" dir="rtl">
+          <div className="bg-[#0b1120] text-white border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-fade-in-up">
+            <header className="p-md border-b border-white/10 flex justify-between items-center">
+              <h3 className="font-title-lg font-bold flex items-center gap-xs">
+                <span className="material-symbols-outlined text-red-500">warning</span>
+                <span>إلغاء حجز الطيران</span>
+              </h3>
+              <button
+                onClick={() => setCancellingBooking(null)}
+                className="text-white/60 hover:text-white bg-transparent border-0 cursor-pointer"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </header>
+
+            <form onSubmit={handleCancelSubmit} className="p-md space-y-md">
+              {loadingQuote ? (
+                <div className="py-xl text-center text-white/60 flex flex-col items-center gap-base">
+                  <span className="material-symbols-outlined text-3xl animate-spin">progress_activity</span>
+                  <p>جاري احتساب سياسة استرداد المبلغ...</p>
+                </div>
+              ) : quoteError ? (
+                <div className="bg-error-container/20 border border-error text-error p-md rounded-xl text-sm">
+                  {quoteError}
+                </div>
+              ) : quote ? (
+                <div className="space-y-md">
+                  <div className="bg-white/5 p-md rounded-xl border border-white/10 space-y-xs text-sm text-white/80">
+                    <div className="flex justify-between">
+                      <span>إجمالي سعر الحجز الأصلي:</span>
+                      <span className="font-bold">{formatMoney(cancellingBooking.total_amount, cancellingBooking.currency)}</span>
+                    </div>
+                    <div className="flex justify-between text-red-400">
+                      <span>رسوم الغرامة المفروضة:</span>
+                      <span className="font-bold">{quote.penalty ? formatMoney(quote.penalty.amount, quote.penalty.currency) : "مجهول / لا يوجد"}</span>
+                    </div>
+                    <div className="flex justify-between text-teal-400 font-bold text-base border-t border-white/10 pt-xs mt-xs">
+                      <span>المبلغ المسترد إليك:</span>
+                      <span>{quote.customer_receives ? formatMoney(quote.customer_receives.amount, quote.customer_receives.currency) : "كامل المبلغ"}</span>
+                    </div>
+                  </div>
+
+                  {!isAdmin && quote.requires_admin && (
+                    <div className="bg-orange-500/10 border border-orange-500/20 text-orange-400 p-md rounded-xl text-xs leading-relaxed flex gap-base items-start">
+                      <span className="material-symbols-outlined shrink-0 mt-0.5">info</span>
+                      <p>
+                        <strong>ملاحظة هامة:</strong> هذا الحجز يتطلب مراجعة يدوية من قبل الدعم الفني لإكمال عملية الاسترجاع. سيتم تسجيل طلبك ومراجعته خلال 24 ساعة.
+                      </p>
+                    </div>
+                  )}
+
+                  {isAdmin && (
+                    <div className="bg-primary/10 border border-primary/20 text-primary-fixed-dim p-md rounded-xl text-xs leading-relaxed flex gap-base items-start">
+                      <span className="material-symbols-outlined shrink-0 mt-0.5">admin_panel_settings</span>
+                      <p>
+                        <strong>إدارة المشرف:</strong> بصفتك مسؤول نظام، سيتم إلغاء الحجز مباشرة وتجاوز المتطلبات تلقائياً عبر بوابة الدفع.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="space-y-xs">
+                    <label className="text-sm text-white/60 block">سبب إلغاء الحجز:</label>
+                    <select
+                      value={cancelReason}
+                      onChange={(e) => setCancelReason(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg p-md text-white font-label-md"
+                    >
+                      <option value="customer_cancel">تغيير في خطة السفر</option>
+                      <option value="medical_reason">أسباب طبية طارئة</option>
+                      <option value="scheduling_conflict">تضارب في المواعيد</option>
+                      <option value="other">أخرى</option>
+                    </select>
+                  </div>
+                </div>
+              ) : null}
+
+              {cancelSuccessMsg && (
+                <div className="bg-teal-500/10 border border-teal-500/30 text-teal-400 p-md rounded-xl text-center text-sm font-bold animate-pulse">
+                  {cancelSuccessMsg}
+                </div>
+              )}
+
+              <footer className="flex justify-end gap-sm pt-md border-t border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setCancellingBooking(null)}
+                  className="bg-transparent border border-white/10 hover:bg-white/5 text-white font-label-md px-md py-base rounded-lg cursor-pointer"
+                >
+                  تراجع
                 </button>
-<button className="bg-surface-container-highest text-on-surface px-md py-sm rounded-lg flex items-center gap-xs font-label-md text-label-md hover:bg-surface-variant transition-all">
-<span className="material-symbols-outlined" data-icon="download">download</span>
-                    تصدير التقارير
-                </button>
-</div>
-</div>
-
-<div className="grid grid-cols-1 md:grid-cols-4 gap-md mb-lg">
-<div className="glass-card p-md rounded-xl shadow-sm border-r-4 border-r-primary">
-<p className="text-on-surface-variant font-label-md text-label-md mb-xs">إجمالي الحجوزات</p>
-<div className="flex items-center justify-between">
-<h2 className="font-headline-md text-headline-md font-bold">1,284</h2>
-<span className="text-primary bg-primary-fixed px-xs py-1 rounded text-label-sm font-label-sm">+12%</span>
-</div>
-</div>
-<div className="glass-card p-md rounded-xl shadow-sm border-r-4 border-r-tertiary">
-<p className="text-on-surface-variant font-label-md text-label-md mb-xs">إجمالي المبيعات</p>
-<div className="flex items-center justify-between">
-<h2 className="font-headline-md text-headline-md font-bold">$42,500</h2>
-<span className="text-tertiary bg-tertiary-fixed px-xs py-1 rounded text-label-sm font-label-sm">+8.4%</span>
-</div>
-</div>
-<div className="glass-card p-md rounded-xl shadow-sm border-r-4 border-r-secondary">
-<p className="text-on-surface-variant font-label-md text-label-md mb-xs">نشط الآن</p>
-<div className="flex items-center justify-between">
-<h2 className="font-headline-md text-headline-md font-bold">142</h2>
-<div className="flex -space-x-2 space-x-reverse overflow-hidden">
-<div className="w-6 h-6 rounded-full bg-surface-dim border-2 border-white flex items-center justify-center text-[10px]">+5</div>
-<img alt="user" className="w-6 h-6 rounded-full border-2 border-white" data-alt="Close up of a friendly professional person portrait for a profile thumbnail. Professional lighting, clean background, corporate style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBR-br7sqFyNLibDBq81pYFyKiaPJNHO79-IGzbN0tMTWrbYliR722lU0h7Paux3F_ZJce7RODwHiD3oJNTsIfbtiVz2pU1Pg4TRy09i4gJB271MA6-X-4xf6CtVbNeUYuJUS6TWKBNIEbzbx1LWrVJkA-blBNZu_164p46ME99-xkxrQjdsa0meDmoa5FhXXRafl9FSeXnQz4N0iPQqFeBuM0QTIgACZCf5gDD34_ZhqPwXNI6Z2Fgbit1njq5Cl1OJL0Np3HvpDPU"/>
-<img alt="user" className="w-6 h-6 rounded-full border-2 border-white" data-alt="Close up of a friendly professional person portrait for a profile thumbnail. Professional lighting, clean background, corporate style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDm80ViQ75ycVMsIWi5sSvHspnJ-Djwhw_Ukx1gsQl5aSler19varfy19LKzNkPvsKjWeeDDb5esYNkwNGGw6u-0FLhUkE-0HwYF2XERlgggtBc35aO2AF5EG0YE3WDd4Wcx2lKu-bZyqF6I9ZuG_k4h1ITd1usKDSYa_qweQZtLoXv6umOidy-2Z_pTZYwWqSuVg1zcGv68b1IH5-ap34qTzPywFb-Q6_KJX7184QSGiY-QxIwywVyf-M-vUeBs2z-Z0SL7sXs3abV"/>
-</div>
-</div>
-</div>
-<div className="glass-card p-md rounded-xl shadow-sm border-r-4 border-r-error">
-<p className="text-on-surface-variant font-label-md text-label-md mb-xs">طلبات الاسترجاع</p>
-<div className="flex items-center justify-between">
-<h2 className="font-headline-md text-headline-md font-bold">18</h2>
-<span className="material-symbols-outlined text-error" data-icon="pending_actions">pending_actions</span>
-</div>
-</div>
-</div>
-
-<div className="glass-card p-md rounded-xl mb-md flex flex-col md:flex-row gap-md items-center">
-<div className="w-full md:flex-1 relative">
-<span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant" data-icon="search">search</span>
-<input className="w-full bg-surface-container pr-12 pl-4 py-3 rounded-lg border-none focus:ring-2 focus:ring-primary font-body-md text-body-md transition-all" placeholder="البحث عن طريق رقم الحجز، اسم العميل، أو الوجهة..." type="text"/>
-</div>
-<div className="flex gap-base w-full md:w-auto">
-<select className="bg-surface-container border-none rounded-lg px-md py-3 font-label-md text-label-md focus:ring-2 focus:ring-primary">
-<option>نوع الخدمة (الكل)</option>
-<option>طيران</option>
-<option>فندق</option>
-</select>
-<select className="bg-surface-container border-none rounded-lg px-md py-3 font-label-md text-label-md focus:ring-2 focus:ring-primary">
-<option>الحالة (الكل)</option>
-<option>مؤكد</option>
-<option>قيد الانتظار</option>
-<option>تم الإلغاء</option>
-</select>
-<button className="p-3 bg-surface-container rounded-lg hover:bg-surface-variant transition-colors">
-<span className="material-symbols-outlined" data-icon="filter_list">filter_list</span>
-</button>
-</div>
-</div>
-
-<div className="bg-surface-container-lowest rounded-xl shadow-sm overflow-hidden border border-outline-variant">
-<div className="overflow-x-auto scrollbar-hide">
-<table className="w-full text-right border-collapse">
-<thead>
-<tr className="bg-surface-container text-on-surface-variant">
-<th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">رقم الحجز</th>
-<th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">العميل</th>
-<th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">نوع الخدمة</th>
-<th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">تاريخ الحجز</th>
-<th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">المبلغ</th>
-<th className="px-md py-md font-label-md text-label-md border-b border-outline-variant">الحالة</th>
-<th className="px-md py-md font-label-md text-label-md border-b border-outline-variant text-center">الإجراءات</th>
-</tr>
-</thead>
-<tbody className="divide-y divide-outline-variant">
-
-<tr className="hover:bg-surface-container-low transition-colors group">
-<td className="px-md py-md font-label-md text-label-md font-bold text-primary">#SF-9042</td>
-<td className="px-md py-md">
-<div className="flex items-center gap-sm">
-<div className="w-8 h-8 rounded-full bg-secondary-fixed flex items-center justify-center font-bold text-secondary text-xs">س</div>
-<div>
-<p className="font-label-md text-label-md">سارة العتيبي</p>
-<p className="text-label-sm text-label-sm text-on-surface-variant">sara.a@example.com</p>
-</div>
-</div>
-</td>
-<td className="px-md py-md">
-<div className="flex items-center gap-xs">
-<span className="material-symbols-outlined text-primary" data-icon="flight">flight</span>
-<span className="font-body-md text-body-md">طيران (دبي - لندن)</span>
-</div>
-</td>
-<td className="px-md py-md font-body-md text-body-md">15 أكتوبر 2024</td>
-<td className="px-md py-md font-label-md text-label-md font-bold">$1,240</td>
-<td className="px-md py-md">
-<span className="bg-green-100 text-green-800 px-sm py-1 rounded-full text-label-sm font-label-sm">مؤكد</span>
-</td>
-<td className="px-md py-md">
-<div className="flex justify-center gap-base">
-<button className="p-xs hover:text-primary transition-colors" title="التفاصيل"><span className="material-symbols-outlined" data-icon="visibility">visibility</span></button>
-<button className="p-xs hover:text-secondary transition-colors" title="تعديل"><span className="material-symbols-outlined" data-icon="edit">edit</span></button>
-<button className="p-xs hover:text-error transition-colors" title="استرجاع"><span className="material-symbols-outlined" data-icon="keyboard_return">keyboard_return</span></button>
-</div>
-</td>
-</tr>
-
-<tr className="hover:bg-surface-container-low transition-colors group">
-<td className="px-md py-md font-label-md text-label-md font-bold text-primary">#SF-8821</td>
-<td className="px-md py-md">
-<div className="flex items-center gap-sm">
-<div className="w-8 h-8 rounded-full bg-primary-fixed flex items-center justify-center font-bold text-primary text-xs">م</div>
-<div>
-<p className="font-label-md text-label-md">محمد القحطاني</p>
-<p className="text-label-sm text-label-sm text-on-surface-variant">m.qahtani@example.com</p>
-</div>
-</div>
-</td>
-<td className="px-md py-md">
-<div className="flex items-center gap-xs">
-<span className="material-symbols-outlined text-tertiary" data-icon="hotel">hotel</span>
-<span className="font-body-md text-body-md">فندق (الرياض ريتز)</span>
-</div>
-</td>
-<td className="px-md py-md font-body-md text-body-md">14 أكتوبر 2024</td>
-<td className="px-md py-md font-label-md text-label-md font-bold">$850</td>
-<td className="px-md py-md">
-<span className="bg-yellow-100 text-yellow-800 px-sm py-1 rounded-full text-label-sm font-label-sm">قيد الانتظار</span>
-</td>
-<td className="px-md py-md">
-<div className="flex justify-center gap-base">
-<button className="p-xs hover:text-primary transition-colors" title="التفاصيل"><span className="material-symbols-outlined" data-icon="visibility">visibility</span></button>
-<button className="p-xs hover:text-secondary transition-colors" title="تعديل"><span className="material-symbols-outlined" data-icon="edit">edit</span></button>
-<button className="p-xs hover:text-error transition-colors" title="استرجاع"><span className="material-symbols-outlined" data-icon="keyboard_return">keyboard_return</span></button>
-</div>
-</td>
-</tr>
-
-<tr className="hover:bg-surface-container-low transition-colors group">
-<td className="px-md py-md font-label-md text-label-md font-bold text-primary">#SF-8704</td>
-<td className="px-md py-md">
-<div className="flex items-center gap-sm">
-<div className="w-8 h-8 rounded-full bg-secondary-fixed flex items-center justify-center font-bold text-secondary text-xs">ف</div>
-<div>
-<p className="font-label-md text-label-md">فيصل الشمري</p>
-<p className="text-label-sm text-label-sm text-on-surface-variant">f.shamari@example.com</p>
-</div>
-</div>
-</td>
-<td className="px-md py-md">
-<div className="flex items-center gap-xs">
-<span className="material-symbols-outlined text-primary" data-icon="flight">flight</span>
-<span className="font-body-md text-body-md">طيران (جدة - القاهرة)</span>
-</div>
-</td>
-<td className="px-md py-md font-body-md text-body-md">12 أكتوبر 2024</td>
-<td className="px-md py-md font-label-md text-label-md font-bold">$420</td>
-<td className="px-md py-md">
-<span className="bg-error-container text-error px-sm py-1 rounded-full text-label-sm font-label-sm">تم الإلغاء</span>
-</td>
-<td className="px-md py-md">
-<div className="flex justify-center gap-base">
-<button className="p-xs hover:text-primary transition-colors" title="التفاصيل"><span className="material-symbols-outlined" data-icon="visibility">visibility</span></button>
-<button className="p-xs hover:text-secondary transition-colors" title="تعديل"><span className="material-symbols-outlined" data-icon="edit">edit</span></button>
-<button className="p-xs hover:text-error transition-colors" title="استرجاع"><span className="material-symbols-outlined" data-icon="keyboard_return">keyboard_return</span></button>
-</div>
-</td>
-</tr>
-
-<tr className="hover:bg-surface-container-low transition-colors group">
-<td className="px-md py-md font-label-md text-label-md font-bold text-primary">#SF-8699</td>
-<td className="px-md py-md">
-<div className="flex items-center gap-sm">
-<div className="w-8 h-8 rounded-full bg-primary-fixed flex items-center justify-center font-bold text-primary text-xs">ل</div>
-<div>
-<p className="font-label-md text-label-md">ليلى محمود</p>
-<p className="text-label-sm text-label-sm text-on-surface-variant">laila.m@example.com</p>
-</div>
-</div>
-</td>
-<td className="px-md py-md">
-<div className="flex items-center gap-xs">
-<span className="material-symbols-outlined text-tertiary" data-icon="hotel">hotel</span>
-<span className="font-body-md text-body-md">فندق (هيلتون كاش)</span>
-</div>
-</td>
-<td className="px-md py-md font-body-md text-body-md">10 أكتوبر 2024</td>
-<td className="px-md py-md font-label-md text-label-md font-bold">$1,560</td>
-<td className="px-md py-md">
-<span className="bg-green-100 text-green-800 px-sm py-1 rounded-full text-label-sm font-label-sm">مؤكد</span>
-</td>
-<td className="px-md py-md">
-<div className="flex justify-center gap-base">
-<button className="p-xs hover:text-primary transition-colors" title="التفاصيل"><span className="material-symbols-outlined" data-icon="visibility">visibility</span></button>
-<button className="p-xs hover:text-secondary transition-colors" title="تعديل"><span className="material-symbols-outlined" data-icon="edit">edit</span></button>
-<button className="p-xs hover:text-error transition-colors" title="استرجاع"><span className="material-symbols-outlined" data-icon="keyboard_return">keyboard_return</span></button>
-</div>
-</td>
-</tr>
-</tbody>
-</table>
-</div>
-
-<div className="bg-surface-container p-md flex items-center justify-between">
-<span className="text-label-sm text-label-sm text-on-surface-variant">عرض 1-4 من أصل 1,284 حجز</span>
-<div className="flex gap-xs">
-<button className="w-8 h-8 rounded border border-outline-variant flex items-center justify-center hover:bg-surface-container-highest transition-colors">
-<span className="material-symbols-outlined text-body-md" data-icon="chevron_right">chevron_right</span>
-</button>
-<button className="w-8 h-8 rounded bg-primary text-on-primary flex items-center justify-center font-bold text-label-sm">1</button>
-<button className="w-8 h-8 rounded border border-outline-variant flex items-center justify-center hover:bg-surface-container-highest transition-colors font-bold text-label-sm">2</button>
-<button className="w-8 h-8 rounded border border-outline-variant flex items-center justify-center hover:bg-surface-container-highest transition-colors font-bold text-label-sm">3</button>
-<button className="w-8 h-8 rounded border border-outline-variant flex items-center justify-center hover:bg-surface-container-highest transition-colors">
-<span className="material-symbols-outlined text-body-md" data-icon="chevron_left">chevron_left</span>
-</button>
-</div>
-</div>
-</div>
-</main>
-
-<footer className="bg-surface-container dark:bg-surface-dim border-t border-outline-variant">
-<div className="w-full py-lg px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-base">
-<div className="flex flex-col md:items-start items-center gap-xs">
-<Link href="/" className="font-headline-md text-headline-md font-extrabold text-primary dark:text-primary-fixed-dim hover:opacity-90 transition-opacity">سفريات</Link>
-<p className="text-on-surface-variant dark:text-on-secondary-container font-label-sm text-label-sm">© 2024 سفريات. جميع الحقوق محفوظة.</p>
-</div>
-<nav className="flex gap-md">
-<Link className="text-on-surface-variant dark:text-on-secondary-container font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/">عن سفريات</Link>
-<Link className="text-on-surface-variant dark:text-on-secondary-container font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/">سياسة الخصوصية</Link>
-<Link className="text-on-surface-variant dark:text-on-secondary-container font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/">الشروط والأحكام</Link>
-<Link className="text-on-surface-variant dark:text-on-secondary-container font-label-sm text-label-sm hover:text-primary hover:underline transition-opacity opacity-80 hover:opacity-100" href="/support">اتصل بنا</Link>
-</nav>
-</div>
-</footer>
-
-<div className="md:hidden fixed bottom-0 left-0 right-0 bg-surface-container-lowest border-t border-outline-variant h-16 flex justify-around items-center px-md z-50">
-<Link href="/dashboard-overview" className="flex flex-col items-center gap-1 text-on-surface-variant">
-<span className="material-symbols-outlined" data-icon="home">home</span>
-<span className="text-[10px] font-label-sm">الرئيسية</span>
-</Link>
-<Link href="/manage-bookings" className="flex flex-col items-center gap-1 text-primary">
-<span className="material-symbols-outlined" data-icon="airplane_ticket">airplane_ticket</span>
-<span className="text-[10px] font-label-sm">الحجوزات</span>
-</Link>
-<Link href="/dashboard-overview" className="flex flex-col items-center gap-1 text-on-surface-variant">
-<span className="material-symbols-outlined" data-icon="insights">insights</span>
-<span className="text-[10px] font-label-sm">التقارير</span>
-</Link>
-<Link href="/user-dashboard" className="flex flex-col items-center gap-1 text-on-surface-variant">
-<span className="material-symbols-outlined" data-icon="settings">settings</span>
-<span className="text-[10px] font-label-sm">الإعدادات</span>
-</Link>
-</div>
+                {quote && !cancelSuccessMsg && (
+                  <button
+                    type="submit"
+                    disabled={submittingCancel || loadingQuote}
+                    className="bg-red-500 hover:bg-red-600 text-white font-bold font-label-md px-lg py-base rounded-lg shadow-md active:scale-95 transition-all cursor-pointer border-0"
+                  >
+                    {submittingCancel ? "جاري الإلغاء..." : "تأكيد إلغاء الحجز"}
+                  </button>
+                )}
+              </footer>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 }
