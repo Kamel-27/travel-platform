@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { HttpException, ServiceUnavailableException } from '@nestjs/common';
 import { DuffelService } from './duffel.service';
+import { REDIS_CLIENT } from '../redis/redis.module';
 import { ErrorCode } from '../common/dto/error-response.dto';
 
 const duffelOfferFixture = {
@@ -46,6 +47,20 @@ const duffelOfferFixture = {
   },
 };
 
+const createMockRedis = () => {
+  const pipeline = {
+    zremrangebyscore: jest.fn().mockReturnThis(),
+    zadd: jest.fn().mockReturnThis(),
+    expire: jest.fn().mockReturnThis(),
+    exec: jest.fn().mockResolvedValue([]),
+  };
+  return {
+    pipeline: jest.fn().mockReturnValue(pipeline),
+    zremrangebyscore: jest.fn().mockResolvedValue(0),
+    zcount: jest.fn().mockResolvedValue(0),
+  };
+};
+
 describe('DuffelService', () => {
   let service: DuffelService;
 
@@ -61,6 +76,10 @@ describe('DuffelService', () => {
               return undefined;
             }),
           },
+        },
+        {
+          provide: REDIS_CLIENT,
+          useValue: createMockRedis(),
         },
       ],
     }).compile();
@@ -146,9 +165,12 @@ describe('DuffelService', () => {
   describe('outbound requests', () => {
     it('should throw ServiceUnavailableException if API key is missing', async () => {
       // Mock missing key
-      const unconfiguredService = new DuffelService({
-        get: jest.fn().mockReturnValue(undefined),
-      } as any);
+      const unconfiguredService = new DuffelService(
+        {
+          get: jest.fn().mockReturnValue(undefined),
+        } as any,
+        createMockRedis() as any,
+      );
 
       await expect(
         unconfiguredService.search({

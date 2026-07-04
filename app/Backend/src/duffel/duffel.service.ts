@@ -5,8 +5,11 @@ import {
   ServiceUnavailableException,
   HttpException,
   HttpStatus,
+  Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import Redis from 'ioredis';
+import { REDIS_CLIENT } from '../redis/redis.module';
 import { ErrorCode } from '../common/dto/error-response.dto';
 
 /**
@@ -124,8 +127,38 @@ export class DuffelService {
   private readonly baseUrl = 'https://api.duffel.com';
   private readonly duffelVersion = 'v2';
 
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+  ) {
     this.apiKey = this.config.get<string>('DUFFEL_API_KEY');
+  }
+
+  isConfigured(): boolean {
+    return !!this.apiKey;
+  }
+
+  private async recordMetric(isError: boolean): Promise<void> {
+    try {
+      const now = Date.now();
+      const random = Math.random().toString(36).substring(7);
+      const oneHourAgo = now - 3600 * 1000;
+
+      const pipeline = this.redis.pipeline();
+      // Clean up requests & errors older than 1 hour
+      pipeline.zremrangebyscore('duffel:metrics:requests', 0, oneHourAgo);
+      pipeline.zremrangebyscore('duffel:metrics:errors', 0, oneHourAgo);
+      // Add current request/error
+      pipeline.zadd('duffel:metrics:requests', now, `${now}:${random}`);
+      if (isError) {
+        pipeline.zadd('duffel:metrics:errors', now, `${now}:${random}`);
+      }
+      pipeline.expire('duffel:metrics:requests', 3600);
+      pipeline.expire('duffel:metrics:errors', 3600);
+      await pipeline.exec();
+    } catch (err: unknown) {
+      this.logger.error('Failed to log Duffel request metric in Redis', err);
+    }
   }
 
   assertConfigured(): void {
@@ -196,11 +229,14 @@ export class DuffelService {
       const rawOffers = responseData?.['offers'] as unknown[] | undefined;
 
       if (!rawOffers || !Array.isArray(rawOffers)) {
+        await this.recordMetric(false);
         return [];
       }
 
+      await this.recordMetric(false);
       return rawOffers.map((o) => this.mapOffer(o, params.cabinClass));
     } catch (err: unknown) {
+      await this.recordMetric(true);
       if (err instanceof HttpException) {
         throw err;
       }
@@ -257,8 +293,10 @@ export class DuffelService {
         );
       }
 
+      await this.recordMetric(false);
       return this.mapOffer(responseData);
     } catch (err: unknown) {
+      await this.recordMetric(true);
       if (err instanceof HttpException) {
         throw err;
       }
@@ -308,6 +346,7 @@ export class DuffelService {
         signal: AbortSignal.timeout(130_000),
       });
     } catch (err: unknown) {
+      await this.recordMetric(true);
       // Network error or timeout — outcome is ambiguous
       const message =
         err instanceof Error ? err.message : 'Unknown network error';
@@ -323,6 +362,7 @@ export class DuffelService {
     if (response.ok) {
       const json = (await response.json()) as Record<string, unknown>;
       const data = json['data'] as Record<string, unknown>;
+      await this.recordMetric(false);
       return this.mapOrderResult(data);
     }
 
@@ -333,6 +373,9 @@ export class DuffelService {
     } catch {
       // ignore
     }
+
+    // Every path below is an error status
+    await this.recordMetric(true);
 
     if (response.status >= 400 && response.status < 500) {
       // Definitive failure — Duffel created nothing
@@ -402,10 +445,85 @@ export class DuffelService {
 
       const json = (await response.json()) as Record<string, unknown>;
       const data = json['data'] as Record<string, unknown>[] | undefined;
+      await this.recordMetric(false);
       return data ?? [];
     } catch (err: unknown) {
+      await this.recordMetric(true);
       this.logger.error('Duffel listOrders failed', err);
       return [];
+    }
+  }
+
+  /**
+   * Cancel an order in Duffel.
+   * Follows the two-step cancellation process:
+   * 1. Create a cancellation quote
+   * 2. Confirm the cancellation quote
+   */
+  async cancelOrder(orderId: string): Promise<{ refundAmount: number }> {
+    this.assertConfigured();
+
+    try {
+      // Step 1: Create cancellation quote
+      const quoteRes = await fetch(`${this.baseUrl}/air/order_cancellations`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          data: {
+            order_id: orderId,
+          },
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (!quoteRes.ok) {
+        await this.handleErrorResponse(quoteRes);
+      }
+
+      const quoteJson = (await quoteRes.json()) as Record<string, any>;
+      const quoteId = quoteJson?.data?.id;
+
+      if (!quoteId) {
+        throw new Error('Duffel failed to return order cancellation quote ID.');
+      }
+
+      // Step 2: Confirm the cancellation quote
+      const confirmRes = await fetch(
+        `${this.baseUrl}/air/order_cancellations/${quoteId}/actions/confirm`,
+        {
+          method: 'POST',
+          headers: this.getHeaders(),
+          body: JSON.stringify({}),
+          signal: AbortSignal.timeout(30_000),
+        },
+      );
+
+      if (!confirmRes.ok) {
+        await this.handleErrorResponse(confirmRes);
+      }
+
+      const confirmJson = (await confirmRes.json()) as Record<string, any>;
+      const confirmed = confirmJson?.data;
+
+      const refundAmount = confirmed?.refund_amount
+        ? this.toMinorUnits(confirmed.refund_amount, confirmed.refund_currency)
+        : 0;
+
+      await this.recordMetric(false);
+      return { refundAmount };
+    } catch (err: unknown) {
+      await this.recordMetric(true);
+      if (err instanceof HttpException) {
+        throw err;
+      }
+      this.logger.error(
+        `Duffel cancelOrder failed for order ID ${orderId}`,
+        err,
+      );
+      throw new ServiceUnavailableException({
+        code: ErrorCode.SUPPLIER_UNAVAILABLE,
+        message: 'Flight cancellation is temporarily unavailable.',
+      });
     }
   }
 
@@ -588,5 +706,66 @@ export class DuffelService {
     const decimals = decimalsMap[currency.toUpperCase()] ?? 2;
     const amount = parseFloat(amountStr);
     return Math.round(amount * Math.pow(10, decimals));
+  }
+
+  /**
+   * Retrieves sliding window metrics for Duffel API requests in the last hour.
+   */
+  async getMetrics(): Promise<{
+    configured: boolean;
+    requestsLastHour: number;
+    errorsLastHour: number;
+    recentErrorRate: number;
+  }> {
+    const configured = this.isConfigured();
+    if (!configured) {
+      return {
+        configured: false,
+        requestsLastHour: 0,
+        errorsLastHour: 0,
+        recentErrorRate: 0,
+      };
+    }
+
+    try {
+      const now = Date.now();
+      const oneHourAgo = now - 3600 * 1000;
+
+      // Clean old entries before counting to get accurate last hour stats
+      await this.redis.zremrangebyscore(
+        'duffel:metrics:requests',
+        0,
+        oneHourAgo,
+      );
+      await this.redis.zremrangebyscore('duffel:metrics:errors', 0, oneHourAgo);
+
+      const requests = await this.redis.zcount(
+        'duffel:metrics:requests',
+        oneHourAgo,
+        now,
+      );
+      const errors = await this.redis.zcount(
+        'duffel:metrics:errors',
+        oneHourAgo,
+        now,
+      );
+
+      const errorRate = requests > 0 ? errors / requests : 0;
+
+      return {
+        configured: true,
+        requestsLastHour: requests,
+        errorsLastHour: errors,
+        recentErrorRate: parseFloat(errorRate.toFixed(4)),
+      };
+    } catch (err: unknown) {
+      this.logger.error('Failed to retrieve Duffel metrics from Redis', err);
+      return {
+        configured: true,
+        requestsLastHour: 0,
+        errorsLastHour: 0,
+        recentErrorRate: 0,
+      };
+    }
   }
 }
