@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 import { RedisModule } from './redis/redis.module';
+import { FlightsModule } from './flights/flights.module';
 
 @Module({
   imports: [
@@ -26,12 +27,14 @@ import { RedisModule } from './redis/redis.module';
         GOOGLE_CLIENT_ID: Joi.string().optional(),
         GOOGLE_CLIENT_SECRET: Joi.string().optional(),
         GOOGLE_REDIRECT_URI: Joi.string().uri().optional(),
+        DUFFEL_API_KEY: Joi.string().optional(),
       }),
     }),
     DatabaseModule,
     RedisModule,
     HealthModule,
     AuthModule,
+    FlightsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
