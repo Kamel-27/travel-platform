@@ -7,6 +7,7 @@ import { AuthIdentity } from './entities/auth-identity.entity';
 import { MagicLinkToken } from './entities/magic-link-token.entity';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { AuthController } from './auth.controller';
+import { MeController } from './me.controller';
 import { AccountResolutionService } from './services/account-resolution.service';
 import { MagicLinkService } from './services/magic-link.service';
 import { MailService } from './services/mail.service';
@@ -31,7 +32,7 @@ import { GoogleAuthService } from './services/google-auth.service';
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, MeController],
   providers: [
     TokenService,
     AccountResolutionService,

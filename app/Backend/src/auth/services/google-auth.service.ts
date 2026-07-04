@@ -1,11 +1,12 @@
 import {
   BadRequestException,
+  HttpException,
   Injectable,
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OAuth2Client } from 'google-auth-library';
+import { CodeChallengeMethod, OAuth2Client } from 'google-auth-library';
 import { createHash, createHmac, randomBytes } from 'crypto';
 import { ErrorCode } from '../../common/dto/error-response.dto';
 
@@ -76,14 +77,11 @@ export class GoogleAuthService {
     const codeChallenge = createHash('sha256')
       .update(codeVerifier)
       .digest('base64url');
-    // Wait, google-auth-library's OAuth2Client can generate authorization URLs
     const url = client.generateAuthUrl({
-      access_type: 'offline',
       scope: ['openid', 'email', 'profile'],
       state: signedState,
       code_challenge: codeChallenge,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      code_challenge_method: 'S256' as any,
+      code_challenge_method: CodeChallengeMethod.S256,
     });
 
     return {
@@ -187,6 +185,11 @@ export class GoogleAuthService {
         fullName: payload.name,
       };
     } catch (err: unknown) {
+      // Our own typed rejections (unverified email, missing claims, …) pass
+      // through untouched; only genuine exchange/network failures get wrapped.
+      if (err instanceof HttpException) {
+        throw err;
+      }
       this.logger.error('Google OAuth exchange failed', err);
       throw new BadRequestException({
         code: ErrorCode.VALIDATION_ERROR,

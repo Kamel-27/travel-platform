@@ -13,6 +13,7 @@ const mockGetToken = jest.fn();
 
 jest.mock('google-auth-library', () => {
   return {
+    CodeChallengeMethod: { Plain: 'plain', S256: 'S256' },
     OAuth2Client: jest.fn().mockImplementation(() => {
       return {
         generateAuthUrl: jest.fn().mockReturnValue('mock-google-auth-url'),

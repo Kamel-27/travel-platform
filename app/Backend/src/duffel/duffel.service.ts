@@ -117,6 +117,8 @@ export class DuffelService {
           method: 'POST',
           headers: this.getHeaders(),
           body: JSON.stringify(body),
+          // Fail fast per nfr.md §5 — never a hung spinner
+          signal: AbortSignal.timeout(30_000),
         },
       );
 
@@ -132,7 +134,7 @@ export class DuffelService {
         return [];
       }
 
-      return rawOffers.map((o) => this.mapOffer(o));
+      return rawOffers.map((o) => this.mapOffer(o, params.cabinClass));
     } catch (err: unknown) {
       if (err instanceof HttpException) {
         throw err;
@@ -154,10 +156,12 @@ export class DuffelService {
 
     try {
       const response = await fetch(
-        `${this.baseUrl}/air/offers/${offerId}?return_available_services=true`,
+        `${this.baseUrl}/air/offers/${encodeURIComponent(offerId)}?return_available_services=true`,
         {
           method: 'GET',
           headers: this.getHeaders(),
+          // Fail fast per nfr.md §5 — never a hung spinner
+          signal: AbortSignal.timeout(15_000),
         },
       );
 
@@ -229,7 +233,7 @@ export class DuffelService {
     });
   }
 
-  private mapOffer(raw: any): NormalizedOffer {
+  private mapOffer(raw: any, requestedCabinClass?: string): NormalizedOffer {
     const totalAmount = raw.total_amount as string;
     const totalCurrency = raw.total_currency as string;
 
@@ -315,12 +319,26 @@ export class DuffelService {
         iata: raw.owner?.iata_code as string,
         logo_url: raw.owner?.logo_symbol_url ?? '',
       },
-      cabin_class: raw.cabin_class as string,
+      cabin_class: this.extractCabinClass(raw, requestedCabinClass),
       passenger_identity_documents_required:
         (raw.passenger_identity_documents_required as boolean) ?? false,
       slices,
       conditions,
     };
+  }
+
+  /**
+   * Duffel has no top-level cabin_class on offers — it lives per
+   * segment-passenger. Fall back to a top-level field if present (some
+   * fixtures/APIs include it), then to what was requested.
+   */
+  private extractCabinClass(raw: any, requested?: string): string {
+    const segmentCabin =
+      raw.slices?.[0]?.segments?.[0]?.passengers?.[0]?.cabin_class;
+    return (segmentCabin ??
+      raw.cabin_class ??
+      requested ??
+      'economy') as string;
   }
 
   private toMinorUnits(amountStr: string, currency: string): number {

@@ -1,18 +1,11 @@
-import {
-  Inject,
-  Injectable,
-  Logger,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { Request, Response } from 'express';
-import Redis from 'ioredis';
 import { Repository } from 'typeorm';
 import { ErrorCode } from '../../common/dto/error-response.dto';
-import { REDIS_CLIENT } from '../../redis/redis.module';
 import { User } from '../../users/user.entity';
 import { RefreshToken } from '../entities/refresh-token.entity';
 
@@ -50,7 +43,6 @@ export class TokenService {
     private readonly config: ConfigService,
     @InjectRepository(RefreshToken)
     private readonly refreshRepo: Repository<RefreshToken>,
-    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {
     this.accessTtlSeconds = this.config.get<number>(
       'ACCESS_TOKEN_TTL_SECONDS',
@@ -115,8 +107,17 @@ export class TokenService {
       });
     }
 
-    // Already revoked → theft detected → revoke entire family
-    if (existing.revokedAt) {
+    // Atomically claim the token: exactly one concurrent caller can revoke it.
+    // 0 affected rows = already revoked (reuse/theft, or we lost a concurrent
+    // rotation race) → revoke the entire family.
+    const claim = await this.refreshRepo
+      .createQueryBuilder()
+      .update(RefreshToken)
+      .set({ revokedAt: new Date() })
+      .where('token_hash = :hash AND revoked_at IS NULL', { hash })
+      .execute();
+
+    if (!claim.affected) {
       this.logger.warn(
         `Refresh token reuse detected for family ${existing.familyId}, user ${existing.userId}. Revoking entire family.`,
       );
@@ -127,10 +128,6 @@ export class TokenService {
         message: 'Refresh token reuse detected — session revoked',
       });
     }
-
-    // Revoke the presented token
-    existing.revokedAt = new Date();
-    await this.refreshRepo.save(existing);
 
     // Issue a new token in the same family
     const user = existing.user;

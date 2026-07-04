@@ -24,10 +24,12 @@ import { FlightsModule } from './flights/flights.module';
         ACCESS_TOKEN_TTL_SECONDS: Joi.number().default(900),
         REFRESH_TOKEN_TTL_DAYS: Joi.number().default(30),
         WEB_APP_URL: Joi.string().default('http://localhost:3000'),
-        GOOGLE_CLIENT_ID: Joi.string().optional(),
-        GOOGLE_CLIENT_SECRET: Joi.string().optional(),
-        GOOGLE_REDIRECT_URI: Joi.string().uri().optional(),
-        DUFFEL_API_KEY: Joi.string().optional(),
+        // Optional integrations — empty string = unconfigured (endpoints
+        // return a clean 503 via assertConfigured(); the app must still boot)
+        GOOGLE_CLIENT_ID: Joi.string().allow('').optional(),
+        GOOGLE_CLIENT_SECRET: Joi.string().allow('').optional(),
+        GOOGLE_REDIRECT_URI: Joi.string().uri().allow('').optional(),
+        DUFFEL_API_KEY: Joi.string().allow('').optional(),
       }),
     }),
     DatabaseModule,
