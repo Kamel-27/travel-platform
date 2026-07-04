@@ -2,6 +2,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { HttpException, ServiceUnavailableException } from '@nestjs/common';
+import { createHmac } from 'crypto';
 import { DuffelService } from './duffel.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { ErrorCode } from '../common/dto/error-response.dto';
@@ -201,6 +202,89 @@ describe('DuffelService', () => {
         expect(err.getStatus()).toBe(410);
         expect(err.getResponse().code).toBe(ErrorCode.OFFER_EXPIRED);
       }
+    });
+
+    it('should fetch a single order via getOrder', async () => {
+      const mockFetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: { id: 'ord_123', metadata: {} } }),
+      });
+      global.fetch = mockFetch;
+
+      const order = await service.getOrder('ord_123');
+      expect(order.id).toBe('ord_123');
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/air/orders/ord_123'),
+        expect.any(Object),
+      );
+    });
+  });
+
+  describe('verifyWebhookSignature', () => {
+    const webhookSecret = 'whsec_test_secret';
+    let webhookService: DuffelService;
+
+    beforeEach(() => {
+      webhookService = new DuffelService(
+        {
+          get: jest.fn((key: string) => {
+            if (key === 'DUFFEL_API_KEY') return 'mock-duffel-api-key';
+            if (key === 'DUFFEL_WEBHOOK_SECRET') return webhookSecret;
+            return undefined;
+          }),
+        } as any,
+        createMockRedis() as any,
+      );
+    });
+
+    function sign(timestamp: string, rawBody: string): string {
+      const hex = createHmac('sha256', webhookSecret)
+        .update(`${timestamp}.${rawBody}`)
+        .digest('hex');
+      return `t=${timestamp},v1=${hex}`;
+    }
+
+    it('accepts a correctly signed payload', () => {
+      const body = JSON.stringify({ id: 'wev_1', type: 'ping.triggered' });
+      const header = sign('1700000000', body);
+      expect(webhookService.verifyWebhookSignature(body, header)).toBe(true);
+    });
+
+    it('rejects a tampered payload', () => {
+      const body = JSON.stringify({ id: 'wev_1', type: 'ping.triggered' });
+      const header = sign('1700000000', body);
+      const tampered = JSON.stringify({ id: 'wev_1', type: 'order.created' });
+      expect(webhookService.verifyWebhookSignature(tampered, header)).toBe(
+        false,
+      );
+    });
+
+    it('rejects a missing signature header', () => {
+      const body = JSON.stringify({ id: 'wev_1', type: 'ping.triggered' });
+      expect(webhookService.verifyWebhookSignature(body, undefined)).toBe(
+        false,
+      );
+    });
+
+    it('rejects a malformed signature header', () => {
+      const body = JSON.stringify({ id: 'wev_1', type: 'ping.triggered' });
+      expect(
+        webhookService.verifyWebhookSignature(body, 'not-a-valid-header'),
+      ).toBe(false);
+    });
+
+    it('throws ServiceUnavailableException when webhook secret is unconfigured', () => {
+      const unconfigured = new DuffelService(
+        {
+          get: jest.fn((key: string) =>
+            key === 'DUFFEL_API_KEY' ? 'mock-duffel-api-key' : undefined,
+          ),
+        } as any,
+        createMockRedis() as any,
+      );
+      expect(() =>
+        unconfigured.verifyWebhookSignature('{}', 't=1,v1=abc'),
+      ).toThrow(ServiceUnavailableException);
     });
   });
 });

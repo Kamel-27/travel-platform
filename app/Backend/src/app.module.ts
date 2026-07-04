@@ -35,6 +35,7 @@ import { AdminModule } from './admin/admin.module';
         GOOGLE_CLIENT_SECRET: Joi.string().allow('').optional(),
         GOOGLE_REDIRECT_URI: Joi.string().uri().allow('').optional(),
         DUFFEL_API_KEY: Joi.string().allow('').optional(),
+        DUFFEL_WEBHOOK_SECRET: Joi.string().allow('').optional(),
         PAYMOB_API_BASE: Joi.string().uri().allow('').optional(),
         PAYMOB_API_KEY: Joi.string().allow('').optional(),
         PAYMOB_INTEGRATION_ID: Joi.string().allow('').optional(),
