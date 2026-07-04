@@ -6,6 +6,8 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectEntityManager, InjectRepository } from '@nestjs/typeorm';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import {
   EntityManager,
   FindOptionsWhere,
@@ -60,6 +62,10 @@ export class AdminService {
     private readonly stateMachine: BookingStateMachineService,
     private readonly refundExecutionService: RefundExecutionService,
     private readonly auditLogService: AuditLogService,
+    @InjectQueue('payment_webhook_queue')
+    private readonly paymentWebhookQueue: Queue,
+    @InjectQueue('order_fulfillment_queue')
+    private readonly orderFulfillmentQueue: Queue,
   ) {}
 
   // ── Users ───────────────────────────────────────────────────────
@@ -478,6 +484,12 @@ export class AdminService {
         )
       : 0;
 
+    // DLQ depth (nfr.md §5/§7 — "DLQ depth is an admin-visible metric").
+    const [paymentWebhookFailed, orderFulfillmentFailed] = await Promise.all([
+      this.paymentWebhookQueue.getFailedCount(),
+      this.orderFulfillmentQueue.getFailedCount(),
+    ]);
+
     return {
       duffel: {
         configured: metrics.configured,
@@ -488,6 +500,10 @@ export class AdminService {
       webhooks: {
         unprocessed_count: unprocessedCount,
         oldest_unprocessed_age_seconds: oldestAgeSeconds,
+      },
+      queues: {
+        payment_webhook_queue: { failed: paymentWebhookFailed },
+        order_fulfillment_queue: { failed: orderFulfillmentFailed },
       },
       bookings_stuck_in_paid: stuckInPaid,
     };

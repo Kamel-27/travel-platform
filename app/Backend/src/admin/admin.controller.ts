@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { JwtPayload } from '../auth/guards/jwt-auth.guard';
@@ -35,6 +36,9 @@ import {
 @Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.TechnicalAdmin)
+// nfr.md §3: "Admin endpoints exempt but audited" — every mutation still
+// writes an AuditLog row (enforced in AdminService), just not rate-limited.
+@SkipThrottle()
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 

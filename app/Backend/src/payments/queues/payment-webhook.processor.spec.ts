@@ -160,10 +160,11 @@ describe('PaymentWebhookProcessor', () => {
       expect.objectContaining({ processedAt: expect.any(Date) }),
     );
 
-    // Verify order fulfillment job was enqueued after T4
+    // Verify order fulfillment job was enqueued after T4 — requestId is a
+    // freshly generated correlation id since this test job carries none.
     expect(mockOrderFulfillmentQueue.add).toHaveBeenCalledWith(
       'create_duffel_order',
-      { bookingId: 'booking_123' },
+      { bookingId: 'booking_123', requestId: expect.any(String) },
       expect.objectContaining({ attempts: 1 }),
     );
   });

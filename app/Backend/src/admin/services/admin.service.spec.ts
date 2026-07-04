@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { getQueueToken } from '@nestjs/bullmq';
 
 import { AdminService } from './admin.service';
 import { AuditLogService } from './audit-log.service';
@@ -190,6 +191,14 @@ describe('AdminService', () => {
         { provide: PaymobService, useValue: paymobService },
         { provide: BookingStateMachineService, useValue: stateMachine },
         { provide: AuditLogService, useValue: auditLogService },
+        {
+          provide: getQueueToken('payment_webhook_queue'),
+          useValue: { getFailedCount: jest.fn().mockResolvedValue(0) },
+        },
+        {
+          provide: getQueueToken('order_fulfillment_queue'),
+          useValue: { getFailedCount: jest.fn().mockResolvedValue(0) },
+        },
         // Real instance — it's the extracted-and-shared logic under test
         // here too, wired to the same mock repos/gateway/state-machine.
         RefundExecutionService,

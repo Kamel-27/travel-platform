@@ -1,8 +1,10 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
+import { randomUUID } from 'crypto';
 
 import { OrderFulfillmentService } from '../services/order-fulfillment.service';
+import { runWithRequestId } from '../../common/logging/request-context';
 
 @Processor('order_fulfillment_queue')
 export class OrderFulfillmentProcessor extends WorkerHost {
@@ -12,7 +14,15 @@ export class OrderFulfillmentProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<{ bookingId: string }>): Promise<void> {
+  async process(
+    job: Job<{ bookingId: string; requestId?: string }>,
+  ): Promise<void> {
+    return runWithRequestId(job.data.requestId ?? randomUUID(), () =>
+      this.processJob(job),
+    );
+  }
+
+  private async processJob(job: Job<{ bookingId: string }>): Promise<void> {
     const { bookingId } = job.data;
     this.logger.log(
       `Processing order fulfillment job for booking: ${bookingId}`,

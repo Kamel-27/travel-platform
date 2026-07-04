@@ -5,6 +5,7 @@ import { InjectEntityManager } from '@nestjs/typeorm';
 import { InjectQueue } from '@nestjs/bullmq';
 import { EntityManager } from 'typeorm';
 import { Job, Queue } from 'bullmq';
+import { randomUUID } from 'crypto';
 
 import { PaymentWebhookEvent } from '../entities/payment-webhook-event.entity';
 import { Payment, PaymentStatus } from '../entities/payment.entity';
@@ -15,6 +16,10 @@ import {
 import { Booking, BookingStatus } from '../../bookings/entities/booking.entity';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
 import { toPaymobGatewayAmount } from '../services/paymob.service';
+import {
+  getRequestId,
+  runWithRequestId,
+} from '../../common/logging/request-context';
 
 @Processor('payment_webhook_queue')
 export class PaymentWebhookProcessor extends WorkerHost {
@@ -30,7 +35,18 @@ export class PaymentWebhookProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<{ eventId: string }>): Promise<void> {
+  async process(
+    job: Job<{ eventId: string; requestId?: string }>,
+  ): Promise<void> {
+    // Correlate worker logs back to the inbound webhook call (nfr.md §7) —
+    // falls back to a fresh id for jobs re-enqueued by the reprocessing sweep,
+    // which has no originating request.
+    return runWithRequestId(job.data.requestId ?? randomUUID(), () =>
+      this.processEvent(job),
+    );
+  }
+
+  private async processEvent(job: Job<{ eventId: string }>): Promise<void> {
     const { eventId } = job.data;
     this.logger.log(`Processing paymob webhook job for event: ${eventId}`);
 
@@ -167,7 +183,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
         // must stay in paid and be handled by reconciliation sweep)
         await this.orderFulfillmentQueue.add(
           'create_duffel_order',
-          { bookingId: booking.id },
+          { bookingId: booking.id, requestId: getRequestId() },
           { attempts: 1, removeOnComplete: true, removeOnFail: 100 },
         );
         this.logger.log(

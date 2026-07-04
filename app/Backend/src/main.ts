@@ -6,10 +6,17 @@ import helmet from 'helmet';
 import { json } from 'express';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
+import { StructuredLoggerService } from './common/logging/structured-logger.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const config = app.get(ConfigService);
+
+  // ── Structured JSON logs in production (nfr.md §7) — pretty console
+  // output stays the default in dev, where a human is reading the terminal.
+  if (config.get<string>('NODE_ENV') === 'production') {
+    app.useLogger(new StructuredLoggerService());
+  }
 
   // ── Security headers ────────────────────────────────────────────
   app.use(helmet());

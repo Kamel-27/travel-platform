@@ -7,6 +7,7 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { FlightsService } from './flights.service';
 import { FlightSearchQueryDto } from './dto/flight-search-query.dto';
@@ -23,6 +24,8 @@ export class FlightsController {
    */
   @Get('search')
   @HttpCode(HttpStatus.OK)
+  // nfr.md §3: 30/min/IP on this expensive, abusable, unauthenticated endpoint.
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   async search(
     @Query() query: FlightSearchQueryDto,
     @Req() req: Request,

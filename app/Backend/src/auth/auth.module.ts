@@ -13,6 +13,7 @@ import { MagicLinkService } from './services/magic-link.service';
 import { MailService } from './services/mail.service';
 import { TokenService } from './services/token.service';
 import { GoogleAuthService } from './services/google-auth.service';
+import { MagicLinkTokenPurgeService } from './services/magic-link-token-purge.service';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { GoogleAuthService } from './services/google-auth.service';
     MagicLinkService,
     MailService,
     GoogleAuthService,
+    MagicLinkTokenPurgeService,
   ],
   exports: [
     TokenService,

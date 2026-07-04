@@ -14,6 +14,7 @@ import { Queue } from 'bullmq';
 import { PaymobService } from './services/paymob.service';
 import { PaymentWebhookEvent } from './entities/payment-webhook-event.entity';
 import { PaymentProvider } from './entities/payment.entity';
+import { getRequestId } from '../common/logging/request-context';
 
 @Controller('webhooks')
 export class WebhooksController {
@@ -81,8 +82,12 @@ export class WebhooksController {
     try {
       const saved = await this.webhookRepo.save(eventEntity);
 
-      // 3. Enqueue to BullMQ processing queue
-      await this.webhookQueue.add('process_webhook', { eventId: saved.id });
+      // 3. Enqueue to BullMQ processing queue — carry request_id so the
+      // worker's logs correlate back to this inbound call (nfr.md §7).
+      await this.webhookQueue.add('process_webhook', {
+        eventId: saved.id,
+        requestId: getRequestId(),
+      });
 
       return { received: true };
     } catch (err: any) {

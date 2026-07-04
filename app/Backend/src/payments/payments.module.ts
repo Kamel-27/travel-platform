@@ -15,6 +15,7 @@ import { WebhooksController } from './webhooks.controller';
 import { PaymentsService } from './services/payments.service';
 import { PaymentWebhookProcessor } from './queues/payment-webhook.processor';
 import { PaymentWebhookSweepService } from './services/payment-webhook-sweep.service';
+import { WebhookRetentionService } from './services/webhook-retention.service';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { PaymentWebhookSweepService } from './services/payment-webhook-sweep.ser
     PaymentsService,
     PaymentWebhookProcessor,
     PaymentWebhookSweepService,
+    WebhookRetentionService,
   ],
   exports: [PaymentsService, PaymobModule],
 })
