@@ -37,6 +37,7 @@
     "class-validator": "^0.15.1",
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.4.2",
+    "google-auth-library": "^10.9.0",
     "helmet": "^8.2.0",
     "ioredis": "^5.11.1",
     "joi": "^18.2.3",
