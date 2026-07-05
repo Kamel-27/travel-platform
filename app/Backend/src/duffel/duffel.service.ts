@@ -80,6 +80,10 @@ export interface CreateOrderParams {
   offerId: string;
   passengers: CreateOrderPassenger[];
   metadata: Record<string, string>;
+  /** Minor-unit amount — must exactly match the offer's own total (not our marked-up total). */
+  amount: number;
+  /** The offer's own currency (not the customer-facing/Paymob currency). */
+  currency: string;
 }
 
 export interface NormalizedSegment {
@@ -332,6 +336,10 @@ export class DuffelService {
         payments: [
           {
             type: 'instant' as const,
+            // Duffel requires this to exactly match the offer's own total —
+            // sending our marked-up/gateway-converted amount gets rejected.
+            amount: this.toMajorUnitsString(params.amount, params.currency),
+            currency: params.currency.toUpperCase(),
           },
         ],
         metadata: params.metadata,
@@ -781,6 +789,18 @@ export class DuffelService {
   }
 
   private toMinorUnits(amountStr: string, currency: string): number {
+    const decimals = this.decimalsForCurrency(currency);
+    const amount = parseFloat(amountStr);
+    return Math.round(amount * Math.pow(10, decimals));
+  }
+
+  /** Inverse of toMinorUnits — Duffel's request bodies want decimal strings. */
+  private toMajorUnitsString(amountMinor: number, currency: string): string {
+    const decimals = this.decimalsForCurrency(currency);
+    return (amountMinor / Math.pow(10, decimals)).toFixed(decimals);
+  }
+
+  private decimalsForCurrency(currency: string): number {
     const decimalsMap: Record<string, number> = {
       JPY: 0,
       KRW: 0,
@@ -791,9 +811,7 @@ export class DuffelService {
       JOD: 3,
       LYD: 3,
     };
-    const decimals = decimalsMap[currency.toUpperCase()] ?? 2;
-    const amount = parseFloat(amountStr);
-    return Math.round(amount * Math.pow(10, decimals));
+    return decimalsMap[currency.toUpperCase()] ?? 2;
   }
 
   /**

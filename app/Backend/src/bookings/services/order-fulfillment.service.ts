@@ -84,6 +84,8 @@ export class OrderFulfillmentService {
       const orderResult = await this.duffelService.createOrder({
         offerId: snapshot.supplierOfferId,
         passengers: duffelPassengers,
+        amount: snapshot.totalAmount,
+        currency: snapshot.currency,
         metadata: {
           booking_id: booking.id,
           supplier_idempotency_key: booking.supplierIdempotencyKey,

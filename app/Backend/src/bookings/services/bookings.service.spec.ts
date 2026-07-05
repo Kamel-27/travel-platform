@@ -15,6 +15,7 @@ import { DuffelService } from '../../duffel/duffel.service';
 import { MarkupService } from './markup.service';
 import { BookingStateMachineService } from './booking-state-machine.service';
 import { RefundExecutionService } from './refund-execution.service';
+import { TicketPdfService } from './ticket-pdf.service';
 import { REDIS_CLIENT } from '../../redis/redis.module';
 import { Booking, BookingStatus } from '../entities/booking.entity';
 import { FlightOfferSnapshot } from '../entities/flight-offer-snapshot.entity';
@@ -204,6 +205,10 @@ describe('BookingsService', () => {
               fullyRefunded: true,
             }),
           }),
+        },
+        {
+          provide: TicketPdfService,
+          useValue: { generate: jest.fn().mockResolvedValue(Buffer.from('')) },
         },
       ],
     }).compile();

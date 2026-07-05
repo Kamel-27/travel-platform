@@ -112,6 +112,31 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   return data as T;
 }
 
+/** For binary responses (e.g. PDF downloads) — apiFetch assumes JSON. */
+export async function apiFetchBlob(path: string): Promise<Blob> {
+  const token = getAccessToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE}/api/v1${path}`, {
+    headers,
+    credentials: "include",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+
+  if (!res.ok) {
+    const envelope = (await res.json().catch(() => null))?.error;
+    throw new ApiError(
+      res.status,
+      envelope?.code || "INTERNAL_ERROR",
+      envelope?.message || res.statusText || "Request failed",
+      envelope?.details || {},
+    );
+  }
+
+  return res.blob();
+}
+
 export const api = {
   get: <T>(path: string, options?: RequestOptions) => apiFetch<T>(path, { ...options, method: "GET" }),
   post: <T>(path: string, body?: unknown, options?: RequestOptions) =>

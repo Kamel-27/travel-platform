@@ -218,6 +218,37 @@ describe('DuffelService', () => {
         expect.any(Object),
       );
     });
+
+    it('createOrder sends payments.amount/currency matching the offer total, in minor-unit-derived decimal form', async () => {
+      const mockFetch = jest.fn().mockResolvedValue({
+        ok: true,
+        headers: { get: () => undefined },
+        json: async () => ({
+          data: {
+            id: 'ord_123',
+            booking_reference: 'ABC123',
+            documents: [],
+          },
+        }),
+      });
+      global.fetch = mockFetch;
+
+      await service.createOrder({
+        offerId: 'off_123',
+        passengers: [],
+        amount: 154200, // minor units — must come back out as "1542.00"
+        currency: 'USD',
+        metadata: {},
+      });
+
+      const [, requestInit] = mockFetch.mock.calls[0];
+      const sentBody = JSON.parse(requestInit.body as string);
+      expect(sentBody.data.payments[0]).toEqual({
+        type: 'instant',
+        amount: '1542.00',
+        currency: 'USD',
+      });
+    });
   });
 
   describe('verifyWebhookSignature', () => {

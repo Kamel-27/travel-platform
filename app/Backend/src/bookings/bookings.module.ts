@@ -31,6 +31,7 @@ import { DuffelReconciliationService } from './services/duffel-reconciliation.se
 import { RefundExecutionService } from './services/refund-execution.service';
 import { DuffelWebhookProcessor } from './queues/duffel-webhook.processor';
 import { DuffelWebhookSweepService } from './services/duffel-webhook-sweep.service';
+import { TicketPdfService } from './services/ticket-pdf.service';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { DuffelWebhookSweepService } from './services/duffel-webhook-sweep.servi
     RefundExecutionService,
     DuffelWebhookProcessor,
     DuffelWebhookSweepService,
+    TicketPdfService,
   ],
   exports: [
     BookingsService,
