@@ -50,6 +50,13 @@ export class PaymentWebhookProcessor extends WorkerHost {
     const { eventId } = job.data;
     this.logger.log(`Processing paymob webhook job for event: ${eventId}`);
 
+    // Booking id to enqueue for order fulfillment, set inside the transaction
+    // below but only actually enqueued after it commits (see comment at the
+    // enqueue call) — enqueuing from inside the transaction is a race: the
+    // fulfillment job can be picked up and read the booking's status before
+    // this transaction's "paid" write is visible to other connections.
+    let bookingIdToFulfill: string | null = null;
+
     // Process inside transaction
     await this.entityManager.transaction(async (manager) => {
       const webhookEvent = await manager
@@ -179,16 +186,11 @@ export class PaymentWebhookProcessor extends WorkerHost {
         await manager.save(PaymentAttempt, attempt);
         await manager.save(Payment, payment);
 
-        // Enqueue Duffel order creation job (no auto-retries — ambiguous failures
-        // must stay in paid and be handled by reconciliation sweep)
-        await this.orderFulfillmentQueue.add(
-          'create_duffel_order',
-          { bookingId: booking.id, requestId: getRequestId() },
-          { attempts: 1, removeOnComplete: true, removeOnFail: 100 },
-        );
-        this.logger.log(
-          `Booking ${booking.id} payment verified. Order creation job enqueued.`,
-        );
+        // Defer the actual enqueue until after this transaction commits (see
+        // note above `bookingIdToFulfill` declaration) — the fulfillment
+        // worker reads the booking's status fresh from the DB, and must not
+        // see it pre-commit.
+        bookingIdToFulfill = booking.id;
       } else if (webhookEvent.eventType === 'transaction.failed') {
         attempt.status = PaymentAttemptStatus.Failed;
         attempt.failureReason =
@@ -205,5 +207,19 @@ export class PaymentWebhookProcessor extends WorkerHost {
         `Successfully processed paymob webhook event: ${eventId}`,
       );
     });
+
+    // Enqueue Duffel order creation job now that the "paid" transition above
+    // is committed (no auto-retries — ambiguous failures must stay in paid
+    // and be handled by reconciliation sweep).
+    if (bookingIdToFulfill) {
+      await this.orderFulfillmentQueue.add(
+        'create_duffel_order',
+        { bookingId: bookingIdToFulfill, requestId: getRequestId() },
+        { attempts: 1, removeOnComplete: true, removeOnFail: 100 },
+      );
+      this.logger.log(
+        `Booking ${bookingIdToFulfill} payment verified. Order creation job enqueued.`,
+      );
+    }
   }
 }

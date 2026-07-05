@@ -11,7 +11,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectEntityManager, InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import Redis from 'ioredis';
 import { randomUUID } from 'crypto';
 
@@ -30,6 +30,7 @@ import { Payment } from '../../payments/entities/payment.entity';
 import { MarkupService } from './markup.service';
 import { BookingStateMachineService } from './booking-state-machine.service';
 import { RefundExecutionService } from './refund-execution.service';
+import { TicketPdfService } from './ticket-pdf.service';
 import { PassengerInputDto } from '../dto/save-passengers.dto';
 
 interface CancellationConditionPenalty {
@@ -70,6 +71,7 @@ export class BookingsService {
     private readonly markupService: MarkupService,
     private readonly stateMachine: BookingStateMachineService,
     private readonly refundExecutionService: RefundExecutionService,
+    private readonly ticketPdfService: TicketPdfService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -399,7 +401,7 @@ export class BookingsService {
     user: JwtPayload,
     limit = 10,
     cursor?: string,
-  ): Promise<{ data: Booking[]; next_cursor: string | null }> {
+  ): Promise<{ data: Record<string, unknown>[]; next_cursor: string | null }> {
     const queryBuilder = this.bookingRepo
       .createQueryBuilder('booking')
       .leftJoinAndSelect('booking.markupRule', 'markupRule')
@@ -434,44 +436,34 @@ export class BookingsService {
       ).toString('base64');
     }
 
+    // Batch-fetch snapshots for all bookings on this page — the API contract
+    // (matching getBookingDetail) expects each entry shaped snake_case with
+    // its snapshot summary, not the raw camelCase entity.
+    const snapshots = bookings.length
+      ? await this.snapshotRepo.find({
+          where: { bookingId: In(bookings.map((b) => b.id)) },
+          relations: { slices: { segments: true } },
+        })
+      : [];
+    const snapshotByBookingId = new Map(
+      snapshots.map((s) => [s.bookingId, s]),
+    );
+
     return {
-      data: bookings,
+      data: bookings.map((b) => this.mapBookingSummary(b, snapshotByBookingId.get(b.id))),
       next_cursor: nextCursor,
     };
   }
 
   /**
-   * Resolves complete detail of a single booking, verifying ownership/admin rights.
+   * Shared snake_case shape for booking list rows (matches the Booking
+   * contract getBookingDetail returns, minus passengers which the list view
+   * doesn't need).
    */
-  async getBookingDetail(user: JwtPayload, bookingId: string): Promise<any> {
-    const booking = await this.bookingRepo.findOne({
-      where: { id: bookingId },
-      relations: { markupRule: true },
-    });
-
-    if (!booking) {
-      throw new NotFoundException({
-        code: ErrorCode.NOT_FOUND,
-        message: 'Booking not found.',
-      });
-    }
-
-    if (booking.userId !== user.sub && user.role !== UserRole.TechnicalAdmin) {
-      throw new ForbiddenException({
-        code: ErrorCode.FORBIDDEN,
-        message: 'Access denied to this booking.',
-      });
-    }
-
-    const snapshot = await this.snapshotRepo.findOne({
-      where: { bookingId },
-      relations: { slices: { segments: true } },
-    });
-
-    const passengers = await this.passengerRepo.find({
-      where: { bookingId },
-    });
-
+  private mapBookingSummary(
+    booking: Booking,
+    snapshot?: FlightOfferSnapshot,
+  ): Record<string, unknown> {
     return {
       id: booking.id,
       status: booking.status,
@@ -517,6 +509,44 @@ export class BookingsService {
             })),
           }
         : null,
+      passengers: [],
+    };
+  }
+
+  /**
+   * Resolves complete detail of a single booking, verifying ownership/admin rights.
+   */
+  async getBookingDetail(user: JwtPayload, bookingId: string): Promise<any> {
+    const booking = await this.bookingRepo.findOne({
+      where: { id: bookingId },
+      relations: { markupRule: true },
+    });
+
+    if (!booking) {
+      throw new NotFoundException({
+        code: ErrorCode.NOT_FOUND,
+        message: 'Booking not found.',
+      });
+    }
+
+    if (booking.userId !== user.sub && user.role !== UserRole.TechnicalAdmin) {
+      throw new ForbiddenException({
+        code: ErrorCode.FORBIDDEN,
+        message: 'Access denied to this booking.',
+      });
+    }
+
+    const snapshot = await this.snapshotRepo.findOne({
+      where: { bookingId },
+      relations: { slices: { segments: true } },
+    });
+
+    const passengers = await this.passengerRepo.find({
+      where: { bookingId },
+    });
+
+    return {
+      ...this.mapBookingSummary(booking, snapshot ?? undefined),
       passengers: passengers.map((p) => ({
         id: p.id,
         supplier_passenger_id: p.supplierPassengerId,
@@ -705,9 +735,9 @@ export class BookingsService {
   }
 
   /**
-   * GET /bookings/:id/documents — e-ticket/document list. `file_url` is
-   * always null in Phase 1: PDF generation + blob storage are still an M4
-   * TODO stub (contract deviation, documented in the PR).
+   * GET /bookings/:id/documents — e-ticket/document list. `file_url` stays
+   * null here (metadata listing only); the actual PDF is generated on demand
+   * by getTicketPdf / GET /bookings/:id/ticket.pdf below.
    */
   async getDocuments(user: JwtPayload, bookingId: string): Promise<any> {
     const booking = await this.bookingRepo.findOneBy({ id: bookingId });
@@ -738,6 +768,43 @@ export class BookingsService {
         file_url: null,
       })),
     };
+  }
+
+  /**
+   * GET /bookings/:id/ticket.pdf — renders a real itinerary/e-ticket PDF.
+   * Only available once the booking is actually confirmed with Duffel.
+   */
+  async getTicketPdf(user: JwtPayload, bookingId: string): Promise<Buffer> {
+    const booking = await this.bookingRepo.findOneBy({ id: bookingId });
+    if (!booking) {
+      throw new NotFoundException({
+        code: ErrorCode.NOT_FOUND,
+        message: 'Booking not found.',
+      });
+    }
+    if (booking.userId !== user.sub && user.role !== UserRole.TechnicalAdmin) {
+      throw new ForbiddenException({
+        code: ErrorCode.FORBIDDEN,
+        message: 'Access denied to this booking.',
+      });
+    }
+    if (booking.status !== BookingStatus.Confirmed) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message: `Ticket is only available once the booking is confirmed. Current status: ${booking.status}.`,
+      });
+    }
+
+    const [snapshot, passengers, documents] = await Promise.all([
+      this.snapshotRepo.findOne({
+        where: { bookingId },
+        relations: { slices: { segments: true } },
+      }),
+      this.passengerRepo.find({ where: { bookingId } }),
+      this.documentRepo.find({ where: { bookingId } }),
+    ]);
+
+    return this.ticketPdfService.generate(booking, snapshot, passengers, documents);
   }
 
   private computeCancellationQuote(

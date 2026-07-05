@@ -10,8 +10,10 @@ import {
   Post,
   Put,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import Redis from 'ioredis';
 
 import { REDIS_CLIENT } from '../redis/redis.module';
@@ -152,8 +154,8 @@ export class BookingsController {
 
   /**
    * GET /bookings/:id/documents
-   * E-ticket/document list. `file_url` is always null in Phase 1 (PDF
-   * generation + blob storage are still an M4 TODO stub).
+   * E-ticket/document list. `file_url` stays null (metadata only) — the
+   * real PDF is served by GET /bookings/:id/ticket.pdf below.
    */
   @Get(':id/documents')
   @UseGuards(JwtAuthGuard)
@@ -162,5 +164,25 @@ export class BookingsController {
     @Param('id') bookingId: string,
   ): Promise<any> {
     return this.bookingsService.getDocuments(user, bookingId);
+  }
+
+  /**
+   * GET /bookings/:id/ticket.pdf
+   * Renders and streams a real itinerary/e-ticket PDF for a confirmed booking.
+   */
+  @Get(':id/ticket.pdf')
+  @UseGuards(JwtAuthGuard)
+  async getTicketPdf(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') bookingId: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdf = await this.bookingsService.getTicketPdf(user, bookingId);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="ticket-${bookingId}.pdf"`,
+      'Content-Length': pdf.length,
+    });
+    res.send(pdf);
   }
 }

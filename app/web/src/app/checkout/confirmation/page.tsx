@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { api, ApiError } from "@/lib/api-client";
+import { api, apiFetchBlob, ApiError } from "@/lib/api-client";
 import { formatFlightTime, formatFlightDate, formatIsoDuration } from "@/lib/datetime";
 import { getAirportLabel } from "@/lib/airports";
 import type { Booking } from "@/lib/types";
@@ -84,9 +84,55 @@ function ConfirmationInner() {
     };
   }, [bookingId]);
 
+  // While the booking is still "paid" (payment succeeded but the airline
+  // order hasn't been confirmed by Duffel yet), keep polling instead of
+  // showing the success page prematurely.
+  useEffect(() => {
+    if (!bookingId || booking?.status !== "paid") return;
+
+    let cancelled = false;
+    const timerId = setInterval(async () => {
+      try {
+        const data = await api.get<Booking>(`/bookings/${bookingId}`);
+        if (!cancelled) setBooking(data);
+      } catch {
+        // Silently ignore — will retry on next tick.
+      }
+    }, 4000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timerId);
+    };
+  }, [bookingId, booking?.status]);
+
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+
   const handleActionClick = (message: string) => {
     setToastMessage(message);
     setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  const handleDownloadTicket = async () => {
+    if (!bookingId || downloadingPdf) return;
+    setDownloadingPdf(true);
+    try {
+      const blob = await apiFetchBlob(`/bookings/${bookingId}/ticket.pdf`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `ticket-${bookingId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      handleActionClick(
+        err instanceof ApiError ? err.message : "تعذّر تحميل التذكرة، يرجى المحاولة لاحقاً.",
+      );
+    } finally {
+      setDownloadingPdf(false);
+    }
   };
 
   if (loading) {
@@ -105,6 +151,56 @@ function ConfirmationInner() {
         <p className="font-title-md text-on-surface max-w-md">{error}</p>
         <Link href="/flights" className="mt-md bg-primary text-on-primary px-md py-sm rounded-lg font-label-md text-label-md">
           العودة للبحث عن رحلات
+        </Link>
+      </div>
+    );
+  }
+
+  // Payment succeeded but the airline order isn't confirmed yet — keep the
+  // user informed instead of showing a premature success page (this state
+  // resolves automatically via polling above, usually within a minute).
+  if (booking?.status === "paid") {
+    return (
+      <div className="min-h-screen bg-background text-on-surface flex flex-col items-center justify-center gap-md text-center p-4" dir="rtl">
+        <span className="material-symbols-outlined text-primary text-6xl animate-spin">progress_activity</span>
+        <h1 className="font-headline-md text-headline-md font-bold">تم استلام دفعتك بنجاح</h1>
+        <p className="font-body-md text-body-md text-on-surface-variant max-w-md">
+          جاري تأكيد حجزك مع شركة الطيران الآن، عادة ما تستغرق هذه الخطوة أقل من دقيقة. لا تغلق هذه الصفحة.
+        </p>
+      </div>
+    );
+  }
+
+  // Order fulfillment came back negative (or the sweep gave up waiting on
+  // Duffel) — the backend auto-refunds in this case, so be upfront about it.
+  if (booking?.status === "order_failed" || booking?.status === "failed") {
+    return (
+      <div className="min-h-screen bg-background text-on-surface flex flex-col items-center justify-center gap-base text-center p-4" dir="rtl">
+        <div className="w-20 h-20 rounded-full bg-error-container/40 flex items-center justify-center">
+          <span className="material-symbols-outlined text-error text-4xl">error</span>
+        </div>
+        <h1 className="font-headline-md text-headline-md font-bold">تعذّر تأكيد الحجز مع شركة الطيران</h1>
+        <p className="font-body-md text-body-md text-on-surface-variant max-w-md">
+          تم الدفع بنجاح، لكن تعذّر إتمام الحجز مع شركة الطيران. سيتم استرداد المبلغ المدفوع بالكامل تلقائياً خلال دقائق.
+        </p>
+        <Link href="/support" className="mt-sm bg-primary text-on-primary px-lg py-3 rounded-xl font-label-md text-label-md font-bold">
+          تواصل مع الدعم
+        </Link>
+      </div>
+    );
+  }
+
+  // Any other status (awaiting_payment, cancelled, refunded, ...) means this
+  // booking never reached "confirmed" — don't show the success page.
+  if (booking?.status !== "confirmed") {
+    return (
+      <div className="min-h-screen bg-background text-on-surface flex flex-col items-center justify-center gap-base text-center p-4" dir="rtl">
+        <span className="material-symbols-outlined text-outline text-5xl">info</span>
+        <p className="font-title-md text-on-surface max-w-md">
+          حالة هذا الحجز الحالية: {booking?.status ?? "غير معروفة"}
+        </p>
+        <Link href="/manage-bookings" className="mt-md bg-primary text-on-primary px-md py-sm rounded-lg font-label-md text-label-md">
+          الذهاب إلى لوحة تحكم رحلاتي
         </Link>
       </div>
     );
@@ -319,11 +415,12 @@ function ConfirmationInner() {
                 
                 {/* Primary PDF Download */}
                 <button
-                  onClick={() => handleActionClick("التذكرة قيد المعالجة حالياً. سيتم إرسال نسخة PDF فور جاهزيتها.")}
-                  className="w-full bg-primary hover:bg-primary-container text-white py-md px-md rounded-xl flex items-center justify-center gap-base font-label-md text-label-md shadow-md active:scale-95 transition-transform cursor-pointer font-bold border-0"
+                  onClick={() => void handleDownloadTicket()}
+                  disabled={downloadingPdf}
+                  className="w-full bg-primary hover:bg-primary-container text-white py-md px-md rounded-xl flex items-center justify-center gap-base font-label-md text-label-md shadow-md active:scale-95 transition-transform cursor-pointer font-bold border-0 disabled:opacity-60 disabled:cursor-wait"
                 >
-                  <span className="material-symbols-outlined">download</span>
-                  تحميل تذكرة الطيران (PDF)
+                  <span className="material-symbols-outlined">{downloadingPdf ? "progress_activity" : "download"}</span>
+                  {downloadingPdf ? "جاري تحميل التذكرة..." : "تحميل تذكرة الطيران (PDF)"}
                 </button>
                 
                 {/* Secondary Email */}
