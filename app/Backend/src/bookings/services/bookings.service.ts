@@ -445,12 +445,12 @@ export class BookingsService {
           relations: { slices: { segments: true } },
         })
       : [];
-    const snapshotByBookingId = new Map(
-      snapshots.map((s) => [s.bookingId, s]),
-    );
+    const snapshotByBookingId = new Map(snapshots.map((s) => [s.bookingId, s]));
 
     return {
-      data: bookings.map((b) => this.mapBookingSummary(b, snapshotByBookingId.get(b.id))),
+      data: bookings.map((b) =>
+        this.mapBookingSummary(b, snapshotByBookingId.get(b.id)),
+      ),
       next_cursor: nextCursor,
     };
   }
@@ -804,7 +804,12 @@ export class BookingsService {
       this.documentRepo.find({ where: { bookingId } }),
     ]);
 
-    return this.ticketPdfService.generate(booking, snapshot, passengers, documents);
+    return this.ticketPdfService.generate(
+      booking,
+      snapshot,
+      passengers,
+      documents,
+    );
   }
 
   private computeCancellationQuote(

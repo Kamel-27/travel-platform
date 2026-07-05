@@ -50,15 +50,15 @@ export class PaymentWebhookProcessor extends WorkerHost {
     const { eventId } = job.data;
     this.logger.log(`Processing paymob webhook job for event: ${eventId}`);
 
-    // Booking id to enqueue for order fulfillment, set inside the transaction
-    // below but only actually enqueued after it commits (see comment at the
-    // enqueue call) — enqueuing from inside the transaction is a race: the
-    // fulfillment job can be picked up and read the booking's status before
-    // this transaction's "paid" write is visible to other connections.
-    let bookingIdToFulfill: string | null = null;
-
-    // Process inside transaction
-    await this.entityManager.transaction(async (manager) => {
+    // The transaction below returns the booking id to enqueue for order
+    // fulfillment (or null) — the actual enqueue happens after it commits
+    // (see comment further down): enqueuing from inside the transaction is a
+    // race, since the fulfillment job can be picked up and read the
+    // booking's status before this transaction's "paid" write is visible to
+    // other connections.
+    const bookingIdToFulfill = await this.entityManager.transaction<
+      string | null
+    >(async (manager) => {
       const webhookEvent = await manager
         .getRepository(PaymentWebhookEvent)
         .createQueryBuilder('event')
@@ -68,7 +68,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
 
       if (!webhookEvent) {
         this.logger.error(`Webhook event ${eventId} not found in database.`);
-        return;
+        return null;
       }
 
       // Idempotency: skip if already processed
@@ -76,7 +76,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
         this.logger.debug(
           `Webhook event ${eventId} already processed. Skipping.`,
         );
-        return;
+        return null;
       }
 
       const transaction = webhookEvent.payload.obj;
@@ -86,7 +86,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
         );
         webhookEvent.processedAt = new Date();
         await manager.save(PaymentWebhookEvent, webhookEvent);
-        return;
+        return null;
       }
 
       // Pending (e.g. 3DS in flight) carries no final outcome — ack and wait
@@ -94,7 +94,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
       if (webhookEvent.eventType === 'transaction.pending') {
         webhookEvent.processedAt = new Date();
         await manager.save(PaymentWebhookEvent, webhookEvent);
-        return;
+        return null;
       }
 
       // Attempts are keyed by the Paymob order id (obj.order.id)
@@ -109,7 +109,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
         );
         webhookEvent.processedAt = new Date();
         await manager.save(PaymentWebhookEvent, webhookEvent);
-        return;
+        return null;
       }
 
       // 1. Resolve Attempt
@@ -134,7 +134,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
         .findOneBy({ id: attempt.paymentId });
       if (!payment) {
         this.logger.error(`Associated Payment ${attempt.paymentId} not found.`);
-        return;
+        return null;
       }
 
       const booking = await manager
@@ -146,12 +146,14 @@ export class PaymentWebhookProcessor extends WorkerHost {
 
       if (!booking) {
         this.logger.error(`Associated Booking ${payment.bookingId} not found.`);
-        return;
+        return null;
       }
 
       // Link event columns
       webhookEvent.paymentId = payment.id;
       webhookEvent.paymentAttemptId = attempt.id;
+
+      let fulfillBookingId: string | null = null;
 
       // 3. Process outcomes
       if (webhookEvent.eventType === 'transaction.succeeded') {
@@ -186,11 +188,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
         await manager.save(PaymentAttempt, attempt);
         await manager.save(Payment, payment);
 
-        // Defer the actual enqueue until after this transaction commits (see
-        // note above `bookingIdToFulfill` declaration) — the fulfillment
-        // worker reads the booking's status fresh from the DB, and must not
-        // see it pre-commit.
-        bookingIdToFulfill = booking.id;
+        fulfillBookingId = booking.id;
       } else if (webhookEvent.eventType === 'transaction.failed') {
         attempt.status = PaymentAttemptStatus.Failed;
         attempt.failureReason =
@@ -206,6 +204,8 @@ export class PaymentWebhookProcessor extends WorkerHost {
       this.logger.log(
         `Successfully processed paymob webhook event: ${eventId}`,
       );
+
+      return fulfillBookingId;
     });
 
     // Enqueue Duffel order creation job now that the "paid" transition above
