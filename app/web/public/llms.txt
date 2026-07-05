@@ -1,0 +1,18 @@
+# Safariyat (سفريات)
+
+> Safariyat (Arabic: سفريات, sometimes transliterated "Safriyat") is an Arabic-language online travel platform for booking flights and hotels at https://www.safariyat.live. Users search real-time flight offers from hundreds of airlines, compare prices, book, and pay securely online with instant e-ticket confirmation. The interface is Arabic-first (RTL) with English support.
+
+## What Safariyat offers
+
+- Flight booking (حجز طيران): search one-way and round-trip flights, compare fares across airlines, book and receive an e-ticket instantly: https://www.safariyat.live/flights
+- Hotel booking (حجز فنادق): compare hotel prices and deals in popular destinations: https://www.safariyat.live/hotels
+- Manage bookings, cancellations, and refunds online; refunds are processed automatically to the original payment method when fare rules allow.
+- Secure online payment; a booking is only confirmed after payment is verified.
+- 24/7 customer support: https://www.safariyat.live/support
+
+## Key facts
+
+- Brand name: سفريات (Safariyat)
+- Website: https://www.safariyat.live
+- Languages: Arabic (primary), English
+- Category: Online travel agency (OTA) — flights and hotels

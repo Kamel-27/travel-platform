@@ -82,7 +82,7 @@ export default function HomepagePage() {
 <section className="relative min-h-[600px] flex items-center overflow-hidden">
 <div className="absolute inset-0 z-0">
 <div className="absolute inset-0 bg-gradient-to-l from-primary/40 to-transparent z-10"></div>
-<img className="w-full h-full object-cover" data-alt="A wide-angle cinematic shot of a modern airplane soaring through a golden-hour sky, with soft sunlight reflecting off its polished metallic wings. The atmosphere is serene and expansive, featuring a palette of deep blues, warm oranges, and soft whites. This premium travel-themed imagery emphasizes the excitement of global exploration and high-velocity travel with a clean, high-contrast aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCSwD4VcbxKOuIqn7ARjIE0C8i_l4KBrt7hPwIKWDVH_LtB_NNW5OS-qXoW-50N3kQjQJ5IrZpzgWCuteu-pEvQo1ofHG7sk63QbRbFniVjAOjUeFbg8W65-9_SIvjSFu9-5RIFwqoQC_lZ5plUlcINZjKlnf0exC2gKYUmriyicg08DIvisthbOXZyCmkazITGa_X8VsO8w_-SAqVOKv-fanC5G2uLFNBa6fZNsKW9UNs3TMd_QhCNgVJscsl7ZpYgcXIKYeH7RmnT"/>
+<img className="w-full h-full object-cover" alt="A wide-angle cinematic shot of a modern airplane soaring through a golden-hour sky, with soft sunlight reflecting off its polished metallic wings. The atmosphere is serene and expansive, featuring a palette of deep blues, warm oranges, and soft whites. This premium travel-themed imagery emphasizes the excitement of global exploration and high-velocity travel with a clean, high-contrast aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCSwD4VcbxKOuIqn7ARjIE0C8i_l4KBrt7hPwIKWDVH_LtB_NNW5OS-qXoW-50N3kQjQJ5IrZpzgWCuteu-pEvQo1ofHG7sk63QbRbFniVjAOjUeFbg8W65-9_SIvjSFu9-5RIFwqoQC_lZ5plUlcINZjKlnf0exC2gKYUmriyicg08DIvisthbOXZyCmkazITGa_X8VsO8w_-SAqVOKv-fanC5G2uLFNBa6fZNsKW9UNs3TMd_QhCNgVJscsl7ZpYgcXIKYeH7RmnT"/>
 </div>
 <div className="relative z-20 w-full px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto py-xl">
 <div className="max-w-2xl text-white mb-lg">
@@ -203,7 +203,7 @@ export default function HomepagePage() {
 <div className="grid grid-cols-1 md:grid-cols-4 md:grid-rows-2 gap-md h-auto md:h-[600px]">
 
 <div className="md:col-span-2 md:row-span-2 relative rounded-xl overflow-hidden group cursor-pointer shadow-sm">
-<img className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" data-alt="A magnificent sunset view of the Taj Mahal in Agra, India, reflected in the still waters of the long pool. The lighting is ethereal, with golden and purple hues painting the sky. The image captures the grandeur and intricate details of the marble architecture, presented in a high-fidelity photographic style that evokes a sense of timeless wonder and historical richness." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAbv8_2X8FZ4uvoW6NVhti73gVxTUGAIY2DEwq6M4RnMlWG35Hc56Ub5bsmE65aKyNx0JonS2ZrRchGPfzNORWhg5cCBdu6PzW63F9WpVdoClOzRHVHoGDry5B_8J2NMO8ESujU1j5DSF17DMqxULgS-KZh5H9yU3Q687AmQvoljMk0JIGoIYix6BKRLGnXTAf24MoftGwoFQEtUksE_79oihCs8mNyYYXCqy54oTQVmMJpJw3yYGrkt07Z_8SOuKouOtcgyH-3_EpL"/>
+<img className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt="A magnificent sunset view of the Taj Mahal in Agra, India, reflected in the still waters of the long pool. The lighting is ethereal, with golden and purple hues painting the sky. The image captures the grandeur and intricate details of the marble architecture, presented in a high-fidelity photographic style that evokes a sense of timeless wonder and historical richness." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAbv8_2X8FZ4uvoW6NVhti73gVxTUGAIY2DEwq6M4RnMlWG35Hc56Ub5bsmE65aKyNx0JonS2ZrRchGPfzNORWhg5cCBdu6PzW63F9WpVdoClOzRHVHoGDry5B_8J2NMO8ESujU1j5DSF17DMqxULgS-KZh5H9yU3Q687AmQvoljMk0JIGoIYix6BKRLGnXTAf24MoftGwoFQEtUksE_79oihCs8mNyYYXCqy54oTQVmMJpJw3yYGrkt07Z_8SOuKouOtcgyH-3_EpL"/>
 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
 <div className="absolute bottom-md right-md text-white">
 <span className="bg-tertiary text-on-tertiary px-sm py-xs rounded-full text-label-sm font-label-sm mb-base inline-block">رحلة تاريخية</span>
@@ -213,7 +213,7 @@ export default function HomepagePage() {
 </div>
 
 <div className="md:col-span-2 relative rounded-xl overflow-hidden group cursor-pointer shadow-sm">
-<img className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" data-alt="The stunning skyline of Dubai at dusk, featuring the Burj Khalifa towering over illuminated skyscrapers. The city lights create a brilliant electrical glow against the deep twilight sky. The image is captured with professional wide-angle lenses to emphasize the modern, fast-paced, and luxurious energy of the city, perfectly aligning with a high-velocity corporate travel aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCz9XdoRqQkCfNGDx8uEGvFQUdmwLD0GG6814UyYJTU6Uf7gjaiwj0Lf3kV-MI9RmC_679gHcssOTfl20Ob4anARXKgFCsZaP9iH9ZlWyDm1-hvwWmb5-e3BF7C1T8KsiFbt2jjotKhORyp50U6vb09J1tJvHfotJU14Clx-uIR9gBjyQ2pLkOG28e3G42edMXR0pl4YrEWHawHKMpSpCNfwdSjGSbwnIRl0jEZk0BC5jVJDEVHAk5aPR3WRu3wy1AdVMfkqYBiAlYm"/>
+<img className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt="The stunning skyline of Dubai at dusk, featuring the Burj Khalifa towering over illuminated skyscrapers. The city lights create a brilliant electrical glow against the deep twilight sky. The image is captured with professional wide-angle lenses to emphasize the modern, fast-paced, and luxurious energy of the city, perfectly aligning with a high-velocity corporate travel aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCz9XdoRqQkCfNGDx8uEGvFQUdmwLD0GG6814UyYJTU6Uf7gjaiwj0Lf3kV-MI9RmC_679gHcssOTfl20Ob4anARXKgFCsZaP9iH9ZlWyDm1-hvwWmb5-e3BF7C1T8KsiFbt2jjotKhORyp50U6vb09J1tJvHfotJU14Clx-uIR9gBjyQ2pLkOG28e3G42edMXR0pl4YrEWHawHKMpSpCNfwdSjGSbwnIRl0jEZk0BC5jVJDEVHAk5aPR3WRu3wy1AdVMfkqYBiAlYm"/>
 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
 <div className="absolute bottom-md right-md text-white">
 <h3 className="font-title-lg text-title-lg">دبي، الإمارات</h3>
@@ -222,7 +222,7 @@ export default function HomepagePage() {
 </div>
 
 <div className="relative rounded-xl overflow-hidden group cursor-pointer shadow-sm">
-<img className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" data-alt="A lush tropical scene in Bali, Indonesia, with vibrant green rice terraces cascading down a hillside under a soft, diffused morning mist. The lighting is organic and peaceful, highlighting the varied textures of the foliage. The image creates a serene and rejuvenating mood, focusing on the natural beauty and tranquil essence of the destination." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCMjzkQ8kohS4139Fdyz_QjDqfJe4kTKTALNm6K6uY1LKnXX7w_as_-8EzjF0iBBYNnhpkgm-yKuU7kvDgZwQ2mbjYfGQ3xVGA_XBx-_CvUmsPWGcbpRpWcaGX_ylvFwekUW2I4XXhwqyzgNG_V4tHVyQqXMirmF4iy9LfWzAHwURisdf-jJd09L-cm9YAGLNUEaH7Eve6Lss2jG4sshiql4I9zP8bTIug3TLdB9VZ1RWsR7ZQjybZ8z2I2xK1yduJL1z0ZGPuAvLIr"/>
+<img className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt="A lush tropical scene in Bali, Indonesia, with vibrant green rice terraces cascading down a hillside under a soft, diffused morning mist. The lighting is organic and peaceful, highlighting the varied textures of the foliage. The image creates a serene and rejuvenating mood, focusing on the natural beauty and tranquil essence of the destination." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCMjzkQ8kohS4139Fdyz_QjDqfJe4kTKTALNm6K6uY1LKnXX7w_as_-8EzjF0iBBYNnhpkgm-yKuU7kvDgZwQ2mbjYfGQ3xVGA_XBx-_CvUmsPWGcbpRpWcaGX_ylvFwekUW2I4XXhwqyzgNG_V4tHVyQqXMirmF4iy9LfWzAHwURisdf-jJd09L-cm9YAGLNUEaH7Eve6Lss2jG4sshiql4I9zP8bTIug3TLdB9VZ1RWsR7ZQjybZ8z2I2xK1yduJL1z0ZGPuAvLIr"/>
 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
 <div className="absolute bottom-base right-base text-white">
 <h3 className="font-title-lg text-title-lg">بالي، إندونيسيا</h3>
@@ -230,7 +230,7 @@ export default function HomepagePage() {
 </div>
 
 <div className="relative rounded-xl overflow-hidden group cursor-pointer shadow-sm">
-<img className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" data-alt="The historic city of Kyoto, Japan, during the cherry blossom season. Traditional wooden temples are framed by delicate pink flowers, with a soft blue sky in the background. The lighting is delicate and high-key, creating a clean and aesthetically pleasing image that highlights cultural heritage and seasonal beauty." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCbJQbMbtM1HiT1EaFZlbEVRqjQIvG9csS8lQ6CUWaEUv70mmJ69T2Iwl3uRhfgsX8IIxREjT21Fdvqk_c-tZrYZD_4s_CygdlfXlAiWESqWz0ySalxozRibtOnXKRQ-g0SJ47MehxOtIJtADlWXdflCWiVYuolWo_rCikDm27DpHpG7o65AECUxCLH-zfbL7hwB999gHyeqjyPeTyNKFTybs70SraEGRLbs0rasxYpBjOX7uGKvFGlN9kxOR814qoG_pa9qvMo6NLL"/>
+<img className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt="The historic city of Kyoto, Japan, during the cherry blossom season. Traditional wooden temples are framed by delicate pink flowers, with a soft blue sky in the background. The lighting is delicate and high-key, creating a clean and aesthetically pleasing image that highlights cultural heritage and seasonal beauty." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCbJQbMbtM1HiT1EaFZlbEVRqjQIvG9csS8lQ6CUWaEUv70mmJ69T2Iwl3uRhfgsX8IIxREjT21Fdvqk_c-tZrYZD_4s_CygdlfXlAiWESqWz0ySalxozRibtOnXKRQ-g0SJ47MehxOtIJtADlWXdflCWiVYuolWo_rCikDm27DpHpG7o65AECUxCLH-zfbL7hwB999gHyeqjyPeTyNKFTybs70SraEGRLbs0rasxYpBjOX7uGKvFGlN9kxOR814qoG_pa9qvMo6NLL"/>
 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
 <div className="absolute bottom-base right-base text-white">
 <h3 className="font-title-lg text-title-lg">كيوتو، اليابان</h3>
@@ -249,7 +249,7 @@ export default function HomepagePage() {
 
 <div className="bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm border border-outline-variant hover:shadow-xl transition-shadow group">
 <div className="relative h-48">
-<img className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" data-alt="The Eiffel Tower standing tall in Paris, France, viewed from a stylish cobblestone street lined with charming cafes. The morning light is soft and inviting, giving the scene a romantic and timeless quality. The palette includes warm neutrals and crisp blues, capturing the quintessentially chic Parisian atmosphere." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAU5MMPjP7PdW3qgh0cpxa5gFtKFUcv2FSFw5asTOmyeewhF5_vwAOQceQtkjX2dtZrIwphlFopFs0o84JA1STp6q0q_nE89xiMjEgdlxFjtlXc2JjShmO1qEz8GYaD19evz3NGQkzc9svBoKeSHyoSGG9vsqrQoAxy-TBd5P8cqzVexQprnGq3niDLXAwSct1WbVwXjN0auhWm0Yk6XAMEFBY5BQjiYGT5pPGk_RVe_AB8UdldDsopM-FTdqMzqT8N_xVZozz1Qn48"/>
+<img className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="The Eiffel Tower standing tall in Paris, France, viewed from a stylish cobblestone street lined with charming cafes. The morning light is soft and inviting, giving the scene a romantic and timeless quality. The palette includes warm neutrals and crisp blues, capturing the quintessentially chic Parisian atmosphere." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAU5MMPjP7PdW3qgh0cpxa5gFtKFUcv2FSFw5asTOmyeewhF5_vwAOQceQtkjX2dtZrIwphlFopFs0o84JA1STp6q0q_nE89xiMjEgdlxFjtlXc2JjShmO1qEz8GYaD19evz3NGQkzc9svBoKeSHyoSGG9vsqrQoAxy-TBd5P8cqzVexQprnGq3niDLXAwSct1WbVwXjN0auhWm0Yk6XAMEFBY5BQjiYGT5pPGk_RVe_AB8UdldDsopM-FTdqMzqT8N_xVZozz1Qn48"/>
 <div className="absolute top-sm left-sm bg-error text-on-error px-sm py-1 rounded-full font-label-sm text-label-sm">خصم 30%</div>
 </div>
 <div className="p-md space-y-sm">
@@ -273,7 +273,7 @@ export default function HomepagePage() {
 
 <div className="bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm border border-outline-variant hover:shadow-xl transition-shadow group">
 <div className="relative h-48">
-<img className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" data-alt="A wide landscape of Bangkok, Thailand, showing its majestic temples with ornate golden spires juxtaposed against a modern cityscape. The late afternoon lighting creates a vibrant, high-contrast effect. The image uses a rich color palette of gold, deep red, and sky blue to convey cultural richness and urban dynamism." src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8b3L3diKr-ssA1Le0WTbl5f7ofdbXZMufyZYgN4C2rBY7VCuqGn6E-54F4LNddWFzsxcuBpxLG2mIAfGgeYxQny0UpzkG3QMbNEHVY2yJBQMilOqsanB_r0BS30UKZ8bM-xC6rZe8dV7Syxxt3yH1yXGwkuvKuAsmaql9umR1cDQjgks23iFHpEN2OY70NSfEjUKLMr6vU5vE6lukwlRVxnkxvPJjIpJbKIuYQAJ5aonrb20AW2mHWkc7eXFd92owJ2aHlIkD-wQ3"/>
+<img className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="A wide landscape of Bangkok, Thailand, showing its majestic temples with ornate golden spires juxtaposed against a modern cityscape. The late afternoon lighting creates a vibrant, high-contrast effect. The image uses a rich color palette of gold, deep red, and sky blue to convey cultural richness and urban dynamism." src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8b3L3diKr-ssA1Le0WTbl5f7ofdbXZMufyZYgN4C2rBY7VCuqGn6E-54F4LNddWFzsxcuBpxLG2mIAfGgeYxQny0UpzkG3QMbNEHVY2yJBQMilOqsanB_r0BS30UKZ8bM-xC6rZe8dV7Syxxt3yH1yXGwkuvKuAsmaql9umR1cDQjgks23iFHpEN2OY70NSfEjUKLMr6vU5vE6lukwlRVxnkxvPJjIpJbKIuYQAJ5aonrb20AW2mHWkc7eXFd92owJ2aHlIkD-wQ3"/>
 <div className="absolute top-sm left-sm bg-tertiary text-on-tertiary px-sm py-1 rounded-full font-label-sm text-label-sm">الأكثر مبيعاً</div>
 </div>
 <div className="p-md space-y-sm">
@@ -297,7 +297,7 @@ export default function HomepagePage() {
 
 <div className="bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm border border-outline-variant hover:shadow-xl transition-shadow group">
 <div className="relative h-48">
-<img className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" data-alt="A cinematic view of the Swiss Alps, with snow-capped peaks rising into a clear blue sky. A luxury mountain chalet is nestled in the foreground, surrounded by evergreen trees. The lighting is crisp and cold, creating a pristine and high-end feel that emphasizes peace, exclusivity, and nature's grandeur." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCEAaAIOYf4HKNIwD9hDVqoKz_3Px0hFGWlzwJPSROaF2_Nf3J_yunVICn5tKQCwhsKRHue3fEq9qWNAG825dC9qUcffYKkYKMclybAq8EscTT9nC7C2_cUKMifSWKiDhXhncPd09V917Vx1mGDZeoi3UeDJbJ10FISFlKT6f4F4NLIkaVanvfY4JtSfuBlO88PtutgisS6jQ_ZGMrNq22bWaH2j-NCeCS126tn3W94wmRqh9MsZyNlH312Zoh0hnqgZij3U-2GNL-b"/>
+<img className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="A cinematic view of the Swiss Alps, with snow-capped peaks rising into a clear blue sky. A luxury mountain chalet is nestled in the foreground, surrounded by evergreen trees. The lighting is crisp and cold, creating a pristine and high-end feel that emphasizes peace, exclusivity, and nature's grandeur." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCEAaAIOYf4HKNIwD9hDVqoKz_3Px0hFGWlzwJPSROaF2_Nf3J_yunVICn5tKQCwhsKRHue3fEq9qWNAG825dC9qUcffYKkYKMclybAq8EscTT9nC7C2_cUKMifSWKiDhXhncPd09V917Vx1mGDZeoi3UeDJbJ10FISFlKT6f4F4NLIkaVanvfY4JtSfuBlO88PtutgisS6jQ_ZGMrNq22bWaH2j-NCeCS126tn3W94wmRqh9MsZyNlH312Zoh0hnqgZij3U-2GNL-b"/>
 <div className="absolute top-sm left-sm bg-error text-on-error px-sm py-1 rounded-full font-label-sm text-label-sm">وفر $300</div>
 </div>
 <div className="p-md space-y-sm">
@@ -336,6 +336,63 @@ export default function HomepagePage() {
 </form>
 </div>
 </div>
+</section>
+
+<section className="py-xl px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+<h2 className="font-headline-lg text-headline-lg text-on-surface mb-base text-right">لماذا تحجز طيرانك وفندقك مع سفريات؟</h2>
+<p className="font-body-lg text-body-lg text-on-surface-variant mb-xl text-right">
+سفريات (Safariyat) منصة سفر عربية تتيح لك حجز تذاكر الطيران والفنادق أونلاين في دقائق. نقارن أسعار رحلات الطيران من مئات شركات الطيران حول العالم لنعرض عليك أفضل الخيارات، مع دفع إلكتروني آمن، تأكيد فوري للحجز، وتذكرة إلكترونية تصلك مباشرة. وإذا تغيرت خططك، نوفر سياسة إلغاء واسترداد واضحة ودعم عملاء على مدار الساعة.
+</p>
+<h3 className="font-headline-md text-headline-md text-on-surface mb-md text-right">الأسئلة الشائعة</h3>
+<div className="space-y-base">
+<details className="bg-surface-container-lowest rounded-xl p-md group">
+<summary className="font-title-lg text-title-lg text-on-surface cursor-pointer list-none">كيف أحجز تذكرة طيران عبر سفريات؟</summary>
+<p className="font-body-md text-body-md text-on-surface-variant mt-sm">اختر مدينة المغادرة والوجهة وتاريخ السفر، ثم قارن الرحلات والأسعار المتاحة واختر الرحلة المناسبة. أدخل بيانات المسافرين وادفع بأمان، وستصلك التذكرة الإلكترونية وتأكيد الحجز فوراً على بريدك الإلكتروني.</p>
+</details>
+<details className="bg-surface-container-lowest rounded-xl p-md group">
+<summary className="font-title-lg text-title-lg text-on-surface cursor-pointer list-none">كيف أحصل على أرخص أسعار تذاكر الطيران؟</summary>
+<p className="font-body-md text-body-md text-on-surface-variant mt-sm">احجز مبكراً قبل موعد السفر، وقارن أسعار أيام مختلفة إن كانت مواعيدك مرنة، وتابع قسم العروض لدينا باستمرار. أسعارنا محدثة لحظياً من شركات الطيران مباشرة بدون رسوم مخفية.</p>
+</details>
+<details className="bg-surface-container-lowest rounded-xl p-md group">
+<summary className="font-title-lg text-title-lg text-on-surface cursor-pointer list-none">هل الدفع عبر الموقع آمن؟</summary>
+<p className="font-body-md text-body-md text-on-surface-variant mt-sm">نعم، تتم جميع عمليات الدفع عبر بوابة دفع معتمدة ومشفرة بالكامل، ولا يتم تأكيد أي حجز إلا بعد التحقق من نجاح عملية الدفع. لا نخزن بيانات بطاقتك على خوادمنا.</p>
+</details>
+<details className="bg-surface-container-lowest rounded-xl p-md group">
+<summary className="font-title-lg text-title-lg text-on-surface cursor-pointer list-none">هل يمكنني إلغاء حجزي واسترداد المبلغ؟</summary>
+<p className="font-body-md text-body-md text-on-surface-variant mt-sm">يعتمد ذلك على شروط التذكرة أو الفندق الذي اخترته، وتظهر لك شروط الإلغاء بوضوح قبل إتمام الحجز. في حال كان الإلغاء متاحاً، يمكنك تنفيذه من صفحة &laquo;رحلاتي&raquo; ويتم استرداد المبلغ تلقائياً بنفس طريقة الدفع.</p>
+</details>
+</div>
+<script
+  type="application/ld+json"
+  dangerouslySetInnerHTML={{
+    __html: JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: [
+        {
+          "@type": "Question",
+          name: "كيف أحجز تذكرة طيران عبر سفريات؟",
+          acceptedAnswer: { "@type": "Answer", text: "اختر مدينة المغادرة والوجهة وتاريخ السفر، ثم قارن الرحلات والأسعار المتاحة واختر الرحلة المناسبة. أدخل بيانات المسافرين وادفع بأمان، وستصلك التذكرة الإلكترونية وتأكيد الحجز فوراً على بريدك الإلكتروني." },
+        },
+        {
+          "@type": "Question",
+          name: "كيف أحصل على أرخص أسعار تذاكر الطيران؟",
+          acceptedAnswer: { "@type": "Answer", text: "احجز مبكراً قبل موعد السفر، وقارن أسعار أيام مختلفة إن كانت مواعيدك مرنة، وتابع قسم العروض باستمرار. الأسعار محدثة لحظياً من شركات الطيران مباشرة بدون رسوم مخفية." },
+        },
+        {
+          "@type": "Question",
+          name: "هل الدفع عبر سفريات آمن؟",
+          acceptedAnswer: { "@type": "Answer", text: "نعم، تتم جميع عمليات الدفع عبر بوابة دفع معتمدة ومشفرة بالكامل، ولا يتم تأكيد أي حجز إلا بعد التحقق من نجاح عملية الدفع." },
+        },
+        {
+          "@type": "Question",
+          name: "هل يمكن إلغاء الحجز واسترداد المبلغ؟",
+          acceptedAnswer: { "@type": "Answer", text: "يعتمد ذلك على شروط التذكرة أو الفندق، وتظهر شروط الإلغاء بوضوح قبل إتمام الحجز. في حال كان الإلغاء متاحاً يتم استرداد المبلغ تلقائياً بنفس طريقة الدفع." },
+        },
+      ],
+    }),
+  }}
+/>
 </section>
 </main>
 
@@ -378,7 +435,7 @@ export default function HomepagePage() {
 </div>
 </div>
 <div className="border-t border-outline-variant pt-lg flex flex-col md:flex-row justify-between items-center gap-base">
-<p className="text-on-surface-variant font-label-sm text-label-sm">© 2024 سفريات. جميع الحقوق محفوظة.</p>
+<p className="text-on-surface-variant font-label-sm text-label-sm">© 2026 سفريات. جميع الحقوق محفوظة.</p>
 <div className="flex gap-md opacity-70">
 <span className="material-symbols-outlined" data-icon="credit_card">credit_card</span>
 <span className="material-symbols-outlined" data-icon="payments">payments</span>
