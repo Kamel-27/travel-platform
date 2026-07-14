@@ -18,6 +18,7 @@ export default function robots(): MetadataRoute.Robots {
           "/user-dashboard",
           "/dashboard-overview",
           "/manage-bookings",
+          "/admin",
         ],
       },
     ],
