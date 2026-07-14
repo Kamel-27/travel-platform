@@ -207,7 +207,7 @@ Inbound events from the gateway — dedupe + audit trail, not trust-the-client. 
 |---|---|---|
 | id | PK | |
 | payment_id | FK → Payment | |
-| provider_refund_id | string, **unique** | Stripe refund id |
+| provider_refund_id | string, **unique**, nullable | Gateway refund id — assigned only once the gateway accepts the refund; null while `pending`/`failed` (rows are created before the gateway call; Postgres allows multiple NULLs under UNIQUE) |
 | amount | integer (minor units) | What we return to the customer |
 | currency | char(3) | = booking currency in Phase 1 |
 | supplier_refund_amount | integer (minor units), nullable | What Duffel refunded **us** on cancellation — airline-determined, often less than the customer paid. This is what makes markup accounting reconcilable |

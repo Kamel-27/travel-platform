@@ -104,17 +104,24 @@ export default function ManageBookingsPage() {
         ? `/admin/bookings/${cancellingBooking.id}/cancel` 
         : `/bookings/${cancellingBooking.id}/cancel`;
 
-      const result = await api.post<{ requires_admin?: boolean; message?: string }>(
+      const result = await api.post<{
+        requires_admin?: boolean;
+        message?: string;
+        refund?: { id: string; status: string } | null;
+        customer_receives?: { amount: number; currency: string };
+      }>(
         cancelEndpoint,
         { reason: cancelReason }
       );
 
-      if (isAdmin) {
-        setCancelSuccessMsg("تم إلغاء الحجز ومعالجة عملية الاسترداد من قبل مسؤول النظام.");
-      } else if (result.requires_admin) {
+      // The refund is executed asynchronously (queued with retries) — never
+      // claim the money moved; report what the API actually did.
+      if (result.requires_admin) {
         setCancelSuccessMsg(result.message || "تم تقديم طلب الإلغاء للمراجعة اليدوية بنجاح.");
+      } else if (result.refund) {
+        setCancelSuccessMsg("تم إلغاء الحجز وجارٍ تنفيذ عملية الاسترداد — ستُرد المبالغ خلال دقائق.");
       } else {
-        setCancelSuccessMsg("تم إلغاء الحجز ومعالجة عملية الاسترداد المالي بنجاح!");
+        setCancelSuccessMsg("تم إلغاء الحجز. لا يوجد مبلغ قابل للاسترداد لهذا الحجز.");
       }
 
       // Reload list to update statuses

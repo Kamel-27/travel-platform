@@ -124,8 +124,10 @@ Duplicate delivery → `200` (unique-violation caught, acked, not reprocessed). 
 |---|---|
 | `GET /admin/users`, `PATCH /admin/users/:id` | List/deactivate users |
 | `GET /admin/bookings?status=&user_id=&reference=` | All bookings; filter by PNR for support |
-| `POST /admin/bookings/:id/cancel` | T7 for non-auto-approvable cases |
-| `POST /admin/payments/:id/refund` | Manual refund `{amount, reason}` |
+| `POST /admin/bookings/:id/cancel` | T7 for non-auto-approvable cases; also creates + enqueues the customer refund (supplier refund + full markup) → `{..., refund: {id, status} \| null}` |
+| `POST /admin/payments/:id/refund` | Manual refund `{amount, reason}`; executes inline — a gateway failure leaves a `failed` Refund row (retryable) |
+| `GET /admin/refunds?status=&limit=&offset=` | Refund pipeline monitor; `status=failed` lists retry candidates |
+| `POST /admin/refunds/:id/retry` | Re-enqueue a failed/stuck refund (`409` if already succeeded) |
 | `GET /admin/markup-rules`, `POST /admin/markup-rules`, `PATCH /admin/markup-rules/:id` | Configure markup; activating one deactivates the previous (partial unique index backstop) |
 | `GET /admin/health/duffel` | Auth status, recent error rate, outbound rate-limit headroom, webhook processing lag, count of bookings stuck in `paid` |
 

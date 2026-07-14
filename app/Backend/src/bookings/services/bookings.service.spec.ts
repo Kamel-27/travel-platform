@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return */
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { getQueueToken } from '@nestjs/bullmq';
 import {
   HttpException,
   BadRequestException,
@@ -21,7 +22,9 @@ import { Booking, BookingStatus } from '../entities/booking.entity';
 import { FlightOfferSnapshot } from '../entities/flight-offer-snapshot.entity';
 import { Passenger, PassengerType } from '../entities/passenger.entity';
 import { Document } from '../entities/document.entity';
-import { Payment } from '../../payments/entities/payment.entity';
+import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
+import { RefundStatus } from '../../payments/entities/refund.entity';
+import { REFUND_EXECUTION_QUEUE } from '../queues/refund-execution.queue';
 import { UserRole } from '../../users/user.entity';
 import type { JwtPayload } from '../../auth/guards/jwt-auth.guard';
 
@@ -31,6 +34,7 @@ describe('BookingsService', () => {
   let markupService: MarkupService;
   let stateMachine: BookingStateMachineService;
   let refundExecutionService: any;
+  let mockRefundQueue: any;
   let mockRedis: any;
   let mockEntityManager: any;
   let mockBookingRepo: any;
@@ -196,14 +200,16 @@ describe('BookingsService', () => {
         {
           provide: RefundExecutionService,
           useValue: (refundExecutionService = {
-            executeGatewayRefund: jest
-              .fn()
-              .mockResolvedValue({ refundId: 'ref_1' }),
-            recordRefund: jest.fn().mockResolvedValue({
-              refund: { id: 'refund_1' },
-              payment: { id: 'pay_1' },
-              fullyRefunded: true,
+            createPendingRefund: jest.fn().mockResolvedValue({
+              id: 'refund_1',
+              status: RefundStatus.Pending,
             }),
+          }),
+        },
+        {
+          provide: getQueueToken(REFUND_EXECUTION_QUEUE),
+          useValue: (mockRefundQueue = {
+            add: jest.fn().mockResolvedValue({}),
           }),
         },
         {
@@ -386,7 +392,7 @@ describe('BookingsService', () => {
     });
 
     describe('cancelBooking', () => {
-      it('cancels at Duffel, refunds via the shared service, and transitions to cancelled/refunded', async () => {
+      it('cancels at Duffel, commits a pending refund with the transition, and enqueues execution', async () => {
         mockBookingRepo.findOneBy.mockResolvedValue(confirmedBooking());
         mockSnapshotRepo.findOneBy.mockResolvedValue(allowedSnapshot());
         mockPaymentRepo.findOneBy.mockResolvedValue({
@@ -394,6 +400,7 @@ describe('BookingsService', () => {
           bookingId: 'booking_123',
           amount: 10500,
           currency: 'USD',
+          status: PaymentStatus.Succeeded,
         });
 
         const result = await service.cancelBooking(
@@ -402,10 +409,6 @@ describe('BookingsService', () => {
         );
 
         expect(duffelService.cancelOrder).toHaveBeenCalledWith('ord_1');
-        // supplier refund (8000, from the mocked Duffel response) + full markup (500)
-        expect(
-          refundExecutionService.executeGatewayRefund,
-        ).toHaveBeenCalledWith('pay_1', 8500);
         expect(stateMachine.transitionTo).toHaveBeenCalledWith(
           expect.any(Object),
           'booking_123',
@@ -413,11 +416,51 @@ describe('BookingsService', () => {
           'user_123',
           'customer_cancel',
         );
+        // supplier refund (8000, from the mocked Duffel response) + full markup (500)
+        expect(refundExecutionService.createPendingRefund).toHaveBeenCalledWith(
+          expect.any(Object),
+          expect.objectContaining({
+            paymentId: 'pay_1',
+            amount: 8500,
+            reason: 'customer_cancel',
+            initiatedByUserId: 'user_123',
+            supplierRefundAmount: 8000,
+          }),
+        );
+        // The gateway call runs from the queue, never inline.
+        expect(mockRefundQueue.add).toHaveBeenCalledWith(
+          'execute_refund',
+          expect.objectContaining({ refundId: 'refund_1' }),
+          expect.objectContaining({ jobId: 'refund:refund_1', attempts: 5 }),
+        );
         expect(result.customer_receives).toEqual({
           amount: 8500,
           currency: 'USD',
         });
-        expect(result.status).toBe(BookingStatus.Refunded); // fullyRefunded mocked true
+        // The booking is cancelled now; refunded only once the queue settles it.
+        expect(result.status).toBe(BookingStatus.Cancelled);
+        expect(result.refund).toEqual({
+          id: 'refund_1',
+          status: RefundStatus.Pending,
+        });
+      });
+
+      it('rejects before touching Duffel when the payment is not refundable', async () => {
+        mockBookingRepo.findOneBy.mockResolvedValue(confirmedBooking());
+        mockSnapshotRepo.findOneBy.mockResolvedValue(allowedSnapshot());
+        mockPaymentRepo.findOneBy.mockResolvedValue({
+          id: 'pay_1',
+          bookingId: 'booking_123',
+          amount: 10500,
+          currency: 'USD',
+          status: PaymentStatus.Pending,
+        });
+
+        await expect(
+          service.cancelBooking(mockCurrentUser, 'booking_123'),
+        ).rejects.toThrow(ConflictException);
+        expect(duffelService.cancelOrder).not.toHaveBeenCalled();
+        expect(mockRefundQueue.add).not.toHaveBeenCalled();
       });
 
       it('routes non-auto-approvable fares to admin without calling Duffel', async () => {

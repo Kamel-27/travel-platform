@@ -159,14 +159,17 @@ sequenceDiagram
     W->>API: POST /bookings/:id/cancel
     API->>D: create + confirm order cancellation
     D-->>API: cancellation {refund_amount}  (airline-determined, often < paid)
-    API->>DB: Booking → cancelled, Refund(pending, amount = supplier refund + markup)  [T7]
-    API->>S: create refund (amount per PRD §5.4 policy)
-    S-->>API: webhook refund.succeeded / charge.refunded
+    API->>DB: Booking → cancelled, Refund(pending, amount = supplier refund + markup)  [T7, one transaction]
+    API->>API: enqueue refund_execution_queue job (5 attempts, exponential backoff)
+    API->>S: create refund (amount per PRD §5.4 policy) — from the queue worker
+    S-->>API: refund accepted {provider_refund_id}
     API->>DB: Refund → succeeded, Payment rollup, Booking → refunded  [T8]
     API-->>U: email: refund completed (initiator + reason on record)
 ```
 
 Non-auto-approvable fares route to `technical_admin` after the quote step instead of calling Duffel directly.
+
+The cancelled state and the pending `Refund` row commit in **one transaction**, so a gateway outage can never lose the obligation to refund. The gateway call itself runs from `refund_execution_queue` (idempotent — a non-pending row is a no-op, so retries can't double-refund). A job that exhausts its retries marks the row `failed`, which surfaces in `GET /admin/refunds?status=failed` for manual retry via `POST /admin/refunds/:id/retry`. Admin cancellation (`POST /admin/bookings/:id/cancel`) follows the same pipeline; the admin manual refund (`POST /admin/payments/:id/refund`) creates the pending row then executes inline for immediate feedback, marking the row `failed` on gateway rejection.
 
 ---
 

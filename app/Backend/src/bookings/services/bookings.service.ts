@@ -11,6 +11,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectEntityManager, InjectRepository } from '@nestjs/typeorm';
+import { InjectQueue } from '@nestjs/bullmq';
+import type { Queue } from 'bullmq';
 import { EntityManager, In, Repository } from 'typeorm';
 import Redis from 'ioredis';
 import { randomUUID } from 'crypto';
@@ -26,10 +28,16 @@ import { Slice } from '../entities/slice.entity';
 import { Segment } from '../entities/segment.entity';
 import { Passenger, PassengerType } from '../entities/passenger.entity';
 import { Document } from '../entities/document.entity';
-import { Payment } from '../../payments/entities/payment.entity';
+import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
 import { MarkupService } from './markup.service';
 import { BookingStateMachineService } from './booking-state-machine.service';
 import { RefundExecutionService } from './refund-execution.service';
+import {
+  REFUND_EXECUTION_JOB,
+  REFUND_EXECUTION_QUEUE,
+  refundExecutionJobOptions,
+} from '../queues/refund-execution.queue';
+import { getRequestId } from '../../common/logging/request-context';
 import { TicketPdfService } from './ticket-pdf.service';
 import { PassengerInputDto } from '../dto/save-passengers.dto';
 
@@ -72,6 +80,8 @@ export class BookingsService {
     private readonly stateMachine: BookingStateMachineService,
     private readonly refundExecutionService: RefundExecutionService,
     private readonly ticketPdfService: TicketPdfService,
+    @InjectQueue(REFUND_EXECUTION_QUEUE)
+    private readonly refundExecutionQueue: Queue,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
@@ -668,8 +678,29 @@ export class BookingsService {
       };
     }
 
-    // Auto-approvable — cancel at the supplier first. If Duffel rejects or
-    // is unavailable, the booking must stay confirmed (no state written yet).
+    // Auto-approvable. Validate the refund target BEFORE touching the
+    // supplier — once Duffel cancels the order there is no way back, so any
+    // reason the refund row couldn't be created must fail the request here.
+    const payment = await this.paymentRepo.findOneBy({ bookingId: booking.id });
+    if (!payment) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message: 'No payment found for this booking; cannot process refund.',
+      });
+    }
+    if (
+      payment.status !== PaymentStatus.Succeeded &&
+      payment.status !== PaymentStatus.PartiallyRefunded
+    ) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message: `Payment in status ${payment.status} cannot be refunded; contact support.`,
+      });
+    }
+
+    // Cancel at the supplier first (external call, never inside a DB
+    // transaction). If Duffel rejects or is unavailable, the booking stays
+    // confirmed — no state has been written yet.
     let supplierRefundAmount = 0;
     if (booking.supplierOrderId) {
       const result = await this.duffelService.cancelOrder(
@@ -678,58 +709,60 @@ export class BookingsService {
       supplierRefundAmount = result.refundAmount;
     }
 
-    const payment = await this.paymentRepo.findOneBy({ bookingId: booking.id });
-    if (!payment) {
-      throw new ConflictException({
-        code: ErrorCode.ILLEGAL_TRANSITION,
-        message: 'No payment found for this booking; cannot process refund.',
-      });
-    }
-
     // Refund policy (prd.md §5.4): customer receives the supplier refund
     // plus the full markup — the platform never keeps margin on a
     // cancelled service.
     const customerReceivesAmount = supplierRefundAmount + booking.markupAmount;
     const cancelReason = reason ?? 'customer_cancel';
 
-    const { refundId } = await this.refundExecutionService.executeGatewayRefund(
-      payment.id,
-      customerReceivesAmount,
-    );
+    // One transaction: the cancelled state and the pending refund row commit
+    // together, so a gateway outage can never lose the obligation to refund.
+    // The Paymob call itself runs from refund_execution_queue with retries.
+    const refund = await this.entityManager.transaction(async (manager) => {
+      await this.stateMachine.transitionTo(
+        manager,
+        booking.id,
+        BookingStatus.Cancelled,
+        user.sub,
+        cancelReason,
+      );
 
-    const { fullyRefunded } = await this.entityManager.transaction(
-      async (manager) => {
-        await this.stateMachine.transitionTo(
-          manager,
-          booking.id,
-          BookingStatus.Cancelled,
-          user.sub,
-          cancelReason,
-        );
+      if (customerReceivesAmount <= 0) {
+        // Fully non-refundable fare with zero markup — nothing to refund.
+        return null;
+      }
 
-        return this.refundExecutionService.recordRefund(manager, {
-          paymentId: payment.id,
-          refundId,
-          amount: customerReceivesAmount,
-          reason: cancelReason,
-          initiatedByUserId: user.sub,
-        });
-      },
-    );
+      return this.refundExecutionService.createPendingRefund(manager, {
+        paymentId: payment.id,
+        amount: customerReceivesAmount,
+        reason: cancelReason,
+        initiatedByUserId: user.sub,
+        supplierRefundAmount,
+      });
+    });
+
+    if (refund) {
+      await this.refundExecutionQueue.add(
+        REFUND_EXECUTION_JOB,
+        { refundId: refund.id, requestId: getRequestId() },
+        refundExecutionJobOptions(refund.id),
+      );
+    }
 
     this.logger.log(
-      `User ${user.sub} cancelled booking ${booking.id} (customer receives ${customerReceivesAmount} ${booking.currency})`,
+      `User ${user.sub} cancelled booking ${booking.id} (customer receives ${customerReceivesAmount} ${booking.currency}, refund ${refund?.id ?? 'none'} queued)`,
     );
 
     return {
       id: booking.id,
-      status: fullyRefunded ? BookingStatus.Refunded : BookingStatus.Cancelled,
+      status: BookingStatus.Cancelled,
       requires_admin: false,
       supplier_refund_amount: supplierRefundAmount,
       customer_receives: {
         amount: customerReceivesAmount,
         currency: booking.currency,
       },
+      refund: refund ? { id: refund.id, status: refund.status } : null,
       currency: booking.currency,
     };
   }
