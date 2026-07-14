@@ -18,6 +18,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserRole } from '../users/user.entity';
 import { AdminService } from './services/admin.service';
+import { ListAuditLogsQueryDto } from './dto/list-audit-logs-query.dto';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
 import { ListRefundsQueryDto } from './dto/list-refunds-query.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
@@ -134,5 +135,17 @@ export class AdminController {
   @Get('health/duffel')
   getDuffelHealth() {
     return this.adminService.getDuffelHealth();
+  }
+
+  /** GET /admin/metrics — overview dashboard numbers. */
+  @Get('metrics')
+  getMetrics() {
+    return this.adminService.getMetrics();
+  }
+
+  /** GET /admin/audit-logs?entity_type=&entity_id=&action=&actor_user_id= */
+  @Get('audit-logs')
+  listAuditLogs(@Query() query: ListAuditLogsQueryDto) {
+    return this.adminService.listAuditLogs(query);
   }
 }

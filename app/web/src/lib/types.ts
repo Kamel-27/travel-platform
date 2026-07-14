@@ -198,3 +198,111 @@ export interface Paginated<T> {
   data: T[];
   next_cursor: string | null;
 }
+
+// ── Admin surface (api_contract.md §7, technical_admin only) ────────────
+
+export interface AdminListMeta {
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AdminBooking {
+  id: string;
+  user_id: string;
+  user_email: string | null;
+  status: BookingStatus;
+  booking_reference: string | null;
+  supplier_order_id: string | null;
+  base_amount: number;
+  markup_amount: number;
+  total_amount: number;
+  currency: string;
+  payment_id: string | null;
+  payment_status: string | null;
+  cancellation_requested_at: string | null;
+  cancellation_request_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type RefundStatus = "pending" | "succeeded" | "failed";
+
+export interface AdminRefund {
+  id: string;
+  payment_id: string;
+  booking_id: string | null;
+  booking_reference: string | null;
+  provider_refund_id: string | null;
+  amount: number;
+  currency: string;
+  supplier_refund_amount: number | null;
+  status: RefundStatus;
+  reason: string | null;
+  initiated_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  full_name: string | null;
+  phone: string | null;
+  role: string;
+  is_active: boolean;
+  email_verified_at: string | null;
+  created_at: string;
+}
+
+export interface MarkupRule {
+  id: string;
+  type: "percentage" | "fixed";
+  value: number;
+  is_active: boolean;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  actor_user_id: string;
+  actor_email: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface AdminMetrics {
+  bookings: {
+    total: number;
+    by_status: Partial<Record<BookingStatus, number>>;
+    pending_cancellation_requests: number;
+  };
+  payments: {
+    currency: string;
+    charged_amount: number;
+    refunded_amount: number;
+    net_amount: number;
+  }[];
+  refunds: { pending_count: number; failed_count: number };
+  users: { total: number; active: number };
+}
+
+export interface DuffelHealth {
+  duffel: {
+    configured: boolean;
+    requests_last_hour: number;
+    errors_last_hour: number;
+    recent_error_rate: number;
+  };
+  webhooks: {
+    unprocessed_count: number;
+    oldest_unprocessed_age_seconds: number;
+  };
+  queues: Record<string, { failed: number }>;
+  bookings_stuck_in_paid: number;
+}
