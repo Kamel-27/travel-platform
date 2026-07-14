@@ -30,6 +30,8 @@ import { OrderFulfillmentProcessor } from './queues/order-fulfillment.processor'
 import { DuffelReconciliationService } from './services/duffel-reconciliation.service';
 import { RefundExecutionService } from './services/refund-execution.service';
 import { DuffelWebhookProcessor } from './queues/duffel-webhook.processor';
+import { RefundExecutionProcessor } from './queues/refund-execution.processor';
+import { REFUND_EXECUTION_QUEUE } from './queues/refund-execution.queue';
 import { DuffelWebhookSweepService } from './services/duffel-webhook-sweep.service';
 import { TicketPdfService } from './services/ticket-pdf.service';
 
@@ -56,6 +58,7 @@ import { TicketPdfService } from './services/ticket-pdf.service';
     BullModule.registerQueue(
       { name: 'order_fulfillment_queue' },
       { name: 'duffel_webhook_queue' },
+      { name: REFUND_EXECUTION_QUEUE },
     ),
   ],
   controllers: [BookingsController, DuffelWebhooksController],
@@ -68,6 +71,7 @@ import { TicketPdfService } from './services/ticket-pdf.service';
     OrderFulfillmentProcessor,
     DuffelReconciliationService,
     RefundExecutionService,
+    RefundExecutionProcessor,
     DuffelWebhookProcessor,
     DuffelWebhookSweepService,
     TicketPdfService,

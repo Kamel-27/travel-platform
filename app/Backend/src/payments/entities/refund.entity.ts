@@ -33,8 +33,9 @@ export class Refund {
   })
   payment: Payment;
 
-  @Column({ name: 'provider_refund_id', type: 'varchar' })
-  providerRefundId: string;
+  /** Assigned by Paymob only once the refund executes; null while pending/failed. */
+  @Column({ name: 'provider_refund_id', type: 'varchar', nullable: true })
+  providerRefundId: string | null;
 
   @Column({ type: 'integer' })
   amount: number;

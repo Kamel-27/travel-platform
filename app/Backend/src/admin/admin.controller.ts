@@ -19,6 +19,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserRole } from '../users/user.entity';
 import { AdminService } from './services/admin.service';
 import { ListBookingsQueryDto } from './dto/list-bookings-query.dto';
+import { ListRefundsQueryDto } from './dto/list-refunds-query.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
@@ -87,6 +88,21 @@ export class AdminController {
       dto.amount,
       dto.reason,
     );
+  }
+
+  /** GET /admin/refunds?status=&limit=&offset= — refund pipeline monitor. */
+  @Get('refunds')
+  listRefunds(@Query() query: ListRefundsQueryDto) {
+    return this.adminService.listRefunds(query);
+  }
+
+  /** POST /admin/refunds/:id/retry — re-enqueue a failed/stuck refund. */
+  @Post('refunds/:id/retry')
+  retryRefund(
+    @CurrentUser() admin: JwtPayload,
+    @Param('id', ParseUUIDPipe) refundId: string,
+  ) {
+    return this.adminService.retryRefund(admin.sub, refundId);
   }
 
   /** GET /admin/markup-rules */

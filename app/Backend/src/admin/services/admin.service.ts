@@ -25,10 +25,17 @@ import {
   MarkupType,
 } from '../../bookings/entities/markup-rule.entity';
 import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
+import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
 import { PaymentWebhookEvent } from '../../payments/entities/payment-webhook-event.entity';
 import { DuffelService } from '../../duffel/duffel.service';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
 import { RefundExecutionService } from '../../bookings/services/refund-execution.service';
+import {
+  REFUND_EXECUTION_JOB,
+  REFUND_EXECUTION_QUEUE,
+  refundExecutionJobOptions,
+} from '../../bookings/queues/refund-execution.queue';
+import { getRequestId } from '../../common/logging/request-context';
 import { AuditLogService } from './audit-log.service';
 import { ErrorCode } from '../../common/dto/error-response.dto';
 import {
@@ -36,6 +43,7 @@ import {
   UpdateMarkupRuleDto,
 } from '../dto/markup-rule.dto';
 import { ListBookingsQueryDto } from '../dto/list-bookings-query.dto';
+import { ListRefundsQueryDto } from '../dto/list-refunds-query.dto';
 import { ListUsersQueryDto } from '../dto/list-users-query.dto';
 
 /** Bookings stuck in `paid` longer than this show up in the health report. */
@@ -54,6 +62,8 @@ export class AdminService {
     private readonly bookingRepo: Repository<Booking>,
     @InjectRepository(Payment)
     private readonly paymentRepo: Repository<Payment>,
+    @InjectRepository(Refund)
+    private readonly refundRepo: Repository<Refund>,
     @InjectRepository(MarkupRule)
     private readonly markupRuleRepo: Repository<MarkupRule>,
     @InjectRepository(PaymentWebhookEvent)
@@ -66,6 +76,8 @@ export class AdminService {
     private readonly paymentWebhookQueue: Queue,
     @InjectQueue('order_fulfillment_queue')
     private readonly orderFulfillmentQueue: Queue,
+    @InjectQueue(REFUND_EXECUTION_QUEUE)
+    private readonly refundExecutionQueue: Queue,
   ) {}
 
   // ── Users ───────────────────────────────────────────────────────
@@ -239,7 +251,26 @@ export class AdminService {
 
     const cancelReason = reason ?? 'admin_manual_cancel';
 
-    await this.entityManager.transaction(async (manager) => {
+    // Same refund policy as customer self-cancel (prd.md §5.4): the customer
+    // receives the supplier refund plus the full markup. The pending row
+    // commits with the cancellation; the gateway call runs from the queue.
+    const payment = await this.paymentRepo.findOneBy({ bookingId: booking.id });
+    const customerReceivesAmount = supplierRefundAmount + booking.markupAmount;
+    // Duffel is already cancelled at this point, so the cancellation must
+    // commit no matter what — a payment that can't be refunded (missing or
+    // in a non-refundable status) skips the refund row instead of throwing.
+    const canRefund =
+      payment !== null &&
+      (payment.status === PaymentStatus.Succeeded ||
+        payment.status === PaymentStatus.PartiallyRefunded) &&
+      customerReceivesAmount > 0;
+    if (payment && !canRefund) {
+      this.logger.warn(
+        `Booking ${booking.id} cancelled by admin but no refund was created (payment ${payment.id} status ${payment.status}, customer receives ${customerReceivesAmount}).`,
+      );
+    }
+
+    const refund = await this.entityManager.transaction(async (manager) => {
       await this.stateMachine.transitionTo(
         manager,
         booking.id,
@@ -247,6 +278,20 @@ export class AdminService {
         adminUserId,
         cancelReason,
       );
+
+      let pendingRefund: Refund | null = null;
+      if (payment && canRefund) {
+        pendingRefund = await this.refundExecutionService.createPendingRefund(
+          manager,
+          {
+            paymentId: payment.id,
+            amount: customerReceivesAmount,
+            reason: cancelReason,
+            initiatedByUserId: adminUserId,
+            supplierRefundAmount,
+          },
+        );
+      }
 
       await this.auditLogService.logAction(
         manager,
@@ -258,18 +303,35 @@ export class AdminService {
           reason: cancelReason,
           supplier_order_id: booking.supplierOrderId,
           supplier_refund_amount: supplierRefundAmount,
+          refund_id: pendingRefund?.id ?? null,
+          customer_receives_amount: customerReceivesAmount,
         },
       );
+
+      return pendingRefund;
     });
 
+    if (refund) {
+      await this.refundExecutionQueue.add(
+        REFUND_EXECUTION_JOB,
+        { refundId: refund.id, requestId: getRequestId() },
+        refundExecutionJobOptions(refund.id),
+      );
+    }
+
     this.logger.log(
-      `Admin ${adminUserId} cancelled booking ${booking.id} (supplier refund: ${supplierRefundAmount} ${booking.currency})`,
+      `Admin ${adminUserId} cancelled booking ${booking.id} (supplier refund: ${supplierRefundAmount} ${booking.currency}, refund ${refund?.id ?? 'none'} queued)`,
     );
 
     return {
       id: booking.id,
       status: BookingStatus.Cancelled,
       supplier_refund_amount: supplierRefundAmount,
+      customer_receives: {
+        amount: customerReceivesAmount,
+        currency: booking.currency,
+      },
+      refund: refund ? { id: refund.id, status: refund.status } : null,
       currency: booking.currency,
     };
   }
@@ -277,10 +339,11 @@ export class AdminService {
   // ── Payments ────────────────────────────────────────────────────
 
   /**
-   * Executes a manual refund through the payment gateway (Paymob), records
-   * the Refund row, rolls up the Payment status, and — when the booking is
-   * fully refunded from a cancelled/order_failed state — transitions it to
-   * `refunded`.
+   * Manual refund through the payment gateway (Paymob). The pending Refund
+   * row (+ audit log) commits first, then the gateway call executes inline —
+   * the admin is present and wants immediate feedback. If Paymob rejects,
+   * the row is marked `failed` (visible in GET /admin/refunds, retryable)
+   * and the error propagates to the admin.
    */
   async refundPayment(
     adminUserId: string,
@@ -296,59 +359,56 @@ export class AdminService {
       });
     }
 
-    if (
-      payment.status !== PaymentStatus.Succeeded &&
-      payment.status !== PaymentStatus.PartiallyRefunded
-    ) {
-      throw new ConflictException({
-        code: ErrorCode.ILLEGAL_TRANSITION,
-        message: `Payment in status ${payment.status} cannot be refunded.`,
-      });
-    }
-
-    // Execute at the gateway first — DB rows are only written for refunds
-    // Paymob actually accepted. Also validates the amount against the
-    // remaining refundable balance.
+    // Payment status and remaining-refundable validation happen inside
+    // createPendingRefund, in the same transaction as the row itself.
     const refundReason = reason ?? 'admin_manual_refund';
-    const { refundId } = await this.refundExecutionService.executeGatewayRefund(
-      payment.id,
-      amount,
+    const pendingRefund = await this.entityManager.transaction(
+      async (manager) => {
+        const refund = await this.refundExecutionService.createPendingRefund(
+          manager,
+          {
+            paymentId: payment.id,
+            amount,
+            reason: refundReason,
+            initiatedByUserId: adminUserId,
+          },
+        );
+
+        await this.auditLogService.logAction(
+          manager,
+          adminUserId,
+          'payment.refund',
+          'payment',
+          payment.id,
+          {
+            refund_id: refund.id,
+            amount,
+            currency: payment.currency,
+            reason: refundReason,
+          },
+        );
+
+        return refund;
+      },
     );
 
-    const {
-      refund,
-      payment: updatedPayment,
-      fullyRefunded,
-    } = await this.entityManager.transaction(async (manager) => {
-      const result = await this.refundExecutionService.recordRefund(manager, {
-        paymentId: payment.id,
-        refundId,
-        amount,
-        reason: refundReason,
-        initiatedByUserId: adminUserId,
-      });
-
-      await this.auditLogService.logAction(
-        manager,
-        adminUserId,
-        'payment.refund',
-        'payment',
-        payment.id,
-        {
-          refund_id: result.refund.id,
-          provider_refund_id: refundId,
-          amount,
-          currency: payment.currency,
-          reason: refundReason,
-          fully_refunded: result.fullyRefunded,
-        },
+    let executed;
+    try {
+      executed = await this.refundExecutionService.executeRefund(
+        pendingRefund.id,
       );
+    } catch (err: unknown) {
+      await this.refundExecutionService.markRefundFailed(
+        pendingRefund.id,
+        (err as Error).message,
+      );
+      throw err;
+    }
 
-      return result;
-    });
+    const { refund, fullyRefunded } = executed;
 
     this.logger.log(
-      `Admin ${adminUserId} refunded ${amount} ${payment.currency} on payment ${payment.id} (provider refund ${refundId})`,
+      `Admin ${adminUserId} refunded ${amount} ${payment.currency} on payment ${payment.id} (provider refund ${refund.providerRefundId ?? 'n/a'})`,
     );
 
     return {
@@ -358,9 +418,109 @@ export class AdminService {
       amount: refund.amount,
       currency: refund.currency,
       status: refund.status,
-      payment_status: updatedPayment.status,
+      payment_status: fullyRefunded
+        ? PaymentStatus.Refunded
+        : PaymentStatus.PartiallyRefunded,
       fully_refunded: fullyRefunded,
     };
+  }
+
+  // ── Refunds ─────────────────────────────────────────────────────
+
+  /** GET /admin/refunds?status=&limit=&offset= — refund pipeline monitor. */
+  async listRefunds(query: ListRefundsQueryDto): Promise<{
+    refunds: Record<string, unknown>[];
+    total: number;
+    limit: number;
+    offset: number;
+  }> {
+    const limit = query.limit ?? 20;
+    const offset = query.offset ?? 0;
+
+    const where: FindOptionsWhere<Refund> = {};
+    if (query.status) where.status = query.status;
+
+    const [refunds, total] = await this.refundRepo.findAndCount({
+      where,
+      relations: { payment: { booking: true } },
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+
+    return {
+      refunds: refunds.map((r) => ({
+        id: r.id,
+        payment_id: r.paymentId,
+        booking_id: r.payment?.bookingId ?? null,
+        booking_reference: r.payment?.booking?.bookingReference ?? null,
+        provider_refund_id: r.providerRefundId,
+        amount: r.amount,
+        currency: r.currency,
+        supplier_refund_amount: r.supplierRefundAmount,
+        status: r.status,
+        reason: r.reason,
+        initiated_by_user_id: r.initiatedByUserId,
+        created_at: r.createdAt,
+        updated_at: r.updatedAt,
+      })),
+      total,
+      limit,
+      offset,
+    };
+  }
+
+  /**
+   * POST /admin/refunds/:id/retry — re-enqueues a failed (or stuck pending)
+   * refund for gateway execution. Succeeded refunds cannot be retried.
+   */
+  async retryRefund(
+    adminUserId: string,
+    refundId: string,
+  ): Promise<Record<string, unknown>> {
+    const refund = await this.refundRepo.findOneBy({ id: refundId });
+    if (!refund) {
+      throw new NotFoundException({
+        code: ErrorCode.NOT_FOUND,
+        message: 'Refund not found.',
+      });
+    }
+    if (refund.status === RefundStatus.Succeeded) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message: 'Refund already succeeded; nothing to retry.',
+      });
+    }
+
+    // failed → pending so the executor picks it up again; a stuck pending
+    // row is simply re-enqueued (the job is idempotent either way).
+    if (refund.status === RefundStatus.Failed) {
+      await this.refundRepo.update(
+        { id: refund.id, status: RefundStatus.Failed },
+        { status: RefundStatus.Pending },
+      );
+    }
+
+    await this.auditLogService.logAction(
+      this.entityManager,
+      adminUserId,
+      'refund.retry',
+      'refund',
+      refund.id,
+      { previous_status: refund.status },
+    );
+
+    await this.refundExecutionQueue.add(
+      REFUND_EXECUTION_JOB,
+      { refundId: refund.id, requestId: getRequestId() },
+      refundExecutionJobOptions(refund.id),
+    );
+
+    this.logger.log(
+      `Admin ${adminUserId} retried refund ${refund.id} (was ${refund.status})`,
+    );
+
+    return { id: refund.id, status: RefundStatus.Pending };
   }
 
   // ── Markup rules ────────────────────────────────────────────────

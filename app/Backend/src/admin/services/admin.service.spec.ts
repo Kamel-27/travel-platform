@@ -82,8 +82,17 @@ describe('AdminService', () => {
   let mockUserRepo: any;
   let mockManagerUserRepo: any;
   let mockManagerRefreshTokenRepo: any;
+  let mockManagerBookingRepo: any;
+  let mockManagerRefundRepo: any;
+  let mockRefundQueue: any;
+  /** Rows pre-existing in the refunds table (per test). */
+  let managerRefundRows: any[];
+  /** The last Refund row written through the transaction manager. */
+  let lastSavedRefund: any;
 
   beforeEach(async () => {
+    managerRefundRows = [];
+    lastSavedRefund = null;
     mockBookingRepo = {
       findOneBy: jest.fn().mockResolvedValue(confirmedBooking),
       findAndCount: jest.fn().mockResolvedValue([[], 0]),
@@ -94,6 +103,15 @@ describe('AdminService', () => {
     };
     mockRefundRepo = {
       findBy: jest.fn().mockResolvedValue([]),
+      // executeRefund re-reads the row the service just created.
+      findOneBy: jest
+        .fn()
+        .mockImplementation(() => Promise.resolve(lastSavedRefund)),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+      findAndCount: jest.fn().mockResolvedValue([[], 0]),
+      manager: {
+        transaction: jest.fn().mockImplementation((cb: any) => cb(mockManager)),
+      },
     };
     mockMarkupRuleRepo = {
       find: jest.fn().mockResolvedValue([]),
@@ -111,7 +129,7 @@ describe('AdminService', () => {
       findOneBy: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue(undefined),
     };
-    const mockManagerBookingRepo = {
+    mockManagerBookingRepo = {
       findOneBy: jest.fn().mockResolvedValue(null),
     };
     mockManagerUserRepo = {
@@ -120,21 +138,47 @@ describe('AdminService', () => {
     mockManagerRefreshTokenRepo = {
       update: jest.fn().mockResolvedValue(undefined),
     };
-    // RefundExecutionService.recordRefund reads/writes Payment and Refund
-    // through the transaction manager, not the direct-injected repos above.
+    // RefundExecutionService reads/writes Payment and Refund through the
+    // transaction manager, not the direct-injected repos above.
     const mockManagerPaymentRepo = {
-      findOneBy: jest.fn().mockResolvedValue({ ...succeededPayment }),
+      // Delegates to the service-level mock so a test override applies to
+      // both lookups (AdminService pre-check and createPendingRefund).
+      findOneBy: jest
+        .fn()
+        .mockImplementation((where: unknown) =>
+          mockPaymentRepo.findOneBy(where),
+        ),
     };
-    const mockManagerRefundRepo = {
-      findBy: jest.fn().mockResolvedValue([]),
+    mockManagerRefundRepo = {
+      // Returns pre-existing rows plus whatever the test just wrote, so the
+      // post-save rollup in executeRefund sees the freshly-succeeded row.
+      findBy: jest
+        .fn()
+        .mockImplementation(() =>
+          Promise.resolve(
+            lastSavedRefund
+              ? [...managerRefundRows, lastSavedRefund]
+              : [...managerRefundRows],
+          ),
+        ),
+      // executeRefund re-reads the pending row under lock.
+      createQueryBuilder: jest.fn().mockReturnValue({
+        setLock: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getOne: jest
+          .fn()
+          .mockImplementation(() => Promise.resolve(lastSavedRefund)),
+      }),
     };
 
     mockManager = {
       save: jest
         .fn()
-        .mockImplementation((_cls: unknown, obj: Record<string, unknown>) =>
-          Promise.resolve({ ...obj, id: obj['id'] ?? 'generated_id' }),
-        ),
+        .mockImplementation((cls: unknown, obj: Record<string, unknown>) => {
+          const saved = { ...obj, id: obj['id'] ?? 'generated_id' };
+          if (cls === Refund) lastSavedRefund = saved;
+          return Promise.resolve(saved);
+        }),
       getRepository: jest.fn().mockImplementation((cls: unknown) => {
         if (cls === MarkupRule) return mockManagerMarkupRepo;
         if (cls === Booking) return mockManagerBookingRepo;
@@ -198,6 +242,12 @@ describe('AdminService', () => {
         {
           provide: getQueueToken('order_fulfillment_queue'),
           useValue: { getFailedCount: jest.fn().mockResolvedValue(0) },
+        },
+        {
+          provide: getQueueToken('refund_execution_queue'),
+          useValue: (mockRefundQueue = {
+            add: jest.fn().mockResolvedValue({}),
+          }),
         },
         // Real instance — it's the extracted-and-shared logic under test
         // here too, wired to the same mock repos/gateway/state-machine.
@@ -362,7 +412,7 @@ describe('AdminService', () => {
       expect(duffelService.cancelOrder).not.toHaveBeenCalled();
     });
 
-    it('cancels at Duffel, transitions T7, and writes the audit row', async () => {
+    it('cancels at Duffel, transitions T7, commits the pending customer refund, and enqueues execution', async () => {
       const result = await service.cancelBooking(
         ADMIN_ID,
         'booking_001',
@@ -377,17 +427,59 @@ describe('AdminService', () => {
         ADMIN_ID,
         'complex fare',
       );
+      // Customer refund policy: supplier refund (90000) + full markup (5000),
+      // committed as a pending row in the same transaction.
+      expect(mockManager.save).toHaveBeenCalledWith(
+        Refund,
+        expect.objectContaining({
+          paymentId: 'pay_001',
+          amount: 95000,
+          status: RefundStatus.Pending,
+          providerRefundId: null,
+          initiatedByUserId: ADMIN_ID,
+        }),
+      );
+      expect(mockRefundQueue.add).toHaveBeenCalledWith(
+        'execute_refund',
+        expect.objectContaining({ refundId: 'generated_id' }),
+        expect.objectContaining({ jobId: 'refund:generated_id', attempts: 5 }),
+      );
       expect(auditLogService.logAction).toHaveBeenCalledWith(
         mockManager,
         ADMIN_ID,
         'booking.cancel',
         'booking',
         'booking_001',
-        expect.objectContaining({ supplier_refund_amount: 90000 }),
+        expect.objectContaining({
+          supplier_refund_amount: 90000,
+          refund_id: 'generated_id',
+          customer_receives_amount: 95000,
+        }),
       );
       expect(result).toMatchObject({
         status: BookingStatus.Cancelled,
         supplier_refund_amount: 90000,
+        refund: { id: 'generated_id', status: RefundStatus.Pending },
+      });
+    });
+
+    it('still cancels (without a refund row) when the payment is not refundable', async () => {
+      mockPaymentRepo.findOneBy.mockResolvedValue({
+        ...succeededPayment,
+        status: PaymentStatus.Pending,
+      });
+
+      const result = await service.cancelBooking(ADMIN_ID, 'booking_001');
+
+      expect(stateMachine.transitionTo).toHaveBeenCalled();
+      expect(mockManager.save).not.toHaveBeenCalledWith(
+        Refund,
+        expect.anything(),
+      );
+      expect(mockRefundQueue.add).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        status: BookingStatus.Cancelled,
+        refund: null,
       });
     });
 
@@ -399,6 +491,7 @@ describe('AdminService', () => {
       ).rejects.toThrow('duffel down');
       expect(stateMachine.transitionTo).not.toHaveBeenCalled();
       expect(auditLogService.logAction).not.toHaveBeenCalled();
+      expect(mockRefundQueue.add).not.toHaveBeenCalled();
     });
   });
 
@@ -425,23 +518,41 @@ describe('AdminService', () => {
     });
 
     it('rejects refunds exceeding the remaining refundable amount', async () => {
-      mockRefundRepo.findBy.mockResolvedValue([
-        { amount: 100000, status: RefundStatus.Succeeded },
-      ]);
+      managerRefundRows = [{ amount: 100000, status: RefundStatus.Succeeded }];
 
       await expect(
         service.refundPayment(ADMIN_ID, 'pay_001', 10000),
       ).rejects.toThrow(UnprocessableEntityException);
       expect(paymobService.refundTransaction).not.toHaveBeenCalled();
+      expect(mockRefundQueue.add).not.toHaveBeenCalled();
     });
 
-    it('rejects when no succeeded gateway transaction can be located', async () => {
+    it('marks the pending row failed when no succeeded gateway transaction can be located', async () => {
       mockWebhookEventRepo.findOne.mockResolvedValue(null);
 
       await expect(
         service.refundPayment(ADMIN_ID, 'pay_001', 1000),
       ).rejects.toThrow(ConflictException);
       expect(paymobService.refundTransaction).not.toHaveBeenCalled();
+      // The pending row survives as failed — visible and retryable.
+      expect(mockRefundRepo.update).toHaveBeenCalledWith(
+        { id: 'generated_id', status: RefundStatus.Pending },
+        { status: RefundStatus.Failed },
+      );
+    });
+
+    it('marks the pending row failed and rethrows when the gateway rejects', async () => {
+      paymobService.refundTransaction.mockRejectedValue(
+        new Error('paymob down'),
+      );
+
+      await expect(
+        service.refundPayment(ADMIN_ID, 'pay_001', 1000),
+      ).rejects.toThrow('paymob down');
+      expect(mockRefundRepo.update).toHaveBeenCalledWith(
+        { id: 'generated_id', status: RefundStatus.Pending },
+        { status: RefundStatus.Failed },
+      );
     });
 
     it('executes a partial refund without touching the booking', async () => {
@@ -452,19 +563,27 @@ describe('AdminService', () => {
         'goodwill',
       );
 
-      expect(paymobService.refundTransaction).toHaveBeenCalledWith(
-        987654,
-        50000,
-      );
-      // Refund row persisted as succeeded
+      // Pending row committed before the gateway call
       expect(mockManager.save).toHaveBeenCalledWith(
         Refund,
         expect.objectContaining({
           paymentId: 'pay_001',
-          providerRefundId: 'rfnd_123',
+          providerRefundId: null,
           amount: 50000,
-          status: RefundStatus.Succeeded,
+          status: RefundStatus.Pending,
           initiatedByUserId: ADMIN_ID,
+        }),
+      );
+      expect(paymobService.refundTransaction).toHaveBeenCalledWith(
+        987654,
+        50000,
+      );
+      // Row settled as succeeded with the provider id
+      expect(mockManager.save).toHaveBeenCalledWith(
+        Refund,
+        expect.objectContaining({
+          providerRefundId: 'rfnd_123',
+          status: RefundStatus.Succeeded,
         }),
       );
       // Payment rolled up to partially_refunded
@@ -481,33 +600,19 @@ describe('AdminService', () => {
         'payment.refund',
         'payment',
         'pay_001',
-        expect.objectContaining({ amount: 50000, fully_refunded: false }),
+        expect.objectContaining({ amount: 50000, reason: 'goodwill' }),
       );
       expect(result).toMatchObject({
+        status: RefundStatus.Succeeded,
         payment_status: PaymentStatus.PartiallyRefunded,
+        fully_refunded: false,
       });
     });
 
     it('marks the payment refunded and transitions a cancelled booking on full refund', async () => {
-      mockManager.getRepository.mockImplementation((cls: unknown) => {
-        if (cls === Booking) {
-          return {
-            findOneBy: jest.fn().mockResolvedValue({
-              ...confirmedBooking,
-              status: BookingStatus.Cancelled,
-            }),
-          };
-        }
-        if (cls === MarkupRule) return mockManagerMarkupRepo;
-        if (cls === Payment) {
-          return {
-            findOneBy: jest.fn().mockResolvedValue({ ...succeededPayment }),
-          };
-        }
-        if (cls === Refund) {
-          return { findBy: jest.fn().mockResolvedValue([]) };
-        }
-        return { findOneBy: jest.fn().mockResolvedValue(null) };
+      mockManagerBookingRepo.findOneBy.mockResolvedValue({
+        ...confirmedBooking,
+        status: BookingStatus.Cancelled,
       });
 
       const result = await service.refundPayment(ADMIN_ID, 'pay_001', 105000);
@@ -525,6 +630,106 @@ describe('AdminService', () => {
       );
       expect(result).toMatchObject({
         payment_status: PaymentStatus.Refunded,
+        fully_refunded: true,
+      });
+    });
+  });
+
+  // ── refunds (list + retry) ────────────────────────────────────
+
+  describe('listRefunds', () => {
+    it('filters by status and maps rows with the booking reference', async () => {
+      const row = {
+        id: 'refund_001',
+        paymentId: 'pay_001',
+        providerRefundId: null,
+        amount: 95000,
+        currency: 'USD',
+        supplierRefundAmount: 90000,
+        status: RefundStatus.Failed,
+        reason: 'customer_cancel',
+        initiatedByUserId: 'user_001',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        payment: {
+          id: 'pay_001',
+          bookingId: 'booking_001',
+          booking: { id: 'booking_001', bookingReference: 'ABC123' },
+        },
+      };
+      mockRefundRepo.findAndCount.mockResolvedValue([[row], 1]);
+
+      const result = await service.listRefunds({
+        status: RefundStatus.Failed,
+        limit: 10,
+      });
+
+      expect(mockRefundRepo.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: RefundStatus.Failed },
+          take: 10,
+        }),
+      );
+      expect(result.total).toBe(1);
+      expect(result.refunds[0]).toMatchObject({
+        id: 'refund_001',
+        booking_id: 'booking_001',
+        booking_reference: 'ABC123',
+        status: RefundStatus.Failed,
+        amount: 95000,
+      });
+    });
+  });
+
+  describe('retryRefund', () => {
+    it('throws 404 when the refund does not exist', async () => {
+      mockRefundRepo.findOneBy.mockResolvedValue(null);
+
+      await expect(service.retryRefund(ADMIN_ID, 'missing')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('rejects retrying a succeeded refund', async () => {
+      mockRefundRepo.findOneBy.mockResolvedValue({
+        id: 'refund_001',
+        status: RefundStatus.Succeeded,
+      });
+
+      await expect(service.retryRefund(ADMIN_ID, 'refund_001')).rejects.toThrow(
+        ConflictException,
+      );
+      expect(mockRefundQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('resets a failed refund to pending, audits, and re-enqueues it', async () => {
+      mockRefundRepo.findOneBy.mockResolvedValue({
+        id: 'refund_001',
+        status: RefundStatus.Failed,
+      });
+
+      const result = await service.retryRefund(ADMIN_ID, 'refund_001');
+
+      expect(mockRefundRepo.update).toHaveBeenCalledWith(
+        { id: 'refund_001', status: RefundStatus.Failed },
+        { status: RefundStatus.Pending },
+      );
+      expect(auditLogService.logAction).toHaveBeenCalledWith(
+        mockEntityManager,
+        ADMIN_ID,
+        'refund.retry',
+        'refund',
+        'refund_001',
+        { previous_status: RefundStatus.Failed },
+      );
+      expect(mockRefundQueue.add).toHaveBeenCalledWith(
+        'execute_refund',
+        expect.objectContaining({ refundId: 'refund_001' }),
+        expect.objectContaining({ jobId: 'refund:refund_001' }),
+      );
+      expect(result).toEqual({
+        id: 'refund_001',
+        status: RefundStatus.Pending,
       });
     });
   });

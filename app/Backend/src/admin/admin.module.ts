@@ -12,8 +12,10 @@ import { RefreshToken } from '../auth/entities/refresh-token.entity';
 import { Booking } from '../bookings/entities/booking.entity';
 import { MarkupRule } from '../bookings/entities/markup-rule.entity';
 import { Payment } from '../payments/entities/payment.entity';
+import { Refund } from '../payments/entities/refund.entity';
 import { PaymentWebhookEvent } from '../payments/entities/payment-webhook-event.entity';
 import { AuditLog } from './entities/audit-log.entity';
+import { REFUND_EXECUTION_QUEUE } from '../bookings/queues/refund-execution.queue';
 
 import { AdminController } from './admin.controller';
 import { AdminService } from './services/admin.service';
@@ -27,6 +29,7 @@ import { AuditLogService } from './services/audit-log.service';
       Booking,
       MarkupRule,
       Payment,
+      Refund,
       PaymentWebhookEvent,
       AuditLog,
     ]),
@@ -37,6 +40,7 @@ import { AuditLogService } from './services/audit-log.service';
     BullModule.registerQueue(
       { name: 'payment_webhook_queue' },
       { name: 'order_fulfillment_queue' },
+      { name: REFUND_EXECUTION_QUEUE },
     ),
   ],
   controllers: [AdminController],
