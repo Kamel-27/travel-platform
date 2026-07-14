@@ -42,9 +42,11 @@ import {
   CreateMarkupRuleDto,
   UpdateMarkupRuleDto,
 } from '../dto/markup-rule.dto';
+import { ListAuditLogsQueryDto } from '../dto/list-audit-logs-query.dto';
 import { ListBookingsQueryDto } from '../dto/list-bookings-query.dto';
 import { ListRefundsQueryDto } from '../dto/list-refunds-query.dto';
 import { ListUsersQueryDto } from '../dto/list-users-query.dto';
+import { AuditLog } from '../entities/audit-log.entity';
 
 /** Bookings stuck in `paid` longer than this show up in the health report. */
 const STUCK_PAID_WINDOW_MS = 15 * 60 * 1000;
@@ -68,6 +70,8 @@ export class AdminService {
     private readonly markupRuleRepo: Repository<MarkupRule>,
     @InjectRepository(PaymentWebhookEvent)
     private readonly webhookEventRepo: Repository<PaymentWebhookEvent>,
+    @InjectRepository(AuditLog)
+    private readonly auditLogRepo: Repository<AuditLog>,
     private readonly duffelService: DuffelService,
     private readonly stateMachine: BookingStateMachineService,
     private readonly refundExecutionService: RefundExecutionService,
@@ -666,6 +670,149 @@ export class AdminService {
         order_fulfillment_queue: { failed: orderFulfillmentFailed },
       },
       bookings_stuck_in_paid: stuckInPaid,
+    };
+  }
+
+  // ── Metrics ─────────────────────────────────────────────────────
+
+  /**
+   * GET /admin/metrics — the overview dashboard's numbers. Money figures
+   * are grouped per currency (integer minor units, never summed across
+   * currencies): charged = every payment that ever succeeded (succeeded /
+   * partially_refunded / refunded all represent captured charges),
+   * refunded = succeeded refunds only.
+   */
+  async getMetrics(): Promise<Record<string, unknown>> {
+    const bookingsByStatusRaw: { status: string; count: string }[] =
+      await this.bookingRepo
+        .createQueryBuilder('b')
+        .select('b.status', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .groupBy('b.status')
+        .getRawMany();
+    const byStatus: Record<string, number> = {};
+    let totalBookings = 0;
+    for (const row of bookingsByStatusRaw) {
+      const count = Number(row.count);
+      byStatus[row.status] = count;
+      totalBookings += count;
+    }
+
+    // Cancellation requests awaiting manual review: requested but the
+    // booking is still confirmed (an actioned request leaves confirmed).
+    const pendingCancellationRequests = await this.bookingRepo.count({
+      where: {
+        cancellationRequestedAt: Not(IsNull()),
+        status: BookingStatus.Confirmed,
+      },
+    });
+
+    const chargedRaw: { currency: string; charged: string }[] =
+      await this.paymentRepo
+        .createQueryBuilder('p')
+        .select('p.currency', 'currency')
+        .addSelect('COALESCE(SUM(p.amount), 0)', 'charged')
+        .where('p.status IN (:...statuses)', {
+          statuses: [
+            PaymentStatus.Succeeded,
+            PaymentStatus.PartiallyRefunded,
+            PaymentStatus.Refunded,
+          ],
+        })
+        .groupBy('p.currency')
+        .getRawMany();
+
+    const refundedRaw: { currency: string; refunded: string }[] =
+      await this.refundRepo
+        .createQueryBuilder('r')
+        .select('r.currency', 'currency')
+        .addSelect('COALESCE(SUM(r.amount), 0)', 'refunded')
+        .where('r.status = :status', { status: RefundStatus.Succeeded })
+        .groupBy('r.currency')
+        .getRawMany();
+    const refundedByCurrency = new Map(
+      refundedRaw.map((r) => [r.currency, Number(r.refunded)]),
+    );
+
+    const payments = chargedRaw.map((row) => {
+      const charged = Number(row.charged);
+      const refunded = refundedByCurrency.get(row.currency) ?? 0;
+      return {
+        currency: row.currency,
+        charged_amount: charged,
+        refunded_amount: refunded,
+        net_amount: charged - refunded,
+      };
+    });
+
+    const [pendingRefunds, failedRefunds] = await Promise.all([
+      this.refundRepo.countBy({ status: RefundStatus.Pending }),
+      this.refundRepo.countBy({ status: RefundStatus.Failed }),
+    ]);
+
+    const [totalUsers, activeUsers] = await Promise.all([
+      this.userRepo.count(),
+      this.userRepo.countBy({ isActive: true }),
+    ]);
+
+    return {
+      bookings: {
+        total: totalBookings,
+        by_status: byStatus,
+        pending_cancellation_requests: pendingCancellationRequests,
+      },
+      payments,
+      refunds: {
+        pending_count: pendingRefunds,
+        failed_count: failedRefunds,
+      },
+      users: {
+        total: totalUsers,
+        active: activeUsers,
+      },
+    };
+  }
+
+  // ── Audit logs ──────────────────────────────────────────────────
+
+  /** GET /admin/audit-logs — read side of the audit trail (writes are in AuditLogService). */
+  async listAuditLogs(query: ListAuditLogsQueryDto): Promise<{
+    audit_logs: Record<string, unknown>[];
+    total: number;
+    limit: number;
+    offset: number;
+  }> {
+    const limit = query.limit ?? 20;
+    const offset = query.offset ?? 0;
+
+    const where: FindOptionsWhere<AuditLog> = {};
+    if (query.entity_type) where.entityType = query.entity_type;
+    if (query.entity_id) where.entityId = query.entity_id;
+    if (query.action) where.action = query.action;
+    if (query.actor_user_id) where.actorUserId = query.actor_user_id;
+
+    const [logs, total] = await this.auditLogRepo.findAndCount({
+      where,
+      relations: { actorUser: true },
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: offset,
+    });
+
+    return {
+      audit_logs: logs.map((log) => ({
+        id: log.id,
+        actor_user_id: log.actorUserId,
+        actor_email: log.actorUser?.email ?? null,
+        action: log.action,
+        entity_type: log.entityType,
+        entity_id: log.entityId,
+        metadata: log.metadata,
+        created_at: log.createdAt,
+      })),
+      total,
+      limit,
+      offset,
     };
   }
 

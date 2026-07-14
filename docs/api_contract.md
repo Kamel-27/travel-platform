@@ -130,5 +130,7 @@ Duplicate delivery → `200` (unique-violation caught, acked, not reprocessed). 
 | `POST /admin/refunds/:id/retry` | Re-enqueue a failed/stuck refund (`409` if already succeeded) |
 | `GET /admin/markup-rules`, `POST /admin/markup-rules`, `PATCH /admin/markup-rules/:id` | Configure markup; activating one deactivates the previous (partial unique index backstop) |
 | `GET /admin/health/duffel` | Auth status, recent error rate, outbound rate-limit headroom, webhook processing lag, count of bookings stuck in `paid` |
+| `GET /admin/metrics` | Overview dashboard: bookings by status (+ pending cancellation requests), charged/refunded/net per currency, pending/failed refund counts, user counts |
+| `GET /admin/audit-logs?entity_type=&entity_id=&action=&actor_user_id=` | Read side of the audit trail, newest first, with actor email |
 
 Every admin mutation writes an `AuditLog` row — enforced in the service layer, not optional per endpoint.

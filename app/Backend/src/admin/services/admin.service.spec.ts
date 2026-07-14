@@ -25,6 +25,7 @@ import { PaymentWebhookEvent } from '../../payments/entities/payment-webhook-eve
 import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
 import { User, UserRole } from '../../users/user.entity';
 import { RefreshToken } from '../../auth/entities/refresh-token.entity';
+import { AuditLog } from '../entities/audit-log.entity';
 
 const ADMIN_ID = 'admin_user_001';
 
@@ -80,6 +81,7 @@ describe('AdminService', () => {
   };
 
   let mockUserRepo: any;
+  let mockAuditLogRepo: any;
   let mockManagerUserRepo: any;
   let mockManagerRefreshTokenRepo: any;
   let mockManagerBookingRepo: any;
@@ -122,6 +124,11 @@ describe('AdminService', () => {
     };
 
     mockUserRepo = {
+      findAndCount: jest.fn().mockResolvedValue([[], 0]),
+      count: jest.fn().mockResolvedValue(0),
+      countBy: jest.fn().mockResolvedValue(0),
+    };
+    mockAuditLogRepo = {
       findAndCount: jest.fn().mockResolvedValue([[], 0]),
     };
 
@@ -231,6 +238,7 @@ describe('AdminService', () => {
           provide: getRepositoryToken(PaymentWebhookEvent),
           useValue: mockWebhookEventRepo,
         },
+        { provide: getRepositoryToken(AuditLog), useValue: mockAuditLogRepo },
         { provide: DuffelService, useValue: duffelService },
         { provide: PaymobService, useValue: paymobService },
         { provide: BookingStateMachineService, useValue: stateMachine },
@@ -808,6 +816,114 @@ describe('AdminService', () => {
       await expect(
         service.updateMarkupRule(ADMIN_ID, 'missing', { is_active: true }),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ── metrics ───────────────────────────────────────────────────
+
+  describe('getMetrics', () => {
+    it('aggregates bookings by status, per-currency money, refund and user counts', async () => {
+      mockBookingRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn().mockResolvedValue([
+          { status: 'confirmed', count: '7' },
+          { status: 'cancelled', count: '2' },
+        ]),
+      });
+      mockBookingRepo.count = jest.fn().mockResolvedValue(1);
+      mockPaymentRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        getRawMany: jest
+          .fn()
+          .mockResolvedValue([{ currency: 'USD', charged: '500000' }]),
+      });
+      mockRefundRepo.createQueryBuilder = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        getRawMany: jest
+          .fn()
+          .mockResolvedValue([{ currency: 'USD', refunded: '95000' }]),
+      });
+      mockRefundRepo.countBy = jest
+        .fn()
+        .mockImplementation(({ status }: { status: RefundStatus }) =>
+          Promise.resolve(status === RefundStatus.Failed ? 3 : 1),
+        );
+      mockUserRepo.count.mockResolvedValue(42);
+      mockUserRepo.countBy.mockResolvedValue(40);
+
+      const result = await service.getMetrics();
+
+      expect(result).toEqual({
+        bookings: {
+          total: 9,
+          by_status: { confirmed: 7, cancelled: 2 },
+          pending_cancellation_requests: 1,
+        },
+        payments: [
+          {
+            currency: 'USD',
+            charged_amount: 500000,
+            refunded_amount: 95000,
+            net_amount: 405000,
+          },
+        ],
+        refunds: { pending_count: 1, failed_count: 3 },
+        users: { total: 42, active: 40 },
+      });
+    });
+  });
+
+  // ── audit logs ────────────────────────────────────────────────
+
+  describe('listAuditLogs', () => {
+    it('applies filters and maps rows with the actor email', async () => {
+      const row = {
+        id: 'log_001',
+        actorUserId: ADMIN_ID,
+        actorUser: { email: 'admin@example.com' },
+        action: 'booking.cancel',
+        entityType: 'booking',
+        entityId: 'booking_001',
+        metadata: { reason: 'complex fare' },
+        createdAt: new Date(),
+      };
+      mockAuditLogRepo.findAndCount.mockResolvedValue([[row], 1]);
+
+      const result = await service.listAuditLogs({
+        entity_type: 'booking',
+        entity_id: 'booking_001',
+        action: 'booking.cancel',
+        actor_user_id: ADMIN_ID,
+        limit: 5,
+      });
+
+      expect(mockAuditLogRepo.findAndCount).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            entityType: 'booking',
+            entityId: 'booking_001',
+            action: 'booking.cancel',
+            actorUserId: ADMIN_ID,
+          },
+          take: 5,
+        }),
+      );
+      expect(result.total).toBe(1);
+      expect(result.audit_logs[0]).toMatchObject({
+        id: 'log_001',
+        actor_email: 'admin@example.com',
+        action: 'booking.cancel',
+        entity_type: 'booking',
+        metadata: { reason: 'complex fare' },
+      });
     });
   });
 
