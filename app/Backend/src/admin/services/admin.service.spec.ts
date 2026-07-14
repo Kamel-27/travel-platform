@@ -102,6 +102,7 @@ describe('AdminService', () => {
     };
     mockPaymentRepo = {
       findOneBy: jest.fn().mockResolvedValue({ ...succeededPayment }),
+      findBy: jest.fn().mockResolvedValue([{ ...succeededPayment }]),
     };
     mockRefundRepo = {
       findBy: jest.fn().mockResolvedValue([]),
@@ -393,6 +394,9 @@ describe('AdminService', () => {
         user_email: 'customer@example.com',
         booking_reference: 'ABC123',
         total_amount: 105000,
+        // Payment rides along for the dashboard's manual-refund action.
+        payment_id: 'pay_001',
+        payment_status: PaymentStatus.Succeeded,
       });
     });
   });

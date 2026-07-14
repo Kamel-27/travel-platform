@@ -11,6 +11,7 @@ import type { Queue } from 'bullmq';
 import {
   EntityManager,
   FindOptionsWhere,
+  In,
   IsNull,
   LessThan,
   Not,
@@ -195,23 +196,38 @@ export class AdminService {
       skip: offset,
     });
 
+    // Payment id/status ride along so the dashboard can offer the manual
+    // refund action (POST /admin/payments/:id/refund) without extra calls.
+    // Payments are unique per booking (ux_payments_booking_id).
+    const payments = bookings.length
+      ? await this.paymentRepo.findBy({
+          bookingId: In(bookings.map((b) => b.id)),
+        })
+      : [];
+    const paymentByBookingId = new Map(payments.map((p) => [p.bookingId, p]));
+
     return {
-      bookings: bookings.map((b) => ({
-        id: b.id,
-        user_id: b.userId,
-        user_email: b.user?.email ?? null,
-        status: b.status,
-        booking_reference: b.bookingReference,
-        supplier_order_id: b.supplierOrderId,
-        base_amount: b.baseAmount,
-        markup_amount: b.markupAmount,
-        total_amount: b.totalAmount,
-        currency: b.currency,
-        cancellation_requested_at: b.cancellationRequestedAt,
-        cancellation_request_reason: b.cancellationRequestReason,
-        created_at: b.createdAt,
-        updated_at: b.updatedAt,
-      })),
+      bookings: bookings.map((b) => {
+        const payment = paymentByBookingId.get(b.id);
+        return {
+          id: b.id,
+          user_id: b.userId,
+          user_email: b.user?.email ?? null,
+          status: b.status,
+          booking_reference: b.bookingReference,
+          supplier_order_id: b.supplierOrderId,
+          base_amount: b.baseAmount,
+          markup_amount: b.markupAmount,
+          total_amount: b.totalAmount,
+          currency: b.currency,
+          payment_id: payment?.id ?? null,
+          payment_status: payment?.status ?? null,
+          cancellation_requested_at: b.cancellationRequestedAt,
+          cancellation_request_reason: b.cancellationRequestReason,
+          created_at: b.createdAt,
+          updated_at: b.updatedAt,
+        };
+      }),
       total,
       limit,
       offset,

@@ -218,6 +218,8 @@ export interface AdminBooking {
   markup_amount: number;
   total_amount: number;
   currency: string;
+  payment_id: string | null;
+  payment_status: string | null;
   cancellation_requested_at: string | null;
   cancellation_request_reason: string | null;
   created_at: string;
