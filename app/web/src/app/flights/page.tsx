@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import AirportInput from "@/components/AirportInput";
+import { useAuth } from "@/lib/auth-context";
 import { getAirportLabel } from "@/lib/airports";
 import { api, ApiError } from "@/lib/api-client";
 import { formatMoney } from "@/lib/money";
@@ -148,6 +149,9 @@ function OfferCard({ offer }: { offer: NormalizedOffer }) {
 function FlightsInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "technical_admin";
+  const dashboardPath = isAdmin ? "/admin" : "/user-dashboard";
 
   const initialOrigin = searchParams.get("origin") || "RUH";
   const initialDest = searchParams.get("destination") || "DXB";
@@ -266,7 +270,7 @@ function FlightsInner() {
           <Link href="/" className="font-headline-md text-headline-md font-bold text-primary">سفريات</Link>
           <nav className="flex items-center gap-md">
             <Link href="/manage-bookings" className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors">رحلاتي</Link>
-            <Link href="/user-dashboard" className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors">حسابي</Link>
+            <Link href={dashboardPath} className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors">حسابي</Link>
           </nav>
         </div>
       </header>

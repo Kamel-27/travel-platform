@@ -9,8 +9,9 @@ import { useAuth } from "@/lib/auth-context";
 export default function HomepagePage() {
 
   const router = useRouter();
-  const { isAuthenticated, logout } = useAuth();
-  const [activeTab, setActiveTab] = useState('flights');
+  const { user, isAuthenticated, logout } = useAuth();
+  const isAdmin = user?.role === "technical_admin";
+  const dashboardPath = isAdmin ? "/admin" : "/user-dashboard";
   const [flightOrigin, setFlightOrigin] = useState("RUH");
   const [flightDest, setFlightDest] = useState("DXB");
   const [tripType, setTripType] = useState<"one-way" | "round-trip">("round-trip");
@@ -51,8 +52,7 @@ export default function HomepagePage() {
 </Link>
 <nav className="hidden md:flex items-center gap-md">
 <Link className="text-primary dark:text-inverse-primary font-bold border-b-2 border-primary dark:border-inverse-primary pb-1 font-label-md text-label-md" href="/">رحلات طيران</Link>
-<Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary transition-colors font-label-md text-label-md" href="/hotels">فنادق</Link>
-<Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary transition-colors font-label-md text-label-md" href="/#offers">عروض</Link>
+<Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary transition-colors font-label-md text-label-md" href="/support">الدعم</Link>
 <Link className="text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary transition-colors font-label-md text-label-md" href="/manage-bookings">رحلاتي</Link>
 </nav>
 </div>
@@ -64,7 +64,7 @@ export default function HomepagePage() {
 </div>
 {isAuthenticated ? (
   <div className="flex items-center gap-sm">
-    <Link href="/user-dashboard" className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors">حسابي</Link>
+    <Link href={dashboardPath} className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors">حسابي</Link>
     <button onClick={() => logout()} className="bg-surface-container-high text-on-surface px-md py-2 rounded-lg font-label-md text-label-md hover:bg-surface-container-highest transition-all">
       تسجيل الخروج
     </button>
@@ -91,101 +91,58 @@ export default function HomepagePage() {
 </div>
 
 <div className="glass-effect rounded-xl shadow-2xl p-sm md:p-md max-w-5xl">
-<div className="flex gap-md mb-base border-b border-outline-variant/30 pb-sm">
-<button 
-  className={`flex items-center gap-xs pb-sm transition-all duration-200 cursor-pointer ${activeTab === 'flights' ? "text-primary font-bold border-b-2 border-primary" : "text-on-surface-variant hover:text-primary"}`} 
-  onClick={() => setActiveTab('flights')}
->
-<span className="material-symbols-outlined" data-icon="flight" data-weight="fill" style={{ fontVariationSettings: "'FILL' 1" }}>flight</span>
-<span className="font-label-md text-label-md">رحلات طيران</span>
-</button>
-<button 
-  className={`flex items-center gap-xs pb-sm transition-all duration-200 cursor-pointer ${activeTab === 'hotels' ? "text-primary font-bold border-b-2 border-primary" : "text-on-surface-variant hover:text-primary"}`} 
-  onClick={() => setActiveTab('hotels')}
->
-<span className="material-symbols-outlined" data-icon="hotel">hotel</span>
-<span className="font-label-md text-label-md">فنادق</span>
-</button>
+<div className="flex items-center gap-xs mb-base border-b border-outline-variant/30 pb-sm">
+<span className="material-symbols-outlined text-primary" data-icon="flight" data-weight="fill" style={{ fontVariationSettings: "'FILL' 1" }}>flight</span>
+<span className="font-label-md text-label-md text-primary font-bold">ابحث عن رحلتك</span>
 </div>
 
-{activeTab === 'flights' ? (
-  <div className="space-y-3">
-    <div className="flex gap-3">
-      <button type="button" onClick={() => { setTripType("one-way"); setFlightReturnDate(""); }}
-        className={`px-3 py-1 rounded-full font-label-sm text-label-sm transition-colors ${tripType === "one-way" ? "bg-primary text-on-primary" : "text-on-surface-variant hover:bg-surface-container-high"}`}>
-        ذهاب فقط
-      </button>
-      <button type="button" onClick={() => { setTripType("round-trip"); if (!flightReturnDate) setFlightReturnDate(weekLaterDate); }}
-        className={`px-3 py-1 rounded-full font-label-sm text-label-sm transition-colors ${tripType === "round-trip" ? "bg-primary text-on-primary" : "text-on-surface-variant hover:bg-surface-container-high"}`}>
-        ذهاب وعودة
-      </button>
+<div className="space-y-3">
+  <div className="flex gap-3">
+    <button type="button" onClick={() => { setTripType("one-way"); setFlightReturnDate(""); }}
+      className={`px-3 py-1 rounded-full font-label-sm text-label-sm transition-colors ${tripType === "one-way" ? "bg-primary text-on-primary" : "text-on-surface-variant hover:bg-surface-container-high"}`}>
+      ذهاب فقط
+    </button>
+    <button type="button" onClick={() => { setTripType("round-trip"); if (!flightReturnDate) setFlightReturnDate(weekLaterDate); }}
+      className={`px-3 py-1 rounded-full font-label-sm text-label-sm transition-colors ${tripType === "round-trip" ? "bg-primary text-on-primary" : "text-on-surface-variant hover:bg-surface-container-high"}`}>
+      ذهاب وعودة
+    </button>
+  </div>
+  <div className="grid grid-cols-1 md:grid-cols-12 gap-base items-end">
+    <div className="md:col-span-3 space-y-xs">
+      <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">من أين؟</label>
+      <AirportInput icon="flight_takeoff" value={flightOrigin} onChange={setFlightOrigin} placeholder="اختر مطار المغادرة" />
     </div>
-    <div className="grid grid-cols-1 md:grid-cols-12 gap-base items-end">
-      <div className="md:col-span-3 space-y-xs">
-        <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">من أين؟</label>
-        <AirportInput icon="flight_takeoff" value={flightOrigin} onChange={setFlightOrigin} placeholder="اختر مطار المغادرة" />
+    <div className="md:col-span-3 space-y-xs">
+      <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">إلى أين؟</label>
+      <AirportInput icon="flight_land" value={flightDest} onChange={setFlightDest} placeholder="اختر مطار الوصول" />
+    </div>
+    <div className={tripType === "round-trip" ? "md:col-span-2 space-y-xs" : "md:col-span-5 space-y-xs"}>
+      <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">{tripType === "round-trip" ? "الذهاب" : "التاريخ"}</label>
+      <div className="relative">
+        <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none">calendar_today</span>
+        <input type="date" min={todayStr} value={flightDate}
+          onChange={(e) => { setFlightDate(e.target.value); if (flightReturnDate && e.target.value > flightReturnDate) { const d = new Date(e.target.value); d.setDate(d.getDate() + 7); setFlightReturnDate(d.toISOString().split("T")[0]); } }}
+          className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 focus:border-primary focus:ring-0 font-body-md text-body-md transition-all" />
       </div>
-      <div className="md:col-span-3 space-y-xs">
-        <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">إلى أين؟</label>
-        <AirportInput icon="flight_land" value={flightDest} onChange={setFlightDest} placeholder="اختر مطار الوصول" />
-      </div>
-      <div className={tripType === "round-trip" ? "md:col-span-2 space-y-xs" : "md:col-span-5 space-y-xs"}>
-        <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">{tripType === "round-trip" ? "الذهاب" : "التاريخ"}</label>
+    </div>
+    {tripType === "round-trip" && (
+      <div className="md:col-span-2 space-y-xs">
+        <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">العودة</label>
         <div className="relative">
           <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none">calendar_today</span>
-          <input type="date" min={todayStr} value={flightDate}
-            onChange={(e) => { setFlightDate(e.target.value); if (flightReturnDate && e.target.value > flightReturnDate) { const d = new Date(e.target.value); d.setDate(d.getDate() + 7); setFlightReturnDate(d.toISOString().split("T")[0]); } }}
+          <input type="date" min={flightDate || todayStr} value={flightReturnDate}
+            onChange={(e) => setFlightReturnDate(e.target.value)}
             className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 focus:border-primary focus:ring-0 font-body-md text-body-md transition-all" />
         </div>
       </div>
-      {tripType === "round-trip" && (
-        <div className="md:col-span-2 space-y-xs">
-          <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">العودة</label>
-          <div className="relative">
-            <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none">calendar_today</span>
-            <input type="date" min={flightDate || todayStr} value={flightReturnDate}
-              onChange={(e) => setFlightReturnDate(e.target.value)}
-              className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 focus:border-primary focus:ring-0 font-body-md text-body-md transition-all" />
-          </div>
-        </div>
-      )}
-      <div className={tripType === "round-trip" ? "md:col-span-2" : "md:col-span-1"}>
-        <button onClick={handleFlightSearch} className="w-full h-[50px] bg-tertiary text-on-tertiary rounded-lg flex items-center justify-center hover:bg-tertiary-container transition-all active:scale-95 shadow-lg cursor-pointer">
-          <span className="material-symbols-outlined text-3xl">search</span>
-        </button>
-      </div>
+    )}
+    <div className={tripType === "round-trip" ? "md:col-span-2" : "md:col-span-1"}>
+      <button onClick={handleFlightSearch} className="w-full h-[50px] bg-tertiary text-on-tertiary rounded-lg flex items-center justify-center hover:bg-tertiary-container transition-all active:scale-95 shadow-lg cursor-pointer">
+        <span className="material-symbols-outlined text-3xl">search</span>
+      </button>
     </div>
   </div>
-) : (
-  <div className="grid grid-cols-1 md:grid-cols-12 gap-base items-end">
-    <div className="md:col-span-5 space-y-xs">
-      <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">الوجهة أو اسم الفندق</label>
-      <div className="relative">
-        <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline" data-icon="hotel">hotel</span>
-        <input className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 focus:border-primary focus:ring-0 font-body-md text-body-md transition-all" placeholder="دبي، الإمارات العربية المتحدة" type="text"/>
-      </div>
-    </div>
-    <div className="md:col-span-4 space-y-xs">
-      <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">تاريخ الدخول والمغادرة</label>
-      <div className="relative">
-        <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline" data-icon="calendar_today">date_range</span>
-        <input className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 focus:border-primary focus:ring-0 font-body-md text-body-md transition-all" placeholder="20 أكتوبر - 25 أكتوبر" type="text"/>
-      </div>
-    </div>
-    <div className="md:col-span-2 space-y-xs">
-      <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">الغرف والضيوف</label>
-      <div className="relative">
-        <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline" data-icon="group">group</span>
-        <input className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 focus:border-primary focus:ring-0 font-body-md text-body-md transition-all" placeholder="غرفة واحدة، ضيفين" type="text"/>
-      </div>
-    </div>
-    <div className="md:col-span-1">
-      <Link href="/hotels" className="w-full h-[50px] bg-tertiary text-on-tertiary rounded-lg flex items-center justify-center hover:bg-tertiary-container transition-all active:scale-95 shadow-lg">
-        <span className="material-symbols-outlined text-3xl" data-icon="search">search</span>
-      </Link>
-    </div>
-  </div>
-)}
+</div>
 </div>
 </div>
 </section>
@@ -239,84 +196,27 @@ export default function HomepagePage() {
 </div>
 </section>
 
-<section id="offers" className="bg-surface-container py-xl">
+<section id="features" className="bg-surface-container py-xl">
 <div className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-<div className="mb-lg">
-<h2 className="font-headline-lg text-headline-lg text-primary">عروض حصرية لفترة محدودة</h2>
-<p className="text-on-surface-variant font-body-md text-body-md">وفر أكثر مع باقاتنا المختارة بعناية</p>
+<div className="mb-lg text-center">
+<h2 className="font-headline-lg text-headline-lg text-primary">لماذا تختار سفريات؟</h2>
+<p className="text-on-surface-variant font-body-md text-body-md mt-xs">أدوات حجز متكاملة تجعل تجربة سفرك أسهل</p>
 </div>
 <div className="grid grid-cols-1 md:grid-cols-3 gap-lg">
-
-<div className="bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm border border-outline-variant hover:shadow-xl transition-shadow group">
-<div className="relative h-48">
-<img className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="The Eiffel Tower standing tall in Paris, France, viewed from a stylish cobblestone street lined with charming cafes. The morning light is soft and inviting, giving the scene a romantic and timeless quality. The palette includes warm neutrals and crisp blues, capturing the quintessentially chic Parisian atmosphere." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAU5MMPjP7PdW3qgh0cpxa5gFtKFUcv2FSFw5asTOmyeewhF5_vwAOQceQtkjX2dtZrIwphlFopFs0o84JA1STp6q0q_nE89xiMjEgdlxFjtlXc2JjShmO1qEz8GYaD19evz3NGQkzc9svBoKeSHyoSGG9vsqrQoAxy-TBd5P8cqzVexQprnGq3niDLXAwSct1WbVwXjN0auhWm0Yk6XAMEFBY5BQjiYGT5pPGk_RVe_AB8UdldDsopM-FTdqMzqT8N_xVZozz1Qn48"/>
-<div className="absolute top-sm left-sm bg-error text-on-error px-sm py-1 rounded-full font-label-sm text-label-sm">خصم 30%</div>
+<div className="bg-surface-container-lowest rounded-xl p-lg border border-outline-variant text-center space-y-sm">
+<span className="material-symbols-outlined text-primary text-5xl">flight_takeoff</span>
+<h4 className="font-title-lg text-title-lg text-on-surface">أسعار لحظية</h4>
+<p className="text-on-surface-variant font-body-md text-body-md">أسعار محدثة مباشرة من شركات الطيران بدون رسوم مخفية أو وسطاء.</p>
 </div>
-<div className="p-md space-y-sm">
-<div className="flex justify-between items-start">
-<div>
-<h4 className="font-title-lg text-title-lg text-on-surface">باريس، فرنسا</h4>
-<p className="text-on-surface-variant font-label-md text-label-md">تذكرة طيران + إقامة 5 ليالي</p>
+<div className="bg-surface-container-lowest rounded-xl p-lg border border-outline-variant text-center space-y-sm">
+<span className="material-symbols-outlined text-primary text-5xl">verified_user</span>
+<h4 className="font-title-lg text-title-lg text-on-surface">دفع آمن ومشفر</h4>
+<p className="text-on-surface-variant font-body-md text-body-md">جميع عمليات الدفع تتم عبر بوابات معتمدة مع تأكيد فوري للحجز.</p>
 </div>
-<div className="text-left">
-<span className="block text-error font-headline-md text-headline-md">$1,200</span>
-<span className="block text-outline line-through text-label-sm font-label-sm">$1,800</span>
-</div>
-</div>
-<div className="flex items-center gap-base text-on-surface-variant">
-<span className="material-symbols-outlined text-[18px]" data-icon="timer">timer</span>
-<span className="font-label-sm text-label-sm">ينتهي العرض خلال 3 أيام</span>
-</div>
-<Link href="/flights/details" className="block text-center w-full bg-secondary-container text-on-secondary-container py-2 rounded-lg font-bold hover:bg-primary hover:text-on-primary transition-all duration-300">احجز الآن</Link>
-</div>
-</div>
-
-<div className="bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm border border-outline-variant hover:shadow-xl transition-shadow group">
-<div className="relative h-48">
-<img className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="A wide landscape of Bangkok, Thailand, showing its majestic temples with ornate golden spires juxtaposed against a modern cityscape. The late afternoon lighting creates a vibrant, high-contrast effect. The image uses a rich color palette of gold, deep red, and sky blue to convey cultural richness and urban dynamism." src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8b3L3diKr-ssA1Le0WTbl5f7ofdbXZMufyZYgN4C2rBY7VCuqGn6E-54F4LNddWFzsxcuBpxLG2mIAfGgeYxQny0UpzkG3QMbNEHVY2yJBQMilOqsanB_r0BS30UKZ8bM-xC6rZe8dV7Syxxt3yH1yXGwkuvKuAsmaql9umR1cDQjgks23iFHpEN2OY70NSfEjUKLMr6vU5vE6lukwlRVxnkxvPJjIpJbKIuYQAJ5aonrb20AW2mHWkc7eXFd92owJ2aHlIkD-wQ3"/>
-<div className="absolute top-sm left-sm bg-tertiary text-on-tertiary px-sm py-1 rounded-full font-label-sm text-label-sm">الأكثر مبيعاً</div>
-</div>
-<div className="p-md space-y-sm">
-<div className="flex justify-between items-start">
-<div>
-<h4 className="font-title-lg text-title-lg text-on-surface">بانكوك، تايلاند</h4>
-<p className="text-on-surface-variant font-label-md text-label-md">باقة عائلية متكاملة</p>
-</div>
-<div className="text-left">
-<span className="block text-error font-headline-md text-headline-md">$850</span>
-<span className="block text-outline line-through text-label-sm font-label-sm">$1,100</span>
-</div>
-</div>
-<div className="flex items-center gap-base text-on-surface-variant">
-<span className="material-symbols-outlined text-[18px]" data-icon="timer">timer</span>
-<span className="font-label-sm text-label-sm">ينتهي العرض خلال 5 أيام</span>
-</div>
-<Link href="/flights/details" className="block text-center w-full bg-secondary-container text-on-secondary-container py-2 rounded-lg font-bold hover:bg-primary hover:text-on-primary transition-all duration-300">احجز الآن</Link>
-</div>
-</div>
-
-<div className="bg-surface-container-lowest rounded-xl overflow-hidden shadow-sm border border-outline-variant hover:shadow-xl transition-shadow group">
-<div className="relative h-48">
-<img className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="A cinematic view of the Swiss Alps, with snow-capped peaks rising into a clear blue sky. A luxury mountain chalet is nestled in the foreground, surrounded by evergreen trees. The lighting is crisp and cold, creating a pristine and high-end feel that emphasizes peace, exclusivity, and nature's grandeur." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCEAaAIOYf4HKNIwD9hDVqoKz_3Px0hFGWlzwJPSROaF2_Nf3J_yunVICn5tKQCwhsKRHue3fEq9qWNAG825dC9qUcffYKkYKMclybAq8EscTT9nC7C2_cUKMifSWKiDhXhncPd09V917Vx1mGDZeoi3UeDJbJ10FISFlKT6f4F4NLIkaVanvfY4JtSfuBlO88PtutgisS6jQ_ZGMrNq22bWaH2j-NCeCS126tn3W94wmRqh9MsZyNlH312Zoh0hnqgZij3U-2GNL-b"/>
-<div className="absolute top-sm left-sm bg-error text-on-error px-sm py-1 rounded-full font-label-sm text-label-sm">وفر $300</div>
-</div>
-<div className="p-md space-y-sm">
-<div className="flex justify-between items-start">
-<div>
-<h4 className="font-title-lg text-title-lg text-on-surface">زيورخ، سويسرا</h4>
-<p className="text-on-surface-variant font-label-md text-label-md">رحلة شتوية فاخرة</p>
-</div>
-<div className="text-left">
-<span className="block text-error font-headline-md text-headline-md">$1,550</span>
-<span className="block text-outline line-through text-label-sm font-label-sm">$1,850</span>
-</div>
-</div>
-<div className="flex items-center gap-base text-on-surface-variant">
-<span className="material-symbols-outlined text-[18px]" data-icon="timer">timer</span>
-<span className="font-label-sm text-label-sm">ينتهي العرض قريباً</span>
-</div>
-<Link href="/hotels/details" className="block text-center w-full bg-secondary-container text-on-secondary-container py-2 rounded-lg font-bold hover:bg-primary hover:text-on-primary transition-all duration-300">احجز الآن</Link>
-</div>
+<div className="bg-surface-container-lowest rounded-xl p-lg border border-outline-variant text-center space-y-sm">
+<span className="material-symbols-outlined text-primary text-5xl">support_agent</span>
+<h4 className="font-title-lg text-title-lg text-on-surface">دعم فني متواصل</h4>
+<p className="text-on-surface-variant font-body-md text-body-md">فريق دعم جاهز لمساعدتك في أي وقت مع سياسة إلغاء واسترداد واضحة.</p>
 </div>
 </div>
 </div>
@@ -339,9 +239,9 @@ export default function HomepagePage() {
 </section>
 
 <section className="py-xl px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-<h2 className="font-headline-lg text-headline-lg text-on-surface mb-base text-right">لماذا تحجز طيرانك وفندقك مع سفريات؟</h2>
+<h2 className="font-headline-lg text-headline-lg text-on-surface mb-base text-right">حجز تذاكر الطيران مع سفريات</h2>
 <p className="font-body-lg text-body-lg text-on-surface-variant mb-xl text-right">
-سفريات (Safariyat) منصة سفر عربية تتيح لك حجز تذاكر الطيران والفنادق أونلاين في دقائق. نقارن أسعار رحلات الطيران من مئات شركات الطيران حول العالم لنعرض عليك أفضل الخيارات، مع دفع إلكتروني آمن، تأكيد فوري للحجز، وتذكرة إلكترونية تصلك مباشرة. وإذا تغيرت خططك، نوفر سياسة إلغاء واسترداد واضحة ودعم عملاء على مدار الساعة.
+سفريات (Safariyat) منصة سفر عربية تتيح لك حجز تذاكر الطيران أونلاين في دقائق. نقارن أسعار رحلات الطيران من مئات شركات الطيران حول العالم لنعرض عليك أفضل الخيارات، مع دفع إلكتروني آمن، تأكيد فوري للحجز، وتذكرة إلكترونية تصلك مباشرة. وإذا تغيرت خططك، نوفر سياسة إلغاء واسترداد واضحة ودعم عملاء على مدار الساعة.
 </p>
 <h3 className="font-headline-md text-headline-md text-on-surface mb-md text-right">الأسئلة الشائعة</h3>
 <div className="space-y-base">
@@ -451,15 +351,15 @@ export default function HomepagePage() {
 <span className="material-symbols-outlined" data-icon="home" data-weight="fill" style={{ fontVariationSettings: "'FILL' 1" }}>home</span>
 <span className="font-label-sm text-label-sm">الرئيسية</span>
 </Link>
-<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/hotels">
-<span className="material-symbols-outlined" data-icon="explore">explore</span>
-<span className="font-label-sm text-label-sm">استكشف</span>
+<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/support">
+<span className="material-symbols-outlined" data-icon="support_agent">support_agent</span>
+<span className="font-label-sm text-label-sm">الدعم</span>
 </Link>
 <Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/manage-bookings">
 <span className="material-symbols-outlined" data-icon="airplane_ticket">airplane_ticket</span>
 <span className="font-label-sm text-label-sm">حجوزاتي</span>
 </Link>
-<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/user-dashboard">
+<Link className="flex flex-col items-center gap-xs text-on-surface-variant" href={dashboardPath}>
 <span className="material-symbols-outlined" data-icon="person">person</span>
 <span className="font-label-sm text-label-sm">حسابي</span>
 </Link>

@@ -28,7 +28,8 @@ function VerifyInner() {
         );
         if (cancelled) return;
         login(session);
-        router.replace(consumeReturnPath() || "/user-dashboard");
+        const fallback = session.user?.role === "technical_admin" ? "/admin" : "/user-dashboard";
+        router.replace(consumeReturnPath() || fallback);
       } catch (err) {
         if (cancelled) return;
         setStatus("error");
