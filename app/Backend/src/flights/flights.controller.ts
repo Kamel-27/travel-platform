@@ -18,6 +18,22 @@ export class FlightsController {
   constructor(private readonly flightsService: FlightsService) {}
 
   /**
+   * GET /flights/airports/search
+   * Autocomplete search for airports.
+   */
+  @Get('airports/search')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  async searchAirports(
+    @Query('query') query: string,
+  ): Promise<{ data: any[] }> {
+    const airports = await this.flightsService.searchAirports(query || '');
+    return {
+      data: airports,
+    };
+  }
+
+  /**
    * GET /flights/search
    * Search for flight offers based on origin, destination, dates, and passengers.
    * Public endpoint. Standard envelope.

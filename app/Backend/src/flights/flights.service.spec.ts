@@ -62,6 +62,7 @@ describe('FlightsService', () => {
           useValue: {
             search: jest.fn().mockResolvedValue(mockOffers),
             fetchOffer: jest.fn().mockResolvedValue(mockOffers[0]),
+            searchAirports: jest.fn().mockResolvedValue([]),
           },
         },
         {
@@ -148,6 +149,28 @@ describe('FlightsService', () => {
         expect(err.getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
         expect(err.getResponse().code).toBe(ErrorCode.RATE_LIMITED);
       }
+    });
+  });
+
+  describe('searchAirports', () => {
+    it('should delegate search to DuffelService', async () => {
+      const mockSuggestions = [
+        {
+          code: 'LHR',
+          city: 'London',
+          country: 'United Kingdom',
+          type: 'airport',
+          name: 'Heathrow',
+        },
+      ];
+      (duffelService.searchAirports as jest.Mock).mockResolvedValue(
+        mockSuggestions,
+      );
+
+      const result = await service.searchAirports('london');
+
+      expect(duffelService.searchAirports).toHaveBeenCalledWith('london');
+      expect(result).toEqual(mockSuggestions);
     });
   });
 });

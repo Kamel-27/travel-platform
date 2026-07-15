@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { searchAirports, getAirportLabel, type Airport } from "@/lib/airports";
+import { searchAirports, getAirportLabel, type Airport, AIRPORTS } from "@/lib/airports";
+import { api } from "@/lib/api-client";
 
 export default function AirportInput({
   icon,
@@ -16,8 +17,63 @@ export default function AirportInput({
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState<Airport[]>([]);
+  const [loading, setLoading] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const results = useMemo<Airport[]>(() => searchAirports(query), [query]);
+
+  // Debounced autocomplete fetch from backend
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSuggestions([]);
+      return;
+    }
+
+    setLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        interface SearchResult {
+          code: string;
+          city: string;
+          country: string;
+        }
+        const response = await api.get<{ data: SearchResult[] }>(
+          `/flights/airports/search?query=${encodeURIComponent(query)}`,
+          { skipAuth: true }
+        );
+        if (response && response.data) {
+          const apiAirports: Airport[] = response.data.map((item: SearchResult) => {
+            const localMatch = AIRPORTS.find((a) => a.code === item.code);
+            return {
+              code: item.code,
+              city: item.city,
+              cityAr: localMatch ? localMatch.cityAr : item.city,
+              country: item.country,
+              countryAr: localMatch ? localMatch.countryAr : item.country,
+            };
+          });
+          setSuggestions(apiAirports);
+        }
+      } catch (err) {
+        console.error("Error fetching airport suggestions:", err);
+      } finally {
+        setLoading(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const results = useMemo<Airport[]>(() => {
+    const localResults = searchAirports(query);
+    const combined = [...localResults];
+    suggestions.forEach((s) => {
+      if (!combined.some((c) => c.code === s.code)) {
+        combined.push(s);
+      }
+    });
+    return combined;
+  }, [query, suggestions]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -45,8 +101,18 @@ export default function AirportInput({
         }}
         placeholder={placeholder}
       />
-      {open && results.length > 0 && (
+      {open && (results.length > 0 || loading) && (
         <div className="absolute top-full left-0 right-0 mt-1 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
+          {loading && (
+            <div className="px-4 py-2.5 text-xs text-outline flex items-center gap-2 border-b border-outline-variant/30 bg-surface-container-low/30">
+              <div className="flex gap-0.5">
+                <span className="w-1.5 h-1.5 bg-[#0f766e] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1.5 h-1.5 bg-[#0f766e] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1.5 h-1.5 bg-[#0f766e] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+              <span className="mr-1">جاري البحث عن المطارات...</span>
+            </div>
+          )}
           {!query.trim() && (
             <div className="px-3 py-1.5 text-on-surface-variant font-label-sm text-label-sm border-b border-outline-variant/50">
               المطارات الشائعة
