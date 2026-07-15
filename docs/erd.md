@@ -276,6 +276,21 @@ Generic admin-action trail — satisfies the NFR that admin actions be auditable
 | metadata | JSON, nullable | Before/after values |
 | created_at | timestamp | |
 
+### LedgerEntry
+Append-only internal money-movement ledger — substitutes for Duffel's missing balance API (wallet balance is estimated from `supplier`-tagged entries and reconciled manually against provider dashboards). Written inside the same DB transaction as the lifecycle event it records.
+| Field | Type | Notes |
+|---|---|---|
+| id | PK | |
+| entry_type | enum | `customer_payment` (+), `gateway_refund` (−), `supplier_charge` (−), `supplier_refund` (+), `adjustment` (±) |
+| amount | integer | Signed minor units; sign encodes direction |
+| currency | char(3) | |
+| supplier | enum, nullable | Set on supplier-wallet movements (`duffel`); NULL on gateway-side entries |
+| payment_id | FK → Payment, nullable | ON DELETE SET NULL |
+| booking_id | FK → Booking, nullable | ON DELETE SET NULL |
+| refund_id | FK → Refund, nullable | ON DELETE SET NULL |
+| note | string, nullable | |
+| created_at | timestamptz | |
+
 ---
 
 ## Constraints & Indexes (consolidated)
@@ -303,6 +318,7 @@ Access-pattern indexes:
 - `Booking (booking_reference)` — support lookup by PNR
 - `MagicLinkToken (token_hash)` — verification hot path
 - `PaymentWebhookEvent (processed_at) WHERE processed_at IS NULL` — reprocessing worker (same on `SupplierWebhookEvent`)
+- `LedgerEntry (created_at)` and `LedgerEntry (booking_id)` — admin ledger list + per-booking lookup
 
 ---
 

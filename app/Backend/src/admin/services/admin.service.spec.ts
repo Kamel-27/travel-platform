@@ -15,6 +15,7 @@ import { DuffelService } from '../../duffel/duffel.service';
 import { PaymobService } from '../../payments/services/paymob.service';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
 import { RefundExecutionService } from '../../bookings/services/refund-execution.service';
+import { LedgerService } from '../../ledger/services/ledger.service';
 import { Booking, BookingStatus } from '../../bookings/entities/booking.entity';
 import {
   MarkupRule,
@@ -261,6 +262,13 @@ describe('AdminService', () => {
         // Real instance — it's the extracted-and-shared logic under test
         // here too, wired to the same mock repos/gateway/state-machine.
         RefundExecutionService,
+        {
+          provide: LedgerService,
+          useValue: {
+            createEntry: jest.fn().mockResolvedValue(undefined),
+            getSummary: jest.fn().mockResolvedValue([]),
+          },
+        },
       ],
     }).compile();
 
@@ -881,6 +889,9 @@ describe('AdminService', () => {
         ],
         refunds: { pending_count: 1, failed_count: 3 },
         users: { total: 42, active: 40 },
+        ledger: {
+          summary: [],
+        },
       });
     });
   });

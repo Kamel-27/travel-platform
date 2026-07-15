@@ -18,6 +18,7 @@ import { Payment } from '../payments/entities/payment.entity';
 import { Refund } from '../payments/entities/refund.entity';
 import { PaymentWebhookEvent } from '../payments/entities/payment-webhook-event.entity';
 import { PaymobModule } from '../payments/paymob.module';
+import { LedgerModule } from '../ledger/ledger.module';
 
 import { BookingsController } from './bookings.controller';
 import { DuffelWebhooksController } from './duffel-webhooks.controller';
@@ -55,6 +56,7 @@ import { TicketPdfService } from './services/ticket-pdf.service';
     AuthModule,
     DuffelModule,
     PaymobModule,
+    LedgerModule,
     BullModule.registerQueue(
       { name: 'order_fulfillment_queue' },
       { name: 'duffel_webhook_queue' },

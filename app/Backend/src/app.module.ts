@@ -15,6 +15,7 @@ import { FlightsModule } from './flights/flights.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { PaymentsModule } from './payments/payments.module';
 import { AdminModule } from './admin/admin.module';
+import { LedgerModule } from './ledger/ledger.module';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 
 @Module({
@@ -72,6 +73,7 @@ import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
     BookingsModule,
     PaymentsModule,
     AdminModule,
+    LedgerModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

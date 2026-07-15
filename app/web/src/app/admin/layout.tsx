@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-context";
 const NAV_ITEMS = [
   { href: "/admin", icon: "dashboard", label: "نظرة عامة" },
   { href: "/admin/bookings", icon: "airplane_ticket", label: "الحجوزات" },
+  { href: "/admin/ledger", icon: "account_balance_wallet", label: "دفتر الأستاذ" },
   { href: "/admin/refunds", icon: "currency_exchange", label: "الاستردادات" },
   { href: "/admin/users", icon: "group", label: "المستخدمون" },
   { href: "/admin/markup-rules", icon: "percent", label: "هامش الربح" },

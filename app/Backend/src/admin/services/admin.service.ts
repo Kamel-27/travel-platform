@@ -48,6 +48,8 @@ import { ListBookingsQueryDto } from '../dto/list-bookings-query.dto';
 import { ListRefundsQueryDto } from '../dto/list-refunds-query.dto';
 import { ListUsersQueryDto } from '../dto/list-users-query.dto';
 import { AuditLog } from '../entities/audit-log.entity';
+import { LedgerService } from '../../ledger/services/ledger.service';
+import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
 
 /** Bookings stuck in `paid` longer than this show up in the health report. */
 const STUCK_PAID_WINDOW_MS = 15 * 60 * 1000;
@@ -83,6 +85,7 @@ export class AdminService {
     private readonly orderFulfillmentQueue: Queue,
     @InjectQueue(REFUND_EXECUTION_QUEUE)
     private readonly refundExecutionQueue: Queue,
+    private readonly ledgerService: LedgerService,
   ) {}
 
   // ── Users ───────────────────────────────────────────────────────
@@ -311,6 +314,18 @@ export class AdminService {
             supplierRefundAmount,
           },
         );
+      }
+
+      if (supplierRefundAmount > 0) {
+        await this.ledgerService.createEntry(manager, {
+          entryType: LedgerEntryType.SupplierRefund,
+          amount: supplierRefundAmount,
+          currency: booking.currency,
+          supplier: booking.supplier,
+          bookingId: booking.id,
+          refundId: pendingRefund?.id ?? null,
+          note: 'Duffel order cancelled by admin',
+        });
       }
 
       await this.auditLogService.logAction(
@@ -771,6 +786,8 @@ export class AdminService {
       this.userRepo.countBy({ isActive: true }),
     ]);
 
+    const ledgerSummary = await this.ledgerService.getSummary();
+
     return {
       bookings: {
         total: totalBookings,
@@ -785,6 +802,9 @@ export class AdminService {
       users: {
         total: totalUsers,
         active: activeUsers,
+      },
+      ledger: {
+        summary: ledgerSummary,
       },
     };
   }

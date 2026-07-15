@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { api, ApiError } from "@/lib/api-client";
 import { formatMoney, decimalsForCurrency } from "@/lib/money";
 import { formatSystemTimestamp } from "@/lib/datetime";
@@ -26,15 +27,16 @@ interface CancelResult {
   customer_receives: { amount: number; currency: string };
 }
 
-export default function AdminBookingsPage() {
+function AdminBookingsPageInner() {
+  const searchParams = useSearchParams();
   const [bookings, setBookings] = useState<AdminBooking[]>([]);
   const [meta, setMeta] = useState<AdminListMeta>({ total: 0, limit: PAGE_SIZE, offset: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filters
+  // Filters (deep-linkable: /admin/bookings?reference=<PNR>)
   const [status, setStatus] = useState<BookingStatus | "">("");
-  const [reference, setReference] = useState("");
+  const [reference, setReference] = useState(searchParams.get("reference") ?? "");
   const [onlyCancellationRequests, setOnlyCancellationRequests] = useState(false);
   const [offset, setOffset] = useState(0);
 
@@ -72,7 +74,9 @@ export default function AdminBookingsPage() {
   }, [status, reference, onlyCancellationRequests, offset]);
 
   useEffect(() => {
-    void load();
+    void (async () => {
+      await load();
+    })();
   }, [load]);
 
   const submitCancel = async (e: React.FormEvent) => {
@@ -313,5 +317,13 @@ export default function AdminBookingsPage() {
         </div>
       )}
     </>
+  );
+}
+
+export default function AdminBookingsPage() {
+  return (
+    <Suspense fallback={<LoadingState label="جاري تحميل الحجوزات..." />}>
+      <AdminBookingsPageInner />
+    </Suspense>
   );
 }

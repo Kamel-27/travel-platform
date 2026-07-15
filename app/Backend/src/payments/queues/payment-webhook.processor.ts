@@ -16,6 +16,8 @@ import {
 import { Booking, BookingStatus } from '../../bookings/entities/booking.entity';
 import { BookingStateMachineService } from '../../bookings/services/booking-state-machine.service';
 import { toPaymobGatewayAmount } from '../services/paymob.service';
+import { LedgerService } from '../../ledger/services/ledger.service';
+import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
 import {
   getRequestId,
   runWithRequestId,
@@ -31,6 +33,7 @@ export class PaymentWebhookProcessor extends WorkerHost {
     private readonly stateMachine: BookingStateMachineService,
     @InjectQueue('order_fulfillment_queue')
     private readonly orderFulfillmentQueue: Queue,
+    private readonly ledgerService: LedgerService,
   ) {
     super();
   }
@@ -187,6 +190,16 @@ export class PaymentWebhookProcessor extends WorkerHost {
 
         await manager.save(PaymentAttempt, attempt);
         await manager.save(Payment, payment);
+
+        // Write customer payment to ledger
+        await this.ledgerService.createEntry(manager, {
+          entryType: LedgerEntryType.CustomerPayment,
+          amount: payment.amount,
+          currency: payment.currency,
+          paymentId: payment.id,
+          bookingId: booking.id,
+          note: 'Paymob payment succeeded',
+        });
 
         fulfillBookingId = booking.id;
       } else if (webhookEvent.eventType === 'transaction.failed') {

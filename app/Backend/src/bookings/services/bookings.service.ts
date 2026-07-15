@@ -32,6 +32,9 @@ import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
 import { MarkupService } from './markup.service';
 import { BookingStateMachineService } from './booking-state-machine.service';
 import { RefundExecutionService } from './refund-execution.service';
+import { Refund } from '../../payments/entities/refund.entity';
+import { LedgerService } from '../../ledger/services/ledger.service';
+import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
 import {
   REFUND_EXECUTION_JOB,
   REFUND_EXECUTION_QUEUE,
@@ -83,6 +86,7 @@ export class BookingsService {
     @InjectQueue(REFUND_EXECUTION_QUEUE)
     private readonly refundExecutionQueue: Queue,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    private readonly ledgerService: LedgerService,
   ) {}
 
   /**
@@ -727,18 +731,33 @@ export class BookingsService {
         cancelReason,
       );
 
-      if (customerReceivesAmount <= 0) {
-        // Fully non-refundable fare with zero markup — nothing to refund.
-        return null;
+      let pendingRefund: Refund | null = null;
+      if (customerReceivesAmount > 0) {
+        pendingRefund = await this.refundExecutionService.createPendingRefund(
+          manager,
+          {
+            paymentId: payment.id,
+            amount: customerReceivesAmount,
+            reason: cancelReason,
+            initiatedByUserId: user.sub,
+            supplierRefundAmount,
+          },
+        );
       }
 
-      return this.refundExecutionService.createPendingRefund(manager, {
-        paymentId: payment.id,
-        amount: customerReceivesAmount,
-        reason: cancelReason,
-        initiatedByUserId: user.sub,
-        supplierRefundAmount,
-      });
+      if (supplierRefundAmount > 0) {
+        await this.ledgerService.createEntry(manager, {
+          entryType: LedgerEntryType.SupplierRefund,
+          amount: supplierRefundAmount,
+          currency: booking.currency,
+          supplier: booking.supplier,
+          bookingId: booking.id,
+          refundId: pendingRefund?.id ?? null,
+          note: 'Duffel order cancelled',
+        });
+      }
+
+      return pendingRefund;
     });
 
     if (refund) {

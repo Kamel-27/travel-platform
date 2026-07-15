@@ -18,11 +18,14 @@ import {
   PassengerGender,
 } from '../entities/passenger.entity';
 import { Document } from '../entities/document.entity';
+import { LedgerService } from '../../ledger/services/ledger.service';
+import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
 import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
 import { Refund } from '../../payments/entities/refund.entity';
 
 describe('OrderFulfillmentService', () => {
   let service: OrderFulfillmentService;
+  let ledgerService: any;
   let duffelService: DuffelService;
   let stateMachine: BookingStateMachineService;
   let mockEntityManager: any;
@@ -142,10 +145,17 @@ describe('OrderFulfillmentService', () => {
           provide: EntityManager,
           useValue: mockEntityManager,
         },
+        {
+          provide: LedgerService,
+          useValue: {
+            createEntry: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<OrderFulfillmentService>(OrderFulfillmentService);
+    ledgerService = module.get(LedgerService);
     duffelService = module.get<DuffelService>(DuffelService);
     stateMachine = module.get<BookingStateMachineService>(
       BookingStateMachineService,
@@ -194,6 +204,18 @@ describe('OrderFulfillmentService', () => {
           type: 'electronic_ticket',
           uniqueIdentifier: '0123456789',
           supplierPassengerIds: ['pas_duffel_001'],
+        }),
+      );
+
+      // Verify the supplier charge hit the ledger with a negative base amount
+      expect(ledgerService.createEntry).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          entryType: LedgerEntryType.SupplierCharge,
+          amount: -100000,
+          currency: 'USD',
+          supplier: Supplier.Duffel,
+          bookingId: 'booking_001',
         }),
       );
     });
