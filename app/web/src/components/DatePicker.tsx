@@ -46,7 +46,8 @@ function formatToArabicDate(dateStr: string): string {
   const weekday = WEEKDAYS_AR[date.getDay()];
   const day = date.getDate();
   const month = MONTHS_AR[date.getMonth()];
-  return `${weekday}، ${day} ${month}`;
+  const year = date.getFullYear();
+  return `${weekday}، ${day} ${month} ${year}`;
 }
 
 export default function DatePicker({
@@ -57,7 +58,7 @@ export default function DatePicker({
   icon = "calendar_today",
 }: DatePickerProps) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   // Initialize display month to selected date or today
   const [currentDate, setCurrentDate] = useState(() => {
@@ -78,61 +79,133 @@ export default function DatePicker({
     }
   }
 
-  // Close popover when clicking outside
+  // Prevent scroll behind modal when open
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+    if (open) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
     }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [open]);
 
-  const currentYear = currentDate.getFullYear();
-  const currentMonth = currentDate.getMonth();
+  // Close modal when clicking outside of the modal card
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
+      setOpen(false);
+    }
+  };
 
-  // Calendar logic
+  // Month 1 Calculations (Current display month)
+  const year1 = currentDate.getFullYear();
+  const month1 = currentDate.getMonth();
+
+  // Month 2 Calculations (Next month)
+  const date2 = new Date(year1, month1 + 1, 1);
+  const year2 = date2.getFullYear();
+  const month2 = date2.getMonth();
+
+  // Calendar logic helpers
   const getDaysInMonth = (year: number, month: number) => {
     return new Date(year, month + 1, 0).getDate();
   };
 
   const getFirstDayOffset = (year: number, month: number) => {
     const day = new Date(year, month, 1).getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
-    // Saturday is start of week (index 0). Map day to offset:
+    // Saturday is start of week (index 0). Offset mapping:
     // Sat(6)->0, Sun(0)->1, Mon(1)->2, Tue(2)->3, Wed(3)->4, Thu(4)->5, Fri(5)->6
     return (day + 1) % 7;
   };
 
-  const totalDays = getDaysInMonth(currentYear, currentMonth);
-  const offset = getFirstDayOffset(currentYear, currentMonth);
-
   const handlePrevMonth = () => {
-    setCurrentDate(new Date(currentYear, currentMonth - 1, 1));
+    setCurrentDate(new Date(year1, month1 - 1, 1));
   };
 
   const handleNextMonth = () => {
-    setCurrentDate(new Date(currentYear, currentMonth + 1, 1));
+    setCurrentDate(new Date(year1, month1 + 1, 1));
   };
 
-  // Min date boundary check (disable navigation before minDate's month)
+  // Min date boundary check for chronological navigation
   const isPrevDisabled = (() => {
     if (!minDate) return false;
     const minParts = minDate.split("-");
     if (minParts.length !== 3) return false;
     const minYear = Number(minParts[0]);
     const minMonth = Number(minParts[1]) - 1;
-    return currentYear < minYear || (currentYear === minYear && currentMonth <= minMonth);
+    return year1 < minYear || (year1 === minYear && month1 <= minMonth);
   })();
 
   const todayStr = new Date().toISOString().split("T")[0];
   const displayValue = value ? formatToArabicDate(value) : "";
 
+  // Render Month Grid helper
+  const renderMonthGrid = (year: number, month: number) => {
+    const totalDays = getDaysInMonth(year, month);
+    const offset = getFirstDayOffset(year, month);
+
+    return (
+      <div className="grid grid-cols-7 gap-1 text-center">
+        {/* Weekday Headers */}
+        {WEEKDAY_HEADERS_AR.map((h, i) => (
+          <div key={i} className="text-[12px] text-text-secondary font-bold py-2">
+            {h}
+          </div>
+        ))}
+
+        {/* Empty Slots */}
+        {Array.from({ length: offset }).map((_, i) => (
+          <div key={`empty-${i}`} className="w-10 h-10" />
+        ))}
+
+        {/* Month Days */}
+        {Array.from({ length: totalDays }).map((_, i) => {
+          const dayNum = i + 1;
+          const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(
+            dayNum
+          ).padStart(2, "0")}`;
+
+          const isPast = minDate && dateStr < minDate;
+          const isSelected = value === dateStr;
+          const isToday = todayStr === dateStr;
+
+          return (
+            <button
+              key={dayNum}
+              type="button"
+              disabled={isPast || false}
+              onClick={() => {
+                onChange(dateStr);
+              }}
+              className={`w-10 h-10 flex items-center justify-center rounded-lg text-sm transition-all cursor-pointer font-semibold text-center
+                ${
+                  isSelected
+                    ? "bg-[#0f766e] text-white font-bold shadow-lg active:scale-95"
+                    : isToday
+                    ? "border border-[#0f766e] text-[#14b8a6] hover:bg-[#1f2b3d]"
+                    : "text-[#f1f5f9] hover:bg-[#1f2b3d]"
+                }
+                ${
+                  isPast
+                    ? "!text-text-muted cursor-not-allowed opacity-25 hover:bg-transparent"
+                    : ""
+                }
+              `}
+            >
+              {dayNum}
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
-    <div className="relative w-full" ref={ref}>
+    <div className="relative w-full">
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpen(true)}
         className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 hover:border-outline focus:border-primary focus:ring-0 font-body-md text-body-md transition-all text-right flex items-center relative cursor-pointer text-on-surface"
       >
         <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none !text-[20px]">
@@ -144,92 +217,95 @@ export default function DatePicker({
       </button>
 
       {open && (
-        <div className="absolute top-full right-0 mt-2 bg-[#1a2332] border border-[#1e3a5f] shadow-2xl rounded-xl p-4 z-[100] w-[310px]">
-          {/* Header */}
-          <div className="flex justify-between items-center mb-4">
-            <button
-              type="button"
-              onClick={handlePrevMonth}
-              disabled={isPrevDisabled}
-              className="p-1 hover:bg-[#1f2b3d] rounded-lg transition-colors disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer flex items-center justify-center text-on-surface"
-            >
-              <span className="material-symbols-outlined !text-[20px] font-bold">
-                chevron_right
-              </span>
-            </button>
-            <div className="font-title-md text-on-surface font-bold">
-              {MONTHS_AR[currentMonth]} {currentYear}
-            </div>
-            <button
-              type="button"
-              onClick={handleNextMonth}
-              className="p-1 hover:bg-[#1f2b3d] rounded-lg transition-colors cursor-pointer flex items-center justify-center text-on-surface"
-            >
-              <span className="material-symbols-outlined !text-[20px] font-bold">
-                chevron_left
-              </span>
-            </button>
-          </div>
-
-          {/* Weekday Headers */}
-          <div className="grid grid-cols-7 gap-1 text-center mb-2">
-            {WEEKDAY_HEADERS_AR.map((h, i) => (
-              <div
-                key={i}
-                className="text-[12px] text-text-secondary font-bold py-1"
-              >
-                {h}
+        <div
+          onClick={handleBackdropClick}
+          className="fixed inset-0 bg-[#0b1120]/80 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-in fade-in duration-200"
+        >
+          <div
+            ref={modalRef}
+            className="bg-[#1a2332] border border-[#1e3a5f] shadow-2xl rounded-2xl p-6 max-w-[700px] w-full relative animate-in fade-in zoom-in-95 duration-200 text-right"
+          >
+            {/* Modal Header */}
+            <div className="flex justify-between items-center mb-6 pb-4 border-b border-[#1e3a5f]/40">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[#14b8a6] !text-[22px]">
+                  calendar_today
+                </span>
+                <h3 className="font-bold text-lg text-white">اختر تاريخ السفر</h3>
               </div>
-            ))}
-          </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="p-1 hover:bg-[#1f2b3d] rounded-lg transition-colors cursor-pointer text-text-secondary hover:text-white flex items-center justify-center"
+              >
+                <span className="material-symbols-outlined !text-[22px]">close</span>
+              </button>
+            </div>
 
-          {/* Days Grid */}
-          <div className="grid grid-cols-7 gap-1 text-center">
-            {/* Empty Slots */}
-            {Array.from({ length: offset }).map((_, i) => (
-              <div key={`empty-${i}`} className="w-9 h-9" />
-            ))}
+            {/* Double-Month Grid Wrapper */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6 overflow-y-auto max-h-[400px] md:max-h-none">
+              {/* Right Month (Month 1: chronological first) */}
+              <div>
+                <div className="flex justify-between items-center mb-4 px-2">
+                  <button
+                    type="button"
+                    onClick={handlePrevMonth}
+                    disabled={isPrevDisabled}
+                    className="p-1.5 hover:bg-[#1f2b3d] rounded-lg transition-colors disabled:opacity-20 disabled:hover:bg-transparent cursor-pointer flex items-center justify-center text-white"
+                  >
+                    <span className="material-symbols-outlined !text-[20px] font-bold">
+                      chevron_right
+                    </span>
+                  </button>
+                  <div className="font-bold text-white text-base">
+                    {MONTHS_AR[month1]} {year1}
+                  </div>
+                  <div className="w-8" />
+                </div>
+                {renderMonthGrid(year1, month1)}
+              </div>
 
-            {/* Month Days */}
-            {Array.from({ length: totalDays }).map((_, i) => {
-              const dayNum = i + 1;
-              const dateStr = `${currentYear}-${String(currentMonth + 1).padStart(
-                2,
-                "0"
-              )}-${String(dayNum).padStart(2, "0")}`;
+              {/* Left Month (Month 2: chronological second) */}
+              <div>
+                <div className="flex justify-between items-center mb-4 px-2">
+                  <div className="w-8" />
+                  <div className="font-bold text-white text-base">
+                    {MONTHS_AR[month2]} {year2}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleNextMonth}
+                    className="p-1.5 hover:bg-[#1f2b3d] rounded-lg transition-colors cursor-pointer flex items-center justify-center text-white"
+                  >
+                    <span className="material-symbols-outlined !text-[20px] font-bold">
+                      chevron_left
+                    </span>
+                  </button>
+                </div>
+                {renderMonthGrid(year2, month2)}
+              </div>
+            </div>
 
-              const isPast = minDate && dateStr < minDate;
-              const isSelected = value === dateStr;
-              const isToday = todayStr === dateStr;
-
-              return (
-                <button
-                  key={dayNum}
-                  type="button"
-                  disabled={isPast || false}
-                  onClick={() => {
-                    onChange(dateStr);
-                    setOpen(false);
-                  }}
-                  className={`w-9 h-9 flex items-center justify-center rounded-lg text-sm transition-all cursor-pointer font-medium
-                    ${
-                      isSelected
-                        ? "bg-[#0f766e] text-white font-bold"
-                        : isToday
-                        ? "border border-[#0f766e] text-[#14b8a6] hover:bg-[#1f2b3d]"
-                        : "text-on-surface hover:bg-[#1f2b3d]"
-                    }
-                    ${
-                      isPast
-                        ? "!text-text-muted cursor-not-allowed opacity-35 hover:bg-transparent"
-                        : ""
-                    }
-                  `}
-                >
-                  {dayNum}
-                </button>
-              );
-            })}
+            {/* Modal Footer */}
+            <div className="flex flex-col sm:flex-row justify-between items-center pt-4 border-t border-[#1e3a5f]/40 gap-4">
+              <div className="text-sm text-text-secondary text-right">
+                {value ? (
+                  <span>
+                    التاريخ المحدد:{" "}
+                    <strong className="text-[#14b8a6]">{formatToArabicDate(value)}</strong>
+                  </span>
+                ) : (
+                  <span>لم يتم تحديد تاريخ بعد</span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="w-full sm:w-auto bg-[#0f766e] hover:bg-[#0d5c56] text-white px-8 py-2.5 rounded-xl font-bold shadow-md cursor-pointer transition-colors text-center"
+              >
+                تأكيد التاريخ
+              </button>
+            </div>
           </div>
         </div>
       )}
