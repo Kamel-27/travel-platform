@@ -31,7 +31,9 @@ export default function AdminMarkupRulesPage() {
   }, []);
 
   useEffect(() => {
-    void load();
+    void (async () => {
+      await load();
+    })();
   }, [load]);
 
   const createRule = async (e: React.FormEvent) => {

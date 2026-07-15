@@ -42,7 +42,9 @@ export default function AdminRefundsPage() {
   }, [status, offset]);
 
   useEffect(() => {
-    void load();
+    void (async () => {
+      await load();
+    })();
   }, [load]);
 
   const retry = async (refund: AdminRefund) => {

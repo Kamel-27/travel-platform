@@ -44,7 +44,9 @@ export default function AdminAuditLogsPage() {
   }, [entityType, entityId, offset]);
 
   useEffect(() => {
-    void load();
+    void (async () => {
+      await load();
+    })();
   }, [load]);
 
   return (

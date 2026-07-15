@@ -36,7 +36,9 @@ export default function AdminUsersPage() {
   }, [email, offset]);
 
   useEffect(() => {
-    void load();
+    void (async () => {
+      await load();
+    })();
   }, [load]);
 
   const toggleActive = async (u: AdminUser) => {
