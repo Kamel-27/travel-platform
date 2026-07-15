@@ -19,9 +19,10 @@ function CallbackInner() {
 
   useEffect(() => {
     if (!error && !isLoading && isAuthenticated) {
-      router.replace(consumeReturnPath() || "/user-dashboard");
+      const fallback = user?.role === "technical_admin" ? "/admin" : "/user-dashboard";
+      router.replace(consumeReturnPath() || fallback);
     }
-  }, [error, isLoading, isAuthenticated, router]);
+  }, [error, isLoading, isAuthenticated, router, user]);
 
   if (error) {
     return (

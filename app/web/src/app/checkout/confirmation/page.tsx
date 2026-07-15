@@ -4,6 +4,7 @@ import { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { api, apiFetchBlob, ApiError } from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
 import { formatFlightTime, formatFlightDate, formatIsoDuration } from "@/lib/datetime";
 import { getAirportLabel } from "@/lib/airports";
 import type { Booking } from "@/lib/types";
@@ -41,6 +42,9 @@ function generateConfetti(): ConfettiPiece[] {
 function ConfirmationInner() {
   const searchParams = useSearchParams();
   const bookingId = searchParams.get("booking_id");
+  const { user } = useAuth();
+  const isAdmin = user?.role === "technical_admin";
+  const dashboardPath = isAdmin ? "/admin" : "/user-dashboard";
 
   const [booking, setBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(true);
@@ -445,7 +449,7 @@ function ConfirmationInner() {
                 
                 {/* Secondary Links */}
                 <Link 
-                  href="/user-dashboard" 
+                  href={dashboardPath} 
                   className="flex items-center justify-center gap-xs font-label-md text-label-md text-primary font-bold hover:underline cursor-pointer py-xs"
                 >
                   <span className="material-symbols-outlined text-lg">dashboard</span>

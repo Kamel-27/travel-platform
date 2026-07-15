@@ -195,9 +195,6 @@ export default function ManageBookingsPage() {
               <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/">
                 رحلات طيران
               </Link>
-              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/hotels">
-                فنادق
-              </Link>
               <Link className="text-primary dark:text-inverse-primary font-bold border-b-2 border-primary dark:border-inverse-primary pb-1 font-label-md text-label-md" href="/manage-bookings">
                 رحلاتي
               </Link>
@@ -339,15 +336,15 @@ export default function ManageBookingsPage() {
       {/* Cancellation Quote Modal */}
       {cancellingBooking && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" dir="rtl">
-          <div className="bg-[#0b1120] text-white border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-fade-in-up">
-            <header className="p-md border-b border-white/10 flex justify-between items-center">
+          <div className="bg-surface-container-lowest text-on-surface border border-outline-variant rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-fade-in-up">
+            <header className="p-md border-b border-outline-variant/30 flex justify-between items-center">
               <h3 className="font-title-lg font-bold flex items-center gap-xs">
                 <span className="material-symbols-outlined text-red-500">warning</span>
                 <span>إلغاء حجز الطيران</span>
               </h3>
               <button
                 onClick={() => setCancellingBooking(null)}
-                className="text-white/60 hover:text-white bg-transparent border-0 cursor-pointer"
+                className="text-on-surface-variant hover:text-on-surface bg-transparent border-0 cursor-pointer"
               >
                 <span className="material-symbols-outlined">close</span>
               </button>
@@ -355,7 +352,7 @@ export default function ManageBookingsPage() {
 
             <form onSubmit={handleCancelSubmit} className="p-md space-y-md">
               {loadingQuote ? (
-                <div className="py-xl text-center text-white/60 flex flex-col items-center gap-base">
+                <div className="py-xl text-center text-on-surface-variant flex flex-col items-center gap-base">
                   <span className="material-symbols-outlined text-3xl animate-spin">progress_activity</span>
                   <p>جاري احتساب سياسة استرداد المبلغ...</p>
                 </div>
@@ -365,23 +362,23 @@ export default function ManageBookingsPage() {
                 </div>
               ) : quote ? (
                 <div className="space-y-md">
-                  <div className="bg-white/5 p-md rounded-xl border border-white/10 space-y-xs text-sm text-white/80">
+                  <div className="bg-surface-container-low p-md rounded-xl border border-outline-variant/30 space-y-xs text-sm text-on-surface-variant">
                     <div className="flex justify-between">
                       <span>إجمالي سعر الحجز الأصلي:</span>
                       <span className="font-bold">{formatMoney(cancellingBooking.total_amount, cancellingBooking.currency)}</span>
                     </div>
-                    <div className="flex justify-between text-red-400">
+                    <div className="flex justify-between text-red-500">
                       <span>رسوم الغرامة المفروضة:</span>
                       <span className="font-bold">{quote.penalty ? formatMoney(quote.penalty.amount, quote.penalty.currency) : "مجهول / لا يوجد"}</span>
                     </div>
-                    <div className="flex justify-between text-teal-400 font-bold text-base border-t border-white/10 pt-xs mt-xs">
+                    <div className="flex justify-between text-primary font-bold text-base border-t border-outline-variant/30 pt-xs mt-xs">
                       <span>المبلغ المسترد إليك:</span>
                       <span>{quote.customer_receives ? formatMoney(quote.customer_receives.amount, quote.customer_receives.currency) : "كامل المبلغ"}</span>
                     </div>
                   </div>
 
                   {!isAdmin && quote.requires_admin && (
-                    <div className="bg-orange-500/10 border border-orange-500/20 text-orange-400 p-md rounded-xl text-xs leading-relaxed flex gap-base items-start">
+                    <div className="bg-orange-500/10 border border-orange-500/20 text-orange-600 p-md rounded-xl text-xs leading-relaxed flex gap-base items-start">
                       <span className="material-symbols-outlined shrink-0 mt-0.5">info</span>
                       <p>
                         <strong>ملاحظة هامة:</strong> هذا الحجز يتطلب مراجعة يدوية من قبل الدعم الفني لإكمال عملية الاسترجاع. سيتم تسجيل طلبك ومراجعته خلال 24 ساعة.
@@ -399,11 +396,11 @@ export default function ManageBookingsPage() {
                   )}
 
                   <div className="space-y-xs">
-                    <label className="text-sm text-white/60 block">سبب إلغاء الحجز:</label>
+                    <label className="text-sm text-on-surface-variant block">سبب إلغاء الحجز:</label>
                     <select
                       value={cancelReason}
                       onChange={(e) => setCancelReason(e.target.value)}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg p-md text-white font-label-md"
+                      className="w-full bg-surface-container-low border border-outline-variant rounded-lg p-md text-on-surface font-label-md"
                     >
                       <option value="customer_cancel">تغيير في خطة السفر</option>
                       <option value="medical_reason">أسباب طبية طارئة</option>
@@ -415,16 +412,16 @@ export default function ManageBookingsPage() {
               ) : null}
 
               {cancelSuccessMsg && (
-                <div className="bg-teal-500/10 border border-teal-500/30 text-teal-400 p-md rounded-xl text-center text-sm font-bold animate-pulse">
+                <div className="bg-teal-500/10 border border-teal-500/30 text-teal-600 p-md rounded-xl text-center text-sm font-bold animate-pulse">
                   {cancelSuccessMsg}
                 </div>
               )}
 
-              <footer className="flex justify-end gap-sm pt-md border-t border-white/10">
+              <footer className="flex justify-end gap-sm pt-md border-t border-outline-variant/30">
                 <button
                   type="button"
                   onClick={() => setCancellingBooking(null)}
-                  className="bg-transparent border border-white/10 hover:bg-white/5 text-white font-label-md px-md py-base rounded-lg cursor-pointer"
+                  className="bg-transparent border border-outline-variant hover:bg-surface-container-low text-on-surface font-label-md px-md py-base rounded-lg cursor-pointer"
                 >
                   تراجع
                 </button>

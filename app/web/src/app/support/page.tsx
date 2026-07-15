@@ -2,19 +2,18 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useAuth } from "@/lib/auth-context";
 
 interface FileItem {
   name: string;
   size: string;
 }
 
-interface Message {
-  sender: "user" | "bot";
-  text: string;
-  time: string;
-}
-
 export default function HelpSupportPage() {
+  const { user, isAuthenticated, logout } = useAuth();
+  const isAdmin = user?.role === "technical_admin";
+  const dashboardPath = isAdmin ? "/admin" : "/user-dashboard";
+
   // FAQ Accordion State
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
@@ -24,17 +23,6 @@ export default function HelpSupportPage() {
   const [description, setDescription] = useState("");
   const [attachments, setAttachments] = useState<FileItem[]>([]);
   const [submitted, setSubmitted] = useState(false);
-
-  // AI Chatbot State
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [chatInput, setChatInput] = useState("");
-  const [chatMessages, setChatMessages] = useState<Message[]>([
-    {
-      sender: "bot",
-      text: "أهلاً بك في سفريات! أنا مساعدك الذكي المتصل بالذكاء الاصطناعي. كيف يمكنني مساعدتك اليوم؟",
-      time: "الآن",
-    },
-  ]);
 
   // Drag and Drop simulation
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -79,50 +67,7 @@ export default function HelpSupportPage() {
     }, 2000);
   };
 
-  // Chat message submission
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim()) return;
 
-    const userMsg = chatInput;
-    const timeNow = new Date().toLocaleTimeString("ar-SA", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
-    const userMessage: Message = {
-      sender: "user",
-      text: userMsg,
-      time: timeNow,
-    };
-
-    setChatMessages((prev) => [...prev, userMessage]);
-    setChatInput("");
-
-    // Simulate AI response delay
-    setTimeout(() => {
-      let botResponse = "شكرًا لتواصلك معنا. يقوم النظام حالياً بالبحث في قاعدة بيانات الحجوزات الخاصة بك للإجابة بدقة.";
-      
-      if (userMsg.includes("حجز") || userMsg.includes("إلغاء")) {
-        botResponse = "لإلغاء حجزك أو استرداد قيمته، يمكنك استخدام نموذج فتح التذكرة على هذه الصفحة برقم حجزك، أو التوجه إلى قسم 'رحلاتي' لتقديم طلب إلغاء فوري.";
-      } else if (userMsg.includes("تعديل") || userMsg.includes("اسم")) {
-        botResponse = "تعديل الأسماء أو البيانات الشخصية يخضع لسياسات شركات الطيران. يرجى تزويدنا برقم حجزك وصورة من جواز السفر عبر نموذج التذاكر للقيام بالتحديث فوراً وبدون رسوم إضافية إن أمكن.";
-      } else if (userMsg.includes("أمتعة") || userMsg.includes("وزن") || userMsg.includes("حقيبة")) {
-        botResponse = "يمكنك إضافة أمتعة وحقائب إضافية بخصم يصل إلى 40% قبل موعد إقلاع رحلتك بـ 24 ساعة من خلال لوحة التحكم الخاصة بالحجز في قسم 'رحلاتي'.";
-      } else if (userMsg.includes("مرحبا") || userMsg.includes("أهلاً") || userMsg.includes("السلام")) {
-        botResponse = "أهلاً بك! أنا هنا لمساعدتك في أي استفسار يخص رحلاتك، فنادقك، أو الدفع والتعويضات. كيف يمكنني خدمتك؟";
-      }
-
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          sender: "bot",
-          text: botResponse,
-          time: timeNow,
-        },
-      ]);
-    }, 1000);
-  };
 
   const toggleFaq = (index: number) => {
     setOpenFaq(openFaq === index ? null : index);
@@ -160,9 +105,6 @@ export default function HelpSupportPage() {
               <Link className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/">
                 رحلات طيران
               </Link>
-              <Link className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/hotels">
-                فنادق
-              </Link>
               <Link className="font-label-md text-label-md text-primary font-bold transition-colors" href="/support">
                 مركز المساعدة
               </Link>
@@ -172,13 +114,22 @@ export default function HelpSupportPage() {
             </nav>
           </div>
           <div className="flex items-center gap-md">
-            <div className="hidden md:flex items-center gap-sm">
+            <div className="hidden md:flex items-center gap-sm text-on-surface-variant">
               <span className="material-symbols-outlined text-outline">language</span>
-              <span className="font-label-md text-label-md">USD / AR</span>
+              <span className="font-label-md text-label-md px-2">USD / AR</span>
             </div>
-            <Link href="/signin" className="bg-primary text-white px-md py-xs rounded-lg font-label-md text-label-md scale-98 active:scale-95 transition-transform duration-200">
-              تسجيل الدخول
-            </Link>
+            {isAuthenticated ? (
+              <div className="flex items-center gap-sm">
+                <Link href={dashboardPath} className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors">حسابي</Link>
+                <button onClick={() => logout()} className="bg-surface-container-high text-on-surface px-md py-2 rounded-lg font-label-md text-label-md hover:bg-surface-container-highest transition-all">
+                  تسجيل الخروج
+                </button>
+              </div>
+            ) : (
+              <Link href="/signin" className="bg-primary text-white px-md py-xs rounded-lg font-label-md text-label-md scale-98 active:scale-95 transition-transform duration-200">
+                تسجيل الدخول
+              </Link>
+            )}
           </div>
         </div>
       </header>
@@ -409,103 +360,7 @@ export default function HelpSupportPage() {
         </div>
       </main>
 
-      {/* Floating UI: Chat with AI */}
-      <div className="fixed bottom-6 left-6 z-[9999] font-sans">
-        {/* Toggle Widget */}
-        {!isChatOpen && (
-          <div
-            onClick={() => setIsChatOpen(true)}
-            className="bg-white/95 dark:bg-zinc-900/95 p-3 rounded-2xl shadow-xl flex items-center gap-md border border-outline-variant hover:border-primary hover:scale-[1.03] transition-all cursor-pointer group"
-          >
-            <div className="relative">
-              <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-white" style={{ fontVariationSettings: "'FILL' 1" }}>
-                  smart_toy
-                </span>
-              </div>
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-white rounded-full animate-pulse"></div>
-            </div>
-            <div className="hidden sm:block pl-2">
-              <p className="font-label-md text-on-surface leading-none font-bold">تحدث مع المساعد الذكي</p>
-              <p className="text-label-sm text-green-600 mt-1 font-medium flex items-center gap-1">
-                <span>متصل الآن - استجابة فورية</span>
-              </p>
-            </div>
-            <span className="material-symbols-outlined text-outline group-hover:text-primary mr-base text-lg transition-transform group-hover:-translate-x-1">
-              arrow_back_ios
-            </span>
-          </div>
-        )}
 
-        {/* Chat Window Dialog */}
-        {isChatOpen && (
-          <div className="w-[360px] sm:w-[400px] h-[500px] bg-white rounded-2xl shadow-2xl border border-outline-variant flex flex-col overflow-hidden animate-fade-in text-on-surface">
-            {/* Chat Header */}
-            <div className="bg-primary text-white p-4 flex justify-between items-center shrink-0 shadow-md">
-              <div className="flex items-center gap-sm">
-                <div className="relative">
-                  <div className="w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center">
-                    <span className="material-symbols-outlined text-white" style={{ fontVariationSettings: "'FILL' 1" }}>
-                      smart_toy
-                    </span>
-                  </div>
-                  <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-green-400 border-2 border-primary rounded-full"></span>
-                </div>
-                <div>
-                  <p className="font-bold text-base leading-tight">المساعد الذكي لسفريات</p>
-                  <p className="text-[11px] text-green-200">يجيبك فوراً بالذكاء الاصطناعي</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsChatOpen(false)}
-                className="text-white hover:bg-white/10 p-1.5 rounded-full flex items-center justify-center transition-colors"
-              >
-                <span className="material-symbols-outlined">close</span>
-              </button>
-            </div>
-
-            {/* Chat Messages */}
-            <div className="flex-1 p-4 overflow-y-auto bg-surface-container-low space-y-md flex flex-col">
-              {chatMessages.map((msg, index) => (
-                <div
-                  key={index}
-                  className={`flex flex-col max-w-[80%] ${
-                    msg.sender === "user" ? "self-start items-start" : "self-end items-end"
-                  }`}
-                >
-                  <div
-                    className={`p-3 rounded-2xl text-[14px] leading-relaxed shadow-sm ${
-                      msg.sender === "user"
-                        ? "bg-primary text-white rounded-tr-none"
-                        : "bg-white text-on-surface rounded-tl-none border border-outline-variant/40"
-                    }`}
-                  >
-                    <p className="whitespace-pre-line">{msg.text}</p>
-                  </div>
-                  <span className="text-[10px] text-outline mt-1 px-1">{msg.time}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Chat Input Footer */}
-            <form onSubmit={handleSendMessage} className="p-3 bg-white border-t border-outline-variant flex gap-sm shrink-0">
-              <input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="اكتب رسالتك هنا..."
-                className="flex-1 bg-surface-container border border-outline-variant rounded-xl px-4 text-[14px] focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
-                type="text"
-              />
-              <button
-                type="submit"
-                className="w-10 h-10 bg-primary text-white rounded-xl flex items-center justify-center shadow hover:bg-primary/90 transition-all active:scale-95 shrink-0 cursor-pointer"
-              >
-                <span className="material-symbols-outlined text-[20px] rotate-180">send</span>
-              </button>
-            </form>
-          </div>
-        )}
-      </div>
 
       {/* Footer */}
       <footer className="w-full py-lg px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto flex flex-col md:flex-row justify-between items-center gap-base bg-surface-container border-t border-outline-variant">
