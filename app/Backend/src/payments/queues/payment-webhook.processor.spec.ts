@@ -12,9 +12,12 @@ import {
   PaymentAttemptStatus,
 } from '../entities/payment-attempt.entity';
 import { PaymentWebhookEvent } from '../entities/payment-webhook-event.entity';
+import { LedgerService } from '../../ledger/services/ledger.service';
+import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
 
 describe('PaymentWebhookProcessor', () => {
   let processor: PaymentWebhookProcessor;
+  let ledgerService: any;
   let stateMachine: BookingStateMachineService;
   let mockEntityManager: any;
   let mockEventQueryBuilder: any;
@@ -52,6 +55,8 @@ describe('PaymentWebhookProcessor', () => {
     id: 'pay_123',
     bookingId: 'booking_123',
     status: PaymentStatus.Pending,
+    amount: 10500,
+    currency: 'EGP',
   };
 
   const mockBooking = {
@@ -125,10 +130,17 @@ describe('PaymentWebhookProcessor', () => {
           provide: getQueueToken('order_fulfillment_queue'),
           useValue: mockOrderFulfillmentQueue,
         },
+        {
+          provide: LedgerService,
+          useValue: {
+            createEntry: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
     processor = module.get<PaymentWebhookProcessor>(PaymentWebhookProcessor);
+    ledgerService = module.get(LedgerService);
     stateMachine = module.get<BookingStateMachineService>(
       BookingStateMachineService,
     );
@@ -158,6 +170,18 @@ describe('PaymentWebhookProcessor', () => {
     expect(mockEntityManager.save).toHaveBeenCalledWith(
       PaymentWebhookEvent,
       expect.objectContaining({ processedAt: expect.any(Date) }),
+    );
+
+    // Verify the customer payment was recorded in the ledger (positive amount)
+    expect(ledgerService.createEntry).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        entryType: LedgerEntryType.CustomerPayment,
+        amount: 10500,
+        currency: 'EGP',
+        paymentId: 'pay_123',
+        bookingId: 'booking_123',
+      }),
     );
 
     // Verify order fulfillment job was enqueued after T4 — requestId is a

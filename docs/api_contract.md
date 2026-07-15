@@ -132,5 +132,8 @@ Duplicate delivery → `200` (unique-violation caught, acked, not reprocessed). 
 | `GET /admin/health/duffel` | Auth status, recent error rate, outbound rate-limit headroom, webhook processing lag, count of bookings stuck in `paid` |
 | `GET /admin/metrics` | Overview dashboard: bookings by status (+ pending cancellation requests), charged/refunded/net per currency, pending/failed refund counts, user counts |
 | `GET /admin/audit-logs?entity_type=&entity_id=&action=&actor_user_id=` | Read side of the audit trail, newest first, with actor email |
+| `GET /admin/ledger?entry_type=&currency=&booking_id=&limit=&offset=` | Internal money-movement ledger (`customer_payment` / `gateway_refund` / `supplier_charge` / `supplier_refund` / `adjustment`), newest first; amounts in integer minor units, signed (inflow +, outflow −) |
+| `GET /admin/ledger/summary` | Per-currency `{net_position, duffel_wallet_estimate}` — wallet estimate = sum of `supplier`-tagged entries; substitutes for Duffel's missing balance API, reconcile vs dashboards manually |
+| `POST /admin/ledger/adjustment` | Manual reconciliation entry `{amount, currency, supplier?, booking_id?, note}` (signed minor units); writes an `AuditLog` row |
 
 Every admin mutation writes an `AuditLog` row — enforced in the service layer, not optional per endpoint.

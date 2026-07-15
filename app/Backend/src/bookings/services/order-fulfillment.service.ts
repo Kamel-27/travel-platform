@@ -16,6 +16,8 @@ import { Passenger, PassengerType } from '../entities/passenger.entity';
 import { Document } from '../entities/document.entity';
 import { Payment } from '../../payments/entities/payment.entity';
 import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
+import { LedgerService } from '../../ledger/services/ledger.service';
+import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
 
 @Injectable()
 export class OrderFulfillmentService {
@@ -26,6 +28,7 @@ export class OrderFulfillmentService {
     private readonly entityManager: EntityManager,
     private readonly duffelService: DuffelService,
     private readonly stateMachine: BookingStateMachineService,
+    private readonly ledgerService: LedgerService,
   ) {}
 
   /**
@@ -141,6 +144,16 @@ export class OrderFulfillmentService {
         null, // system transition
         'Duffel order created successfully',
       );
+
+      // Record supplier charge
+      await this.ledgerService.createEntry(manager, {
+        entryType: LedgerEntryType.SupplierCharge,
+        amount: -booking.baseAmount, // negative amount
+        currency: booking.currency,
+        supplier: booking.supplier,
+        bookingId: booking.id,
+        note: 'Duffel order created successfully',
+      });
 
       // Create Document rows from e-ticket data
       for (const doc of orderResult.documents) {

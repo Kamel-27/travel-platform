@@ -16,6 +16,7 @@ import { Refund } from '../payments/entities/refund.entity';
 import { PaymentWebhookEvent } from '../payments/entities/payment-webhook-event.entity';
 import { AuditLog } from './entities/audit-log.entity';
 import { REFUND_EXECUTION_QUEUE } from '../bookings/queues/refund-execution.queue';
+import { LedgerModule } from '../ledger/ledger.module';
 
 import { AdminController } from './admin.controller';
 import { AdminService } from './services/admin.service';
@@ -37,6 +38,7 @@ import { AuditLogService } from './services/audit-log.service';
     BookingsModule,
     PaymentsModule,
     DuffelModule,
+    LedgerModule,
     BullModule.registerQueue(
       { name: 'payment_webhook_queue' },
       { name: 'order_fulfillment_queue' },

@@ -9,6 +9,7 @@ import { RefundExecutionService } from './refund-execution.service';
 import { Booking, BookingStatus } from '../entities/booking.entity';
 import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
 import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
+import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
 
 describe('RefundExecutionService', () => {
   let service: RefundExecutionService;
@@ -17,6 +18,7 @@ describe('RefundExecutionService', () => {
   let webhookEventRepo: any;
   let paymobService: any;
   let stateMachine: any;
+  let ledgerService: any;
   let mockManager: any;
   let managerRefundRepo: any;
   let managerBookingRepo: any;
@@ -108,6 +110,7 @@ describe('RefundExecutionService', () => {
       refundTransaction: jest.fn().mockResolvedValue({ refundId: 'rfnd_9' }),
     };
     stateMachine = { transitionTo: jest.fn().mockResolvedValue(undefined) };
+    ledgerService = { createEntry: jest.fn().mockResolvedValue(undefined) };
 
     service = new RefundExecutionService(
       paymentRepo,
@@ -115,6 +118,7 @@ describe('RefundExecutionService', () => {
       webhookEventRepo,
       paymobService,
       stateMachine,
+      ledgerService,
     );
   });
 
@@ -223,6 +227,16 @@ describe('RefundExecutionService', () => {
       expect(stateMachine.transitionTo).not.toHaveBeenCalled();
       expect(result.executed).toBe(true);
       expect(result.fullyRefunded).toBe(false);
+
+      // Verify the gateway refund was recorded in the ledger (negative amount)
+      expect(ledgerService.createEntry).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          entryType: LedgerEntryType.GatewayRefund,
+          amount: -400,
+          refundId: 'refund_1',
+        }),
+      );
     });
 
     it('marks the payment refunded and transitions a cancelled booking on full coverage', async () => {

@@ -5,6 +5,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { AuthModule } from '../auth/auth.module';
 import { BookingsModule } from '../bookings/bookings.module';
 import { PaymobModule } from './paymob.module';
+import { LedgerModule } from '../ledger/ledger.module';
 import { Payment } from './entities/payment.entity';
 import { PaymentAttempt } from './entities/payment-attempt.entity';
 import { PaymentWebhookEvent } from './entities/payment-webhook-event.entity';
@@ -32,6 +33,7 @@ import { WebhookRetentionService } from './services/webhook-retention.service';
     AuthModule,
     BookingsModule,
     PaymobModule,
+    LedgerModule,
   ],
   controllers: [PaymentsController, WebhooksController],
   providers: [

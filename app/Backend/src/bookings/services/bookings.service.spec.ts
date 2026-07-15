@@ -17,6 +17,7 @@ import { MarkupService } from './markup.service';
 import { BookingStateMachineService } from './booking-state-machine.service';
 import { RefundExecutionService } from './refund-execution.service';
 import { TicketPdfService } from './ticket-pdf.service';
+import { LedgerService } from '../../ledger/services/ledger.service';
 import { REDIS_CLIENT } from '../../redis/redis.module';
 import { Booking, BookingStatus } from '../entities/booking.entity';
 import { FlightOfferSnapshot } from '../entities/flight-offer-snapshot.entity';
@@ -215,6 +216,12 @@ describe('BookingsService', () => {
         {
           provide: TicketPdfService,
           useValue: { generate: jest.fn().mockResolvedValue(Buffer.from('')) },
+        },
+        {
+          provide: LedgerService,
+          useValue: {
+            createEntry: jest.fn().mockResolvedValue(undefined),
+          },
         },
       ],
     }).compile();

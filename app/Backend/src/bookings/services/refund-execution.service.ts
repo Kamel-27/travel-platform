@@ -18,6 +18,8 @@ import { PaymentWebhookEvent } from '../../payments/entities/payment-webhook-eve
 import { Booking, BookingStatus } from '../entities/booking.entity';
 import { BookingStateMachineService } from './booking-state-machine.service';
 import { ErrorCode } from '../../common/dto/error-response.dto';
+import { LedgerService } from '../../ledger/services/ledger.service';
+import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
 
 export interface CreatePendingRefundParams {
   paymentId: string;
@@ -59,6 +61,7 @@ export class RefundExecutionService {
     private readonly webhookEventRepo: Repository<PaymentWebhookEvent>,
     private readonly paymobService: PaymobService,
     private readonly stateMachine: BookingStateMachineService,
+    private readonly ledgerService: LedgerService,
   ) {}
 
   /**
@@ -189,6 +192,17 @@ export class RefundExecutionService {
         row.providerRefundId = providerRefundId;
         row.status = RefundStatus.Succeeded;
         const savedRefund = await manager.save(Refund, row);
+
+        // Record gateway refund to ledger
+        await this.ledgerService.createEntry(manager, {
+          entryType: LedgerEntryType.GatewayRefund,
+          amount: -savedRefund.amount, // negative amount
+          currency: savedRefund.currency,
+          paymentId: payment.id,
+          bookingId: payment.bookingId,
+          refundId: savedRefund.id,
+          note: 'Gateway refund succeeded',
+        });
 
         const priorSucceeded = await manager.getRepository(Refund).findBy({
           paymentId: payment.id,
