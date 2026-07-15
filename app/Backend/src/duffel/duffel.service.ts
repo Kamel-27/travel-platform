@@ -815,6 +815,62 @@ export class DuffelService {
   }
 
   /**
+   * Search for places (airports/cities) using Duffel suggestions.
+   * GET /places/suggestions?query=<query>
+   */
+  async searchAirports(query: string): Promise<any[]> {
+    this.assertConfigured();
+    if (!query || !query.trim()) {
+      return [];
+    }
+
+    try {
+      const response = await fetch(
+        `${this.baseUrl}/places/suggestions?query=${encodeURIComponent(query)}`,
+        {
+          method: 'GET',
+          headers: this.getHeaders(),
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+
+      if (!response.ok) {
+        this.logger.error(
+          `Duffel places suggestions failed with status ${response.status}`,
+        );
+        return [];
+      }
+
+      const json = (await response.json()) as Record<string, any>;
+      const rawSuggestions = json.data as any[] | undefined;
+      if (!rawSuggestions || !Array.isArray(rawSuggestions)) {
+        return [];
+      }
+
+      // Filter and map suggestions to only include places with an IATA code
+      const mapped = rawSuggestions
+        .map((item: any) => {
+          const code = item.iata_code || item.city?.iata_code;
+          if (!code) return null;
+
+          return {
+            code: code.toUpperCase(),
+            city: item.city?.name || item.name,
+            country: item.country?.name || '',
+            type: item.type, // 'airport' or 'city'
+            name: item.name,
+          };
+        })
+        .filter(Boolean);
+
+      return mapped;
+    } catch (err: unknown) {
+      this.logger.error('Duffel places suggestions failed', err);
+      return [];
+    }
+  }
+
+  /**
    * Retrieves sliding window metrics for Duffel API requests in the last hour.
    */
   async getMetrics(): Promise<{

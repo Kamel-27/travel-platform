@@ -177,6 +177,10 @@ export class FlightsService {
     );
   }
 
+  async searchAirports(query: string): Promise<any[]> {
+    return this.duffelService.searchAirports(query);
+  }
+
   private buildCacheKey(query: FlightSearchQueryDto): string {
     const parts = [
       query.origin.toUpperCase(),

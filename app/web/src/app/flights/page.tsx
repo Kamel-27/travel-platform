@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import AirportInput from "@/components/AirportInput";
+import DatePicker from "@/components/DatePicker";
 import { useAuth } from "@/lib/auth-context";
 import { getAirportLabel } from "@/lib/airports";
 import { api, ApiError } from "@/lib/api-client";
@@ -173,6 +174,7 @@ function FlightsInner() {
   const [sortBy, setSortBy] = useState<SortMode>("cheapest");
   const [maxPrice, setMaxPrice] = useState<number | null>(null);
   const [stopsFilter, setStopsFilter] = useState<number | null>(null);
+  const todayStr = new Date().toISOString().split("T")[0];
 
   const cacheKeyFor = (o: string, d: string, dt: string, a: string, retDate?: string) =>
     `${o.toUpperCase()}|${d.toUpperCase()}|${dt}|${a}|${retDate || ""}`;
@@ -317,22 +319,28 @@ function FlightsInner() {
               </div>
               <div>
                 <label className={fieldLabel}>{tripType === "round-trip" ? "تاريخ الذهاب" : "التاريخ"}</label>
-                <input
-                  type="date"
+                <DatePicker
                   value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 px-3 font-body-md text-body-md focus:border-primary focus:ring-0 transition-all"
+                  minDate={todayStr}
+                  onChange={(val) => {
+                    setDate(val);
+                    if (returnDate && val > returnDate) {
+                      const d = new Date(val);
+                      d.setDate(d.getDate() + 7);
+                      setReturnDate(d.toISOString().split("T")[0]);
+                    }
+                  }}
+                  placeholder={tripType === "round-trip" ? "تاريخ الذهاب" : "تاريخ السفر"}
                 />
               </div>
               {tripType === "round-trip" ? (
                 <div>
                   <label className={fieldLabel}>تاريخ العودة</label>
-                  <input
-                    type="date"
-                    min={date || undefined}
+                  <DatePicker
                     value={returnDate}
-                    onChange={(e) => setReturnDate(e.target.value)}
-                    className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 px-3 font-body-md text-body-md focus:border-primary focus:ring-0 transition-all"
+                    minDate={date || todayStr}
+                    onChange={(val) => setReturnDate(val)}
+                    placeholder="تاريخ العودة"
                   />
                 </div>
               ) : (

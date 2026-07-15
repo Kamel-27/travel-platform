@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AirportInput from "@/components/AirportInput";
+import DatePicker from "@/components/DatePicker";
 import { useAuth } from "@/lib/auth-context";
 
 export default function HomepagePage() {
@@ -118,22 +119,29 @@ export default function HomepagePage() {
     </div>
     <div className={tripType === "round-trip" ? "md:col-span-2 space-y-xs" : "md:col-span-5 space-y-xs"}>
       <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">{tripType === "round-trip" ? "الذهاب" : "التاريخ"}</label>
-      <div className="relative">
-        <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none">calendar_today</span>
-        <input type="date" min={todayStr} value={flightDate}
-          onChange={(e) => { setFlightDate(e.target.value); if (flightReturnDate && e.target.value > flightReturnDate) { const d = new Date(e.target.value); d.setDate(d.getDate() + 7); setFlightReturnDate(d.toISOString().split("T")[0]); } }}
-          className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 focus:border-primary focus:ring-0 font-body-md text-body-md transition-all" />
-      </div>
+      <DatePicker
+        value={flightDate}
+        minDate={todayStr}
+        onChange={(val) => {
+          setFlightDate(val);
+          if (flightReturnDate && val > flightReturnDate) {
+            const d = new Date(val);
+            d.setDate(d.getDate() + 7);
+            setFlightReturnDate(d.toISOString().split("T")[0]);
+          }
+        }}
+        placeholder={tripType === "round-trip" ? "تاريخ الذهاب" : "تاريخ السفر"}
+      />
     </div>
     {tripType === "round-trip" && (
       <div className="md:col-span-2 space-y-xs">
         <label className="font-label-sm text-label-sm text-on-surface-variant block px-base">العودة</label>
-        <div className="relative">
-          <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none">calendar_today</span>
-          <input type="date" min={flightDate || todayStr} value={flightReturnDate}
-            onChange={(e) => setFlightReturnDate(e.target.value)}
-            className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 focus:border-primary focus:ring-0 font-body-md text-body-md transition-all" />
-        </div>
+        <DatePicker
+          value={flightReturnDate}
+          minDate={flightDate || todayStr}
+          onChange={(val) => setFlightReturnDate(val)}
+          placeholder="تاريخ العودة"
+        />
       </div>
     )}
     <div className={tripType === "round-trip" ? "md:col-span-2" : "md:col-span-1"}>
