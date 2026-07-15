@@ -36,6 +36,8 @@ export default function AirportInput({
           code: string;
           city: string;
           country: string;
+          type: string;
+          name: string;
         }
         const response = await api.get<{ data: SearchResult[] }>(
           `/flights/airports/search?query=${encodeURIComponent(query)}`,
@@ -50,6 +52,9 @@ export default function AirportInput({
               cityAr: localMatch ? localMatch.cityAr : item.city,
               country: item.country,
               countryAr: localMatch ? localMatch.countryAr : item.country,
+              name: item.name,
+              nameAr: localMatch ? localMatch.nameAr : undefined,
+              type: item.type,
             };
           });
           setSuggestions(apiAirports);
@@ -122,7 +127,7 @@ export default function AirportInput({
             <button
               key={airport.code}
               type="button"
-              className="w-full text-right px-3 py-2.5 hover:bg-primary-container/40 transition-colors flex items-center gap-3 cursor-pointer"
+              className="w-full text-right px-4 py-3 hover:bg-surface-container-high transition-colors flex items-center gap-3 cursor-pointer border-b border-outline-variant/30 last:border-b-0"
               onMouseDown={(e) => {
                 e.preventDefault();
                 onChange(airport.code);
@@ -130,14 +135,25 @@ export default function AirportInput({
                 setOpen(false);
               }}
             >
-              <span className="material-symbols-outlined text-outline text-[20px]">flight</span>
-              <div className="flex-1">
-                <div className="font-body-md text-on-surface">
-                  {airport.cityAr}
-                  <span className="text-on-surface-variant font-label-sm mr-2">{airport.countryAr}</span>
+              <span className="material-symbols-outlined text-outline text-[22px] pointer-events-none">
+                {airport.type === "city" ? "location_city" : "flight"}
+              </span>
+              <div className="flex-1 min-w-0 text-right">
+                <div className="flex items-baseline gap-2">
+                  <span className="font-bold text-on-surface text-base">
+                    {airport.cityAr || airport.city}
+                  </span>
+                  <span className="text-on-surface-variant font-label-sm font-bold">
+                    ({airport.code})
+                  </span>
+                </div>
+                <div className="text-on-surface-variant text-xs truncate mt-0.5">
+                  {airport.type === "city" 
+                    ? "جميع المطارات" 
+                    : (airport.nameAr || airport.name || "مطار")}
+                  {airport.countryAr ? ` · ${airport.countryAr}` : ""}
                 </div>
               </div>
-              <span className="font-title-md text-primary font-bold">{airport.code}</span>
             </button>
           ))}
         </div>
