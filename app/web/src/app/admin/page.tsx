@@ -73,6 +73,31 @@ export default function AdminOverviewPage() {
             />
           </div>
 
+          {metrics.ledger?.summary && metrics.ledger.summary.length > 0 && (
+            <div className="mb-lg">
+              <h2 className="font-title-md text-title-md font-bold text-on-surface mb-md">المركز المالي وحساب المزوّد</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-md">
+                {metrics.ledger.summary.map((sum) => (
+                  <div key={sum.currency} className="bg-surface-container-lowest border border-outline-variant rounded-xl p-md shadow-sm flex flex-col sm:flex-row justify-around items-center gap-md">
+                    <div className="text-center sm:text-right">
+                      <p className="font-label-md text-label-md text-on-surface-variant mb-xs">صافي المركز المالي ({sum.currency})</p>
+                      <p className={`font-headline-md text-headline-md font-bold ${sum.net_position >= 0 ? "text-green-700 dark:text-green-400" : "text-error"}`}>
+                        {formatMoney(sum.net_position, sum.currency)}
+                      </p>
+                    </div>
+                    <div className="border-t sm:border-t-0 sm:border-r border-outline-variant w-full sm:w-auto h-0 sm:h-12"></div>
+                    <div className="text-center sm:text-right">
+                      <p className="font-label-md text-label-md text-on-surface-variant mb-xs">رصيد محفظة Duffel التقديري ({sum.currency})</p>
+                      <p className={`font-headline-md text-headline-md font-bold ${sum.duffel_wallet_estimate >= 0 ? "text-primary" : "text-error"}`}>
+                        {formatMoney(sum.duffel_wallet_estimate, sum.currency)}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-md mb-lg">
             <section className="bg-surface-container-lowest border border-outline-variant rounded-xl p-md shadow-sm">
               <h2 className="font-title-md text-title-md font-bold text-on-surface mb-md">الحجوزات حسب الحالة</h2>

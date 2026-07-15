@@ -290,6 +290,34 @@ export interface AdminMetrics {
   }[];
   refunds: { pending_count: number; failed_count: number };
   users: { total: number; active: number };
+  ledger?: {
+    summary: {
+      currency: string;
+      net_position: number;
+      duffel_wallet_estimate: number;
+    }[];
+  };
+}
+
+export type LedgerEntryType =
+  | "customer_payment"
+  | "gateway_refund"
+  | "supplier_charge"
+  | "supplier_refund"
+  | "adjustment";
+
+export interface AdminLedgerEntry {
+  id: string;
+  entry_type: LedgerEntryType;
+  amount: number;
+  currency: string;
+  supplier: string | null;
+  payment_id: string | null;
+  booking_id: string | null;
+  booking_reference: string | null;
+  refund_id: string | null;
+  note: string | null;
+  created_at: string;
 }
 
 export interface DuffelHealth {
