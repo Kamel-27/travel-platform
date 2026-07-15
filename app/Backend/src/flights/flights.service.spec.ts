@@ -155,9 +155,17 @@ describe('FlightsService', () => {
   describe('searchAirports', () => {
     it('should delegate search to DuffelService', async () => {
       const mockSuggestions = [
-        { code: 'LHR', city: 'London', country: 'United Kingdom', type: 'airport', name: 'Heathrow' }
+        {
+          code: 'LHR',
+          city: 'London',
+          country: 'United Kingdom',
+          type: 'airport',
+          name: 'Heathrow',
+        },
       ];
-      (duffelService.searchAirports as jest.Mock).mockResolvedValue(mockSuggestions);
+      (duffelService.searchAirports as jest.Mock).mockResolvedValue(
+        mockSuggestions,
+      );
 
       const result = await service.searchAirports('london');
 

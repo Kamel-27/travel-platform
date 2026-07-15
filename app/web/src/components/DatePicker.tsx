@@ -65,15 +65,18 @@ export default function DatePicker({
     return isNaN(initial.getTime()) ? new Date() : initial;
   });
 
-  // Sync internal display month with value change if open changes
-  useEffect(() => {
+  const [prevValue, setPrevValue] = useState(value);
+
+  // Sync internal display month with value change
+  if (value !== prevValue) {
+    setPrevValue(value);
     if (value) {
       const parsed = new Date(value);
       if (!isNaN(parsed.getTime())) {
         setCurrentDate(parsed);
       }
     }
-  }, [value]);
+  }
 
   // Close popover when clicking outside
   useEffect(() => {

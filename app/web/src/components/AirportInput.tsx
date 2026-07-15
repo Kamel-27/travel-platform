@@ -24,6 +24,7 @@ export default function AirportInput({
   // Debounced autocomplete fetch from backend
   useEffect(() => {
     if (query.trim().length < 2) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSuggestions([]);
       return;
     }
@@ -31,12 +32,17 @@ export default function AirportInput({
     setLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const response = await api.get<{ data: any[] }>(
+        interface SearchResult {
+          code: string;
+          city: string;
+          country: string;
+        }
+        const response = await api.get<{ data: SearchResult[] }>(
           `/flights/airports/search?query=${encodeURIComponent(query)}`,
           { skipAuth: true }
         );
         if (response && response.data) {
-          const apiAirports: Airport[] = response.data.map((item: any) => {
+          const apiAirports: Airport[] = response.data.map((item: SearchResult) => {
             const localMatch = AIRPORTS.find((a) => a.code === item.code);
             return {
               code: item.code,
