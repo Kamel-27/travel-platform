@@ -217,8 +217,8 @@ export default function DatePicker({
 
   return (
     <div className="relative h-full" ref={rootRef}>
-      {/* Trigger buttons row */}
-      <div className="flex items-stretch h-full divide-x divide-x-reverse divide-outline-variant/30">
+      {/* Trigger buttons: stacked on mobile (nowrap dates don't fit side by side), row on desktop */}
+      <div className="flex flex-col md:flex-row md:items-stretch h-full divide-y md:divide-y-0 md:divide-x md:divide-x-reverse divide-outline-variant/30">
         {/* Departure trigger */}
         <button
           type="button"
