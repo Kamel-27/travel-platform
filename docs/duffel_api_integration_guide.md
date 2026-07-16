@@ -2,6 +2,10 @@
 
 Research reference for evaluating and integrating the **Duffel API** as the flights/hotels supplier for this platform. No code is implemented here — this is the planning document to align on before writing the `DuffelModule`.
 
+> 🔁 **Switching suppliers?** See [`docs/pkfare/`](./pkfare/README.md) for the verified PKFare API
+> reference, the ports-&-adapters integration plan, the Duffel coupling/gap analysis, and the
+> production cutover runbook.
+
 > Context found in-repo: `app/Backend` is currently a bare NestJS scaffold (no routes, no DB, no queue/Redis deps). `app/web` (Next.js) already calls `GET /api/v1/flights` and `GET /api/v1/hotels`, which don't exist yet. `implementation_plan.md` previously proposed Amadeus; the prior `app/api` used PKFare. This doc treats Duffel as the candidate replacement supplier.
 
 ---
