@@ -20,6 +20,7 @@ something could not be confirmed from the public docs it is explicitly flagged
 
 | File | What it covers |
 |---|---|
+| [implementer-handover.md](./implementer-handover.md) | **Read first if you're implementing** — domain model, house conventions, the common-mistakes checklist, verification & PR gate |
 | [api-reference.md](./api-reference.md) | Verified API architecture: auth, transport, endpoints, data models, order-status enum, ticketing webhook |
 | [api-contracts.md](./api-contracts.md) | **Full per-endpoint request/response contracts** with real JSON examples and error codes — self-contained, no portal access needed |
 | [architecture.md](./architecture.md) | **System architecture**: ports & adapters design, TypeScript interfaces/DTOs, sequence diagrams, error taxonomy, state-machine mapping |
@@ -28,6 +29,7 @@ something could not be confirmed from the public docs it is explicitly flagged
 | [switch-runbook.md](./switch-runbook.md) | Production cutover, disabling Duffel, and rollback |
 
 > 🛠️ **Implementing offline / with a smaller model?** Start with
+> [implementer-handover.md](./implementer-handover.md) (conventions + pitfalls), then
 > [architecture.md](./architecture.md) for the design and [api-contracts.md](./api-contracts.md)
 > for the exact wire formats — together they contain everything needed without opening PKFare's
 > portal.
