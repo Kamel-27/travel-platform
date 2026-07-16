@@ -21,9 +21,16 @@ something could not be confirmed from the public docs it is explicitly flagged
 | File | What it covers |
 |---|---|
 | [api-reference.md](./api-reference.md) | Verified API architecture: auth, transport, endpoints, data models, order-status enum, ticketing webhook |
-| [integration-guide.md](./integration-guide.md) | Step-by-step integration into the NestJS backend (ports & adapters, phased, Duffel-safe) |
+| [api-contracts.md](./api-contracts.md) | **Full per-endpoint request/response contracts** with real JSON examples and error codes — self-contained, no portal access needed |
+| [architecture.md](./architecture.md) | **System architecture**: ports & adapters design, TypeScript interfaces/DTOs, sequence diagrams, error taxonomy, state-machine mapping |
+| [integration-guide.md](./integration-guide.md) | Step-by-step integration into the NestJS backend (phased, Duffel-safe) |
 | [duffel-coupling-and-gaps.md](./duffel-coupling-and-gaps.md) | Where the code is hard-wired to Duffel today, and what PKFare does **not** offer that we must resolve |
 | [switch-runbook.md](./switch-runbook.md) | Production cutover, disabling Duffel, and rollback |
+
+> 🛠️ **Implementing offline / with a smaller model?** Start with
+> [architecture.md](./architecture.md) for the design and [api-contracts.md](./api-contracts.md)
+> for the exact wire formats — together they contain everything needed without opening PKFare's
+> portal.
 
 ---
 
