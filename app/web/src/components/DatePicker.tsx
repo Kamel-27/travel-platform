@@ -1,312 +1,363 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 
 const MONTHS_AR = [
-  "يناير",
-  "فبراير",
-  "مارس",
-  "أبريل",
-  "مايو",
-  "يونيو",
-  "يوليو",
-  "أغسطس",
-  "سبتمبر",
-  "أكتوبر",
-  "نوفمبر",
-  "ديسمبر",
+  "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+  "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر",
 ];
 
 const WEEKDAYS_AR = [
-  "الأحد",
-  "الاثنين",
-  "الثلاثاء",
-  "الأربعاء",
-  "الخميس",
-  "الجمعة",
-  "السبت",
+  "الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت",
 ];
 
-const WEEKDAY_HEADERS_AR = ["س", "ح", "ن", "ث", "ر", "خ", "ج"]; // Sat to Fri
+const WEEKDAY_HEADERS = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+
+type SelectingField = "departure" | "return";
 
 interface DatePickerProps {
-  value: string;
-  onChange: (value: string) => void;
+  departureDate: string;
+  returnDate: string;
+  onDepartureChange: (value: string) => void;
+  onReturnChange: (value: string) => void;
   minDate?: string;
-  placeholder?: string;
-  icon?: string;
+  tripType: "one-way" | "round-trip";
+  /** Lets the "add return" placeholder switch the trip type from inside the picker. */
+  onTripTypeChange?: (tripType: "one-way" | "round-trip") => void;
 }
 
-function formatToArabicDate(dateStr: string): string {
+function formatShortDate(dateStr: string): string {
   if (!dateStr) return "";
-  const parts = dateStr.split("-");
-  if (parts.length !== 3) return dateStr;
-  const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-  if (isNaN(date.getTime())) return dateStr;
-  const weekday = WEEKDAYS_AR[date.getDay()];
-  const day = date.getDate();
-  const month = MONTHS_AR[date.getMonth()];
-  const year = date.getFullYear();
+  const d = new Date(dateStr + "T00:00:00");
+  if (isNaN(d.getTime())) return dateStr;
+  const weekday = WEEKDAYS_AR[d.getDay()];
+  const day = d.getDate();
+  const month = MONTHS_AR[d.getMonth()];
+  const year = d.getFullYear();
   return `${weekday}، ${day} ${month} ${year}`;
 }
 
+function toDateStr(y: number, m: number, d: number): string {
+  return `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
 export default function DatePicker({
-  value,
-  onChange,
+  departureDate,
+  returnDate,
+  onDepartureChange,
+  onReturnChange,
   minDate,
-  placeholder = "اختر التاريخ",
-  icon = "calendar_today",
+  tripType,
+  onTripTypeChange,
 }: DatePickerProps) {
   const [open, setOpen] = useState(false);
-  const modalRef = useRef<HTMLDivElement>(null);
+  const [selecting, setSelecting] = useState<SelectingField>("departure");
+  const [hoveredDate, setHoveredDate] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  // Snapshot taken when the picker opens, so "إلغاء" can restore it
+  const snapshotRef = useRef<{ departure: string; return: string } | null>(null);
 
-  // Initialize display month to selected date or today
-  const [currentDate, setCurrentDate] = useState(() => {
-    const initial = value ? new Date(value) : new Date();
-    return isNaN(initial.getTime()) ? new Date() : initial;
+  const [displayMonth, setDisplayMonth] = useState(() => {
+    const base = departureDate ? new Date(departureDate + "T00:00:00") : new Date();
+    return isNaN(base.getTime()) ? new Date() : new Date(base.getFullYear(), base.getMonth(), 1);
   });
 
-  const [prevValue, setPrevValue] = useState(value);
-
-  // Sync internal display month with value change
-  if (value !== prevValue) {
-    setPrevValue(value);
-    if (value) {
-      const parsed = new Date(value);
-      if (!isNaN(parsed.getTime())) {
-        setCurrentDate(parsed);
-      }
+  const openPicker = useCallback((field: SelectingField) => {
+    snapshotRef.current = { departure: departureDate, return: returnDate };
+    setSelecting(field);
+    const base = field === "departure" && departureDate
+      ? new Date(departureDate + "T00:00:00")
+      : field === "return" && returnDate
+        ? new Date(returnDate + "T00:00:00")
+        : departureDate
+          ? new Date(departureDate + "T00:00:00")
+          : new Date();
+    if (!isNaN(base.getTime())) {
+      setDisplayMonth(new Date(base.getFullYear(), base.getMonth(), 1));
     }
-  }
+    setOpen(true);
+  }, [departureDate, returnDate]);
 
-  // Prevent scroll behind modal when open
+  // Close on outside click or Escape. The page keeps scrolling normally and
+  // the rest of the search card stays fully interactive while the popover is open.
   useEffect(() => {
-    if (open) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
     return () => {
-      document.body.style.overflow = "";
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
     };
   }, [open]);
 
-  // Close modal when clicking outside of the modal card
-  const handleBackdropClick = (e: React.MouseEvent) => {
-    if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
+  const handleCancel = () => {
+    if (snapshotRef.current) {
+      onDepartureChange(snapshotRef.current.departure);
+      onReturnChange(snapshotRef.current.return);
+    }
+    setOpen(false);
+  };
+
+  const handleDayClick = (dateStr: string) => {
+    if (selecting === "departure") {
+      onDepartureChange(dateStr);
+      if (returnDate && dateStr > returnDate) {
+        const d = new Date(dateStr + "T00:00:00");
+        d.setDate(d.getDate() + 7);
+        onReturnChange(d.toISOString().split("T")[0]);
+      }
+      if (tripType === "round-trip") {
+        setSelecting("return");
+      } else {
+        setOpen(false);
+      }
+    } else {
+      if (dateStr < departureDate) {
+        onDepartureChange(dateStr);
+        return;
+      }
+      onReturnChange(dateStr);
       setOpen(false);
     }
   };
 
-  // Month 1 Calculations (Current display month)
-  const year1 = currentDate.getFullYear();
-  const month1 = currentDate.getMonth();
-
-  // Month 2 Calculations (Next month)
-  const date2 = new Date(year1, month1 + 1, 1);
-  const year2 = date2.getFullYear();
-  const month2 = date2.getMonth();
-
-  // Calendar logic helpers
-  const getDaysInMonth = (year: number, month: number) => {
-    return new Date(year, month + 1, 0).getDate();
-  };
-
-  const getFirstDayOffset = (year: number, month: number) => {
-    const day = new Date(year, month, 1).getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
-    // Saturday is start of week (index 0). Offset mapping:
-    // Sat(6)->0, Sun(0)->1, Mon(1)->2, Tue(2)->3, Wed(3)->4, Thu(4)->5, Fri(5)->6
-    return (day + 1) % 7;
-  };
-
-  const handlePrevMonth = () => {
-    setCurrentDate(new Date(year1, month1 - 1, 1));
-  };
-
-  const handleNextMonth = () => {
-    setCurrentDate(new Date(year1, month1 + 1, 1));
-  };
-
-  // Min date boundary check for chronological navigation
-  const isPrevDisabled = (() => {
-    if (!minDate) return false;
-    const minParts = minDate.split("-");
-    if (minParts.length !== 3) return false;
-    const minYear = Number(minParts[0]);
-    const minMonth = Number(minParts[1]) - 1;
-    return year1 < minYear || (year1 === minYear && month1 <= minMonth);
-  })();
+  const y1 = displayMonth.getFullYear();
+  const m1 = displayMonth.getMonth();
+  const nextMonth = new Date(y1, m1 + 1, 1);
+  const y2 = nextMonth.getFullYear();
+  const m2 = nextMonth.getMonth();
 
   const todayStr = new Date().toISOString().split("T")[0];
-  const displayValue = value ? formatToArabicDate(value) : "";
 
-  // Render Month Grid helper
+  const isPrevDisabled = (() => {
+    if (!minDate) return false;
+    const [minY, minM] = minDate.split("-").map(Number);
+    return y1 < minY || (y1 === minY && m1 + 1 <= minM);
+  })();
+
+  const isInRange = (dateStr: string) => {
+    if (tripType !== "round-trip") return false;
+    const start = departureDate;
+    const end = selecting === "return" && hoveredDate ? hoveredDate : returnDate;
+    if (!start || !end) return false;
+    return dateStr > start && dateStr < end;
+  };
+
   const renderMonthGrid = (year: number, month: number) => {
-    const totalDays = getDaysInMonth(year, month);
-    const offset = getFirstDayOffset(year, month);
+    const totalDays = new Date(year, month + 1, 0).getDate();
+    const firstDay = new Date(year, month, 1).getDay();
 
     return (
-      <div className="grid grid-cols-7 gap-1 text-center">
-        {/* Weekday Headers */}
-        {WEEKDAY_HEADERS_AR.map((h, i) => (
-          <div key={i} className="text-[12px] text-text-secondary font-bold py-2">
-            {h}
-          </div>
-        ))}
+      <div>
+        <div className="grid grid-cols-7 mb-1">
+          {WEEKDAY_HEADERS.map((h, i) => (
+            <div key={i} className="text-center text-[12px] text-on-surface-variant/50 font-medium py-2">
+              {h}
+            </div>
+          ))}
+        </div>
 
-        {/* Empty Slots */}
-        {Array.from({ length: offset }).map((_, i) => (
-          <div key={`empty-${i}`} className="w-10 h-10" />
-        ))}
+        <div className="grid grid-cols-7">
+          {Array.from({ length: firstDay }).map((_, i) => (
+            <div key={`e-${i}`} className="h-11" />
+          ))}
 
-        {/* Month Days */}
-        {Array.from({ length: totalDays }).map((_, i) => {
-          const dayNum = i + 1;
-          const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(
-            dayNum
-          ).padStart(2, "0")}`;
+          {Array.from({ length: totalDays }).map((_, i) => {
+            const dayNum = i + 1;
+            const dateStr = toDateStr(year, month, dayNum);
+            const isPast = (minDate && dateStr < minDate) || false;
+            const isDepSelected = dateStr === departureDate;
+            const isRetSelected = tripType === "round-trip" && dateStr === returnDate;
+            const isSelected = isDepSelected || isRetSelected;
+            const inRange = isInRange(dateStr);
+            const isToday = todayStr === dateStr;
 
-          const isPast = minDate && dateStr < minDate;
-          const isSelected = value === dateStr;
-          const isToday = todayStr === dateStr;
-
-          return (
-            <button
-              key={dayNum}
-              type="button"
-              disabled={isPast || false}
-              onClick={() => {
-                onChange(dateStr);
-              }}
-              className={`w-10 h-10 flex items-center justify-center rounded-lg text-sm transition-all cursor-pointer font-semibold text-center
-                ${
-                  isSelected
-                    ? "bg-[#0f766e] text-white font-bold shadow-lg active:scale-95"
-                    : isToday
-                    ? "border border-[#0f766e] text-[#14b8a6] hover:bg-[#1f2b3d]"
-                    : "text-[#f1f5f9] hover:bg-[#1f2b3d]"
-                }
-                ${
-                  isPast
-                    ? "!text-text-muted cursor-not-allowed opacity-25 hover:bg-transparent"
-                    : ""
-                }
-              `}
-            >
-              {dayNum}
-            </button>
-          );
-        })}
+            return (
+              <div
+                key={dayNum}
+                className={`relative h-11 flex items-center justify-center
+                  ${inRange ? "bg-primary/6" : ""}
+                  ${isDepSelected && tripType === "round-trip" && returnDate ? "bg-gradient-to-l from-primary/6 to-transparent" : ""}
+                  ${isRetSelected ? "bg-gradient-to-r from-primary/6 to-transparent" : ""}
+                `}
+              >
+                <button
+                  type="button"
+                  disabled={isPast}
+                  onClick={() => handleDayClick(dateStr)}
+                  onMouseEnter={() => {
+                    if (selecting === "return" && departureDate) setHoveredDate(dateStr);
+                  }}
+                  onMouseLeave={() => setHoveredDate(null)}
+                  className={`w-10 h-10 flex items-center justify-center rounded-full text-[14px] transition-all relative z-10
+                    ${isSelected
+                      ? "bg-primary text-on-primary font-bold shadow-md"
+                      : isToday
+                        ? "font-bold text-primary ring-1 ring-primary/30"
+                        : "text-on-surface hover:bg-surface-container-high"
+                    }
+                    ${isPast ? "!text-on-surface/20 cursor-not-allowed hover:bg-transparent" : "cursor-pointer"}
+                  `}
+                >
+                  {dayNum}
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   };
 
   return (
-    <div className="relative w-full">
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 hover:border-outline focus:border-primary focus:ring-0 font-body-md text-body-md transition-all text-right flex items-center relative cursor-pointer text-on-surface"
-      >
-        <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none !text-[20px]">
-          {icon}
-        </span>
-        <span className={displayValue ? "text-on-surface" : "text-outline"}>
-          {displayValue || placeholder}
-        </span>
-      </button>
-
-      {open && (
-        <div
-          onClick={handleBackdropClick}
-          className="fixed inset-0 bg-[#0b1120]/80 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-in fade-in duration-200"
+    <div className="relative h-full" ref={rootRef}>
+      {/* Trigger buttons row */}
+      <div className="flex items-stretch h-full divide-x divide-x-reverse divide-outline-variant/30">
+        {/* Departure trigger */}
+        <button
+          type="button"
+          onClick={() => openPicker("departure")}
+          className={`flex-1 flex items-center gap-3 px-5 py-4 transition-all cursor-pointer text-right
+            ${open && selecting === "departure" ? "bg-primary/5" : "hover:bg-surface-container/40"}
+          `}
         >
-          <div
-            ref={modalRef}
-            className="bg-[#1a2332] border border-[#1e3a5f] shadow-2xl rounded-2xl p-6 max-w-[700px] w-full relative animate-in fade-in zoom-in-95 duration-200 text-right"
-          >
-            {/* Modal Header */}
-            <div className="flex justify-between items-center mb-6 pb-4 border-b border-[#1e3a5f]/40">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-[#14b8a6] !text-[22px]">
-                  calendar_today
-                </span>
-                <h3 className="font-bold text-lg text-white">اختر تاريخ السفر</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="p-1 hover:bg-[#1f2b3d] rounded-lg transition-colors cursor-pointer text-text-secondary hover:text-white flex items-center justify-center"
-              >
-                <span className="material-symbols-outlined !text-[22px]">close</span>
-              </button>
-            </div>
-
-            {/* Double-Month Grid Wrapper */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6 overflow-y-auto max-h-[400px] md:max-h-none">
-              {/* Right Month (Month 1: chronological first) */}
-              <div>
-                <div className="flex justify-between items-center mb-4 px-2">
-                  <button
-                    type="button"
-                    onClick={handlePrevMonth}
-                    disabled={isPrevDisabled}
-                    className="p-1.5 hover:bg-[#1f2b3d] rounded-lg transition-colors disabled:opacity-20 disabled:hover:bg-transparent cursor-pointer flex items-center justify-center text-white"
-                  >
-                    <span className="material-symbols-outlined !text-[20px] font-bold">
-                      chevron_right
-                    </span>
-                  </button>
-                  <div className="font-bold text-white text-base">
-                    {MONTHS_AR[month1]} {year1}
-                  </div>
-                  <div className="w-8" />
-                </div>
-                {renderMonthGrid(year1, month1)}
-              </div>
-
-              {/* Left Month (Month 2: chronological second) */}
-              <div>
-                <div className="flex justify-between items-center mb-4 px-2">
-                  <div className="w-8" />
-                  <div className="font-bold text-white text-base">
-                    {MONTHS_AR[month2]} {year2}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleNextMonth}
-                    className="p-1.5 hover:bg-[#1f2b3d] rounded-lg transition-colors cursor-pointer flex items-center justify-center text-white"
-                  >
-                    <span className="material-symbols-outlined !text-[20px] font-bold">
-                      chevron_left
-                    </span>
-                  </button>
-                </div>
-                {renderMonthGrid(year2, month2)}
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="flex flex-col sm:flex-row justify-between items-center pt-4 border-t border-[#1e3a5f]/40 gap-4">
-              <div className="text-sm text-text-secondary text-right">
-                {value ? (
-                  <span>
-                    التاريخ المحدد:{" "}
-                    <strong className="text-[#14b8a6]">{formatToArabicDate(value)}</strong>
-                  </span>
-                ) : (
-                  <span>لم يتم تحديد تاريخ بعد</span>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="w-full sm:w-auto bg-[#0f766e] hover:bg-[#0d5c56] text-white px-8 py-2.5 rounded-xl font-bold shadow-md cursor-pointer transition-colors text-center"
-              >
-                تأكيد التاريخ
-              </button>
+          <span className="material-symbols-outlined text-primary !text-[24px] shrink-0">calendar_today</span>
+          <div className="min-w-0">
+            <div className="text-[11px] text-on-surface-variant/60 font-medium leading-none mb-1.5">الذهاب</div>
+            <div className={`text-[15px] font-bold whitespace-nowrap ${departureDate ? "text-on-surface" : "text-on-surface-variant/40"}`}>
+              {departureDate ? formatShortDate(departureDate) : "اختر التاريخ"}
             </div>
           </div>
+        </button>
+
+        {/* Return trigger — or an "add return" placeholder so the card width stays stable on one-way */}
+        {tripType === "round-trip" ? (
+          <button
+            type="button"
+            onClick={() => openPicker("return")}
+            className={`flex-1 flex items-center gap-3 px-5 py-4 transition-all cursor-pointer text-right
+              ${open && selecting === "return" ? "bg-primary/5" : "hover:bg-surface-container/40"}
+            `}
+          >
+            <span className="material-symbols-outlined text-primary !text-[24px] shrink-0">calendar_today</span>
+            <div className="min-w-0">
+              <div className="text-[11px] text-on-surface-variant/60 font-medium leading-none mb-1.5">العودة</div>
+              <div className={`text-[15px] font-bold whitespace-nowrap ${returnDate ? "text-on-surface" : "text-on-surface-variant/40"}`}>
+                {returnDate ? formatShortDate(returnDate) : "اختر التاريخ"}
+              </div>
+            </div>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              onTripTypeChange?.("round-trip");
+              openPicker("return");
+            }}
+            className="flex-1 flex items-center gap-3 px-5 py-4 transition-all cursor-pointer text-right hover:bg-surface-container/40"
+          >
+            <span className="material-symbols-outlined text-on-surface-variant/40 !text-[24px] shrink-0">add_circle</span>
+            <div className="min-w-0">
+              <div className="text-[11px] text-on-surface-variant/60 font-medium leading-none mb-1.5">العودة</div>
+              <div className="text-[15px] font-bold whitespace-nowrap text-on-surface-variant/40">إضافة عودة</div>
+            </div>
+          </button>
+        )}
+      </div>
+
+      {/* Calendar popover — anchored under the date fields, no backdrop, page stays scrollable */}
+      {open && (
+        <div
+          dir="rtl"
+          className="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 md:left-0 md:translate-x-0 z-[70] w-[min(94vw,720px)] bg-surface-container-lowest border border-outline-variant/60 rounded-2xl shadow-2xl animate-in fade-in slide-in-from-top-2 duration-150"
+        >
+            {/* Header tabs */}
+            <div className="flex border-b border-outline-variant/40">
+              <button
+                type="button"
+                onClick={() => setSelecting("departure")}
+                className={`flex-1 py-4 text-center transition-colors cursor-pointer relative
+                  ${selecting === "departure" ? "text-primary" : "text-on-surface-variant hover:text-on-surface"}
+                `}
+              >
+                <div className="text-[11px] font-medium text-on-surface-variant/50 mb-1">الذهاب</div>
+                <div className="text-[15px] font-bold">{departureDate ? formatShortDate(departureDate) : "—"}</div>
+                {selecting === "departure" && (
+                  <div className="absolute bottom-0 left-6 right-6 h-[2.5px] bg-primary rounded-full" />
+                )}
+              </button>
+              {tripType === "round-trip" && (
+                <button
+                  type="button"
+                  onClick={() => setSelecting("return")}
+                  className={`flex-1 py-4 text-center transition-colors cursor-pointer relative border-r border-outline-variant/30
+                    ${selecting === "return" ? "text-primary" : "text-on-surface-variant hover:text-on-surface"}
+                  `}
+                >
+                  <div className="text-[11px] font-medium text-on-surface-variant/50 mb-1">العودة</div>
+                  <div className="text-[15px] font-bold">{returnDate ? formatShortDate(returnDate) : "—"}</div>
+                  {selecting === "return" && (
+                    <div className="absolute bottom-0 left-6 right-6 h-[2.5px] bg-primary rounded-full" />
+                  )}
+                </button>
+              )}
+            </div>
+
+            {/* Month navigation */}
+            <div className="flex items-center justify-between px-8 pt-5 pb-3">
+              <button
+                type="button"
+                onClick={() => setDisplayMonth(new Date(y1, m1 - 1, 1))}
+                disabled={isPrevDisabled}
+                className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-surface-container-high transition-colors disabled:opacity-20 cursor-pointer text-on-surface-variant"
+              >
+                <span className="material-symbols-outlined !text-[22px]">chevron_right</span>
+              </button>
+              <div className="flex items-center md:gap-20">
+                <span className="font-bold text-on-surface text-[16px]">{MONTHS_AR[m1]} {y1}</span>
+                <span className="hidden md:inline font-bold text-on-surface text-[16px]">{MONTHS_AR[m2]} {y2}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDisplayMonth(new Date(y1, m1 + 1, 1))}
+                className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-surface-container-high transition-colors cursor-pointer text-on-surface-variant"
+              >
+                <span className="material-symbols-outlined !text-[22px]">chevron_left</span>
+              </button>
+            </div>
+
+            {/* Dual-month grid */}
+            <div className="px-8 pb-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                <div>{renderMonthGrid(y1, m1)}</div>
+                {/* Second month is desktop-only; mobile gets a compact single-month sheet */}
+                <div className="hidden md:block">{renderMonthGrid(y2, m2)}</div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-3 px-8 py-4 border-t border-outline-variant/30">
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="text-sm text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer px-5 py-2.5 rounded-xl hover:bg-surface-container-high"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="bg-primary text-on-primary px-8 py-2.5 rounded-xl text-sm font-bold shadow-sm hover:shadow-md transition-all cursor-pointer active:scale-[0.97]"
+              >
+                تأكيد
+              </button>
+            </div>
         </div>
       )}
     </div>

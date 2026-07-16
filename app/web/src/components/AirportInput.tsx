@@ -19,11 +19,17 @@ export default function AirportInput({
   const [open, setOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<Airport[]>([]);
   const [loading, setLoading] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
+
+  const displayValue = value ? getAirportLabel(value) : "";
+  // On focus the input shows the current label (selected); until the user
+  // actually types, search as if the field were empty so popular airports show.
+  const effectiveQuery = query === displayValue ? "" : query;
 
   // Debounced autocomplete fetch from backend
   useEffect(() => {
-    if (query.trim().length < 2) {
+    if (effectiveQuery.trim().length < 2) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setSuggestions([]);
       return;
@@ -40,7 +46,7 @@ export default function AirportInput({
           name: string;
         }
         const response = await api.get<{ data: SearchResult[] }>(
-          `/flights/airports/search?query=${encodeURIComponent(query)}`,
+          `/flights/airports/search?query=${encodeURIComponent(effectiveQuery)}`,
           { skipAuth: true }
         );
         if (response && response.data) {
@@ -67,10 +73,10 @@ export default function AirportInput({
     }, 350);
 
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [effectiveQuery]);
 
   const results = useMemo<Airport[]>(() => {
-    const localResults = searchAirports(query);
+    const localResults = searchAirports(effectiveQuery);
     const combined = [...localResults];
     suggestions.forEach((s) => {
       if (!combined.some((c) => c.code === s.code)) {
@@ -78,7 +84,7 @@ export default function AirportInput({
       }
     });
     return combined;
-  }, [query, suggestions]);
+  }, [effectiveQuery, suggestions]);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -88,26 +94,53 @@ export default function AirportInput({
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  const displayValue = value ? getAirportLabel(value) : "";
+  const selectAirport = (airport: Airport) => {
+    onChange(airport.code);
+    setQuery("");
+    setOpen(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    if (!open || results.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((i) => (i + 1) % results.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((i) => (i - 1 + results.length) % results.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const airport = results[Math.min(activeIndex, results.length - 1)];
+      if (airport) selectAirport(airport);
+    }
+  };
 
   return (
     <div className="relative" ref={ref}>
-      <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline">{icon}</span>
+      {icon && <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline">{icon}</span>}
       <input
-        className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 focus:border-primary focus:ring-0 font-body-md text-body-md transition-all"
+        className={`w-full focus:ring-0 transition-all ${icon ? "bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-4 font-body-md text-body-md focus:border-primary" : "bg-transparent border-none p-0 text-sm font-bold text-on-surface focus:outline-none placeholder:text-on-surface-variant/50 truncate"}`}
         value={open ? query : displayValue}
         onChange={(e) => {
           setQuery(e.target.value);
+          setActiveIndex(0);
           if (!open) setOpen(true);
         }}
-        onFocus={() => {
+        onFocus={(e) => {
           setOpen(true);
-          setQuery("");
+          setQuery(displayValue);
+          setActiveIndex(0);
+          e.currentTarget.select();
         }}
+        onKeyDown={handleKeyDown}
         placeholder={placeholder}
       />
       {open && (results.length > 0 || loading) && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
+        <div className="absolute top-full right-0 mt-1 w-full min-w-[320px] max-w-[92vw] bg-surface-container-lowest border border-outline-variant rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
           {loading && (
             <div className="px-4 py-2.5 text-xs text-outline flex items-center gap-2 border-b border-outline-variant/30 bg-surface-container-low/30">
               <div className="flex gap-0.5">
@@ -118,21 +151,21 @@ export default function AirportInput({
               <span className="mr-1">جاري البحث عن المطارات...</span>
             </div>
           )}
-          {!query.trim() && (
+          {!effectiveQuery.trim() && (
             <div className="px-3 py-1.5 text-on-surface-variant font-label-sm text-label-sm border-b border-outline-variant/50">
               المطارات الشائعة
             </div>
           )}
-          {results.map((airport) => (
+          {results.map((airport, index) => (
             <button
               key={airport.code}
               type="button"
-              className="w-full text-right px-4 py-3 hover:bg-surface-container-high transition-colors flex items-center gap-3 cursor-pointer border-b border-outline-variant/30 last:border-b-0"
+              ref={index === activeIndex ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
+              className={`w-full text-right px-4 py-3 transition-colors flex items-center gap-3 cursor-pointer border-b border-outline-variant/30 last:border-b-0 ${index === activeIndex ? "bg-surface-container-high" : "hover:bg-surface-container-high"}`}
+              onMouseEnter={() => setActiveIndex(index)}
               onMouseDown={(e) => {
                 e.preventDefault();
-                onChange(airport.code);
-                setQuery("");
-                setOpen(false);
+                selectAirport(airport);
               }}
             >
               <span className="material-symbols-outlined text-outline text-[22px] pointer-events-none">
@@ -148,8 +181,8 @@ export default function AirportInput({
                   </span>
                 </div>
                 <div className="text-on-surface-variant text-xs truncate mt-0.5">
-                  {airport.type === "city" 
-                    ? "جميع المطارات" 
+                  {airport.type === "city"
+                    ? "جميع المطارات"
                     : (airport.nameAr || airport.name || "مطار")}
                   {airport.countryAr ? ` · ${airport.countryAr}` : ""}
                 </div>

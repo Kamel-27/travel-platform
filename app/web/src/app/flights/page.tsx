@@ -159,6 +159,10 @@ function FlightsInner() {
   const initialDate = searchParams.get("date") || searchParams.get("departure_date") || "";
   const initialReturnDate = searchParams.get("return_date") || "";
   const initialAdults = searchParams.get("adults") || "1";
+  const initialChildren = searchParams.get("children") || "0";
+  const initialInfants = searchParams.get("infants") || "0";
+  const initialCabin = searchParams.get("cabin") || "economy";
+  const initialDirectOnly = searchParams.get("direct") === "1";
   const initialTripType: TripType = initialReturnDate ? "round-trip" : "one-way";
 
   const [origin, setOrigin] = useState(initialOrigin);
@@ -173,14 +177,15 @@ function FlightsInner() {
   const [error, setError] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortMode>("cheapest");
   const [maxPrice, setMaxPrice] = useState<number | null>(null);
-  const [stopsFilter, setStopsFilter] = useState<number | null>(null);
+  // "direct=1" from the landing page pre-applies the direct-flights filter
+  const [stopsFilter, setStopsFilter] = useState<number | null>(initialDirectOnly ? 0 : null);
   const todayStr = new Date().toISOString().split("T")[0];
 
-  const cacheKeyFor = (o: string, d: string, dt: string, a: string, retDate?: string) =>
-    `${o.toUpperCase()}|${d.toUpperCase()}|${dt}|${a}|${retDate || ""}`;
+  const cacheKeyFor = (o: string, d: string, dt: string, a: string, retDate?: string, cab = "economy", chd = "0", inf = "0") =>
+    `${o.toUpperCase()}|${d.toUpperCase()}|${dt}|${a}|${retDate || ""}|${cab}|${chd}|${inf}`;
 
   const fetchFlights = useCallback(
-    async (o: string, d: string, dt: string, a: string, retDate?: string) => {
+    async (o: string, d: string, dt: string, a: string, retDate?: string, cab = "economy", chd = "0", inf = "0") => {
       if (!o || !d || !dt) {
         setLoading(false);
         return;
@@ -193,9 +198,9 @@ function FlightsInner() {
           destination: d.toUpperCase(),
           departure_date: dt,
           adults: a,
-          children: "0",
-          infants: "0",
-          cabin_class: "economy",
+          children: chd,
+          infants: inf,
+          cabin_class: cab,
         });
         if (retDate) params.set("return_date", retDate);
 
@@ -203,7 +208,7 @@ function FlightsInner() {
           skipAuth: true,
         });
         setOffers(result.data || []);
-        writeResultsCache(cacheKeyFor(o, d, dt, a, retDate), result.data || []);
+        writeResultsCache(cacheKeyFor(o, d, dt, a, retDate, cab, chd, inf), result.data || []);
       } catch (err) {
         setError(errorMessage(err));
         setOffers([]);
@@ -219,14 +224,14 @@ function FlightsInner() {
       // Restore cached results (e.g. returning from checkout) instead of
       // re-running a slow live search on every back-navigation.
       const cached = readResultsCache(
-        cacheKeyFor(initialOrigin, initialDest, initialDate, initialAdults, initialReturnDate),
+        cacheKeyFor(initialOrigin, initialDest, initialDate, initialAdults, initialReturnDate, initialCabin, initialChildren, initialInfants),
       );
       if (cached && cached.length > 0) {
         setOffers(cached);
         setLoading(false);
         return;
       }
-      return fetchFlights(initialOrigin, initialDest, initialDate, initialAdults, initialReturnDate);
+      return fetchFlights(initialOrigin, initialDest, initialDate, initialAdults, initialReturnDate, initialCabin, initialChildren, initialInfants);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -234,8 +239,11 @@ function FlightsInner() {
   const handleSearch = () => {
     const params = new URLSearchParams({ origin, destination, date, adults });
     if (tripType === "round-trip" && returnDate) params.set("return_date", returnDate);
+    if (initialCabin !== "economy") params.set("cabin", initialCabin);
+    if (initialChildren !== "0") params.set("children", initialChildren);
+    if (initialInfants !== "0") params.set("infants", initialInfants);
     router.push(`/flights?${params}`);
-    fetchFlights(origin, destination, date, adults, tripType === "round-trip" ? returnDate : undefined);
+    fetchFlights(origin, destination, date, adults, tripType === "round-trip" ? returnDate : undefined, initialCabin, initialChildren, initialInfants);
   };
 
   const handleSwap = () => {
@@ -263,8 +271,6 @@ function FlightsInner() {
     return { min: Math.min(...amounts), max: Math.max(...amounts) };
   }, [offers]);
 
-  const fieldLabel = "font-label-sm text-label-sm text-on-surface-variant block mb-1 px-1";
-
   return (
     <div className="min-h-screen bg-background text-on-surface" dir="rtl">
       <header className="bg-surface-container-lowest shadow-sm sticky top-0 z-50 border-b border-outline-variant">
@@ -280,80 +286,31 @@ function FlightsInner() {
       {/* Search panel */}
       <section className="bg-gradient-to-b from-primary to-primary-container pb-lg pt-md">
         <div className="max-w-7xl mx-auto px-4">
-          <div className="bg-surface-container-lowest rounded-2xl shadow-xl p-md space-y-sm">
-            <div className="flex gap-sm">
-              <button
-                type="button"
-                onClick={() => { setTripType("one-way"); setReturnDate(""); }}
-                className={`px-md py-1.5 rounded-full font-label-sm text-label-sm transition-colors cursor-pointer ${tripType === "one-way" ? "bg-primary text-on-primary" : "bg-surface-container text-on-surface-variant hover:bg-surface-container-high"}`}
-              >
-                ذهاب فقط
-              </button>
-              <button
-                type="button"
-                onClick={() => setTripType("round-trip")}
-                className={`px-md py-1.5 rounded-full font-label-sm text-label-sm transition-colors cursor-pointer ${tripType === "round-trip" ? "bg-primary text-on-primary" : "bg-surface-container text-on-surface-variant hover:bg-surface-container-high"}`}
-              >
-                ذهاب وعودة
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-[1fr_auto_1fr_1fr_1fr_auto_auto] gap-sm items-end">
-              <div className="col-span-2 md:col-span-1">
-                <label className={fieldLabel}>من</label>
-                <AirportInput icon="flight_takeoff" value={origin} onChange={setOrigin} placeholder="مطار المغادرة" />
-              </div>
-              <div className="hidden md:flex items-center justify-center pb-1.5">
+          <div className="bg-surface-container-lowest rounded-2xl shadow-xl">
+            <div className="flex items-center justify-between px-5 pt-3 pb-2">
+              <div className="flex bg-surface-container rounded-full p-0.5 gap-0.5">
                 <button
                   type="button"
-                  onClick={handleSwap}
-                  title="تبديل المطارات"
-                  className="w-10 h-10 rounded-full border border-outline-variant bg-surface-container-low text-primary flex items-center justify-center hover:bg-primary hover:text-on-primary transition-all cursor-pointer"
+                  onClick={() => setTripType("round-trip")}
+                  className={`px-4 py-1.5 rounded-full font-label-sm text-label-sm transition-all cursor-pointer ${tripType === "round-trip" ? "bg-surface-container-lowest text-primary font-bold shadow-sm" : "text-on-surface-variant hover:text-on-surface"}`}
                 >
-                  <span className="material-symbols-outlined !text-[20px]">swap_horiz</span>
+                  ذهاب وعودة
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setTripType("one-way"); setReturnDate(""); }}
+                  className={`px-4 py-1.5 rounded-full font-label-sm text-label-sm transition-all cursor-pointer ${tripType === "one-way" ? "bg-surface-container-lowest text-primary font-bold shadow-sm" : "text-on-surface-variant hover:text-on-surface"}`}
+                >
+                  ذهاب فقط
                 </button>
               </div>
-              <div className="col-span-2 md:col-span-1">
-                <label className={fieldLabel}>إلى</label>
-                <AirportInput icon="flight_land" value={destination} onChange={setDestination} placeholder="مطار الوصول" />
-              </div>
-              <div>
-                <label className={fieldLabel}>{tripType === "round-trip" ? "تاريخ الذهاب" : "التاريخ"}</label>
-                <DatePicker
-                  value={date}
-                  minDate={todayStr}
-                  onChange={(val) => {
-                    setDate(val);
-                    if (returnDate && val > returnDate) {
-                      const d = new Date(val);
-                      d.setDate(d.getDate() + 7);
-                      setReturnDate(d.toISOString().split("T")[0]);
-                    }
-                  }}
-                  placeholder={tripType === "round-trip" ? "تاريخ الذهاب" : "تاريخ السفر"}
-                />
-              </div>
-              {tripType === "round-trip" ? (
-                <div>
-                  <label className={fieldLabel}>تاريخ العودة</label>
-                  <DatePicker
-                    value={returnDate}
-                    minDate={date || todayStr}
-                    onChange={(val) => setReturnDate(val)}
-                    placeholder="تاريخ العودة"
-                  />
-                </div>
-              ) : (
-                <div className="hidden md:block" />
-              )}
-              <div>
-                <label className={fieldLabel}>المسافرون</label>
-                <div className="relative">
-                  <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-outline pointer-events-none !text-[20px]">person</span>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1">
+                  <span className="material-symbols-outlined text-on-surface-variant !text-[18px]">person</span>
                   <select
                     value={adults}
                     onChange={(e) => setAdults(e.target.value)}
-                    className="w-full bg-surface-container-low border border-outline-variant rounded-lg py-3 pr-10 pl-3 font-body-md text-body-md focus:border-primary focus:ring-0 appearance-none cursor-pointer"
+                    className="bg-transparent text-on-surface font-label-sm text-label-sm font-bold focus:ring-0 border-none cursor-pointer py-1 pr-1 pl-5"
                   >
                     {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
                       <option key={n} value={String(n)}>{n === 1 ? "بالغ واحد" : n === 2 ? "بالغان" : `${n} بالغين`}</option>
@@ -361,15 +318,65 @@ function FlightsInner() {
                   </select>
                 </div>
               </div>
-              <div className="col-span-2 md:col-span-1">
-                <button
-                  onClick={handleSearch}
-                  className="w-full md:w-auto bg-tertiary text-on-tertiary rounded-lg py-3 px-lg font-label-md text-label-md font-bold flex items-center justify-center gap-xs hover:bg-tertiary-container transition-all active:scale-95 shadow-md cursor-pointer"
-                >
-                  <span className="material-symbols-outlined">search</span>
-                  بحث
-                </button>
+            </div>
+
+            <div className="px-4 pb-4">
+              <div className="flex flex-col md:flex-row items-stretch border border-outline-variant/50 rounded-xl">
+                <div className="relative flex-1 min-w-0 flex items-center gap-3 px-4 py-3 border-b md:border-b-0 md:border-l border-outline-variant/30">
+                  <span className="material-symbols-outlined text-primary !text-[22px] shrink-0">flight_takeoff</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] text-on-surface-variant/60 font-medium leading-none mb-1">من</div>
+                    <AirportInput icon="" value={origin} onChange={setOrigin} placeholder="مطار المغادرة" />
+                  </div>
+                </div>
+
+                <div className="hidden md:flex items-center justify-center px-0 -mx-5 z-20">
+                  <button
+                    type="button"
+                    onClick={handleSwap}
+                    title="تبديل المطارات"
+                    className="w-8 h-8 rounded-full border border-outline-variant bg-surface-container-lowest text-primary flex items-center justify-center hover:bg-primary hover:text-on-primary transition-all cursor-pointer shadow-sm"
+                  >
+                    <span className="material-symbols-outlined !text-[16px]">swap_horiz</span>
+                  </button>
+                </div>
+
+                <div className="relative flex-1 min-w-0 flex items-center gap-3 px-4 py-3 border-b md:border-b-0 md:border-l border-outline-variant/30">
+                  <span className="material-symbols-outlined text-primary !text-[22px] shrink-0">flight_land</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] text-on-surface-variant/60 font-medium leading-none mb-1">إلى</div>
+                    <AirportInput icon="" value={destination} onChange={setDestination} placeholder="مطار الوصول" />
+                  </div>
+                </div>
+
+                <div className="flex-[1.3] min-w-0">
+                  <DatePicker
+                    departureDate={date}
+                    returnDate={returnDate}
+                    onDepartureChange={(val) => {
+                      setDate(val);
+                      if (returnDate && val > returnDate) {
+                        const d = new Date(val);
+                        d.setDate(d.getDate() + 7);
+                        setReturnDate(d.toISOString().split("T")[0]);
+                      }
+                    }}
+                    onReturnChange={(val) => setReturnDate(val)}
+                    minDate={todayStr}
+                    tripType={tripType}
+                  />
+                </div>
               </div>
+            </div>
+
+            <div className="flex items-center justify-end px-5 pb-4">
+              <button
+                onClick={handleSearch}
+                className="bg-primary text-on-primary px-8 py-2.5 rounded-xl font-label-md text-label-md font-bold flex items-center gap-2 hover:shadow-lg transition-all active:scale-[0.97] cursor-pointer shadow-md"
+              >
+                <span className="material-symbols-outlined !text-[20px]">search</span>
+                بحث
+              </button>
             </div>
           </div>
         </div>
