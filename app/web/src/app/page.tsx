@@ -102,18 +102,18 @@ export default function HomepagePage() {
             {/* Search card */}
             <div className="glass-effect rounded-2xl shadow-2xl w-full">
               {/* Header row */}
-              <div className="flex items-center justify-between px-6 pt-5 pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-y-2 px-4 md:px-6 pt-5 pb-3">
                 <div className="flex items-center gap-2">
                   <span className="material-symbols-outlined text-primary !text-[24px]" style={{ fontVariationSettings: "'FILL' 1" }}>flight</span>
-                  <span className="font-title-md text-title-md text-primary font-bold">ابحث عن رحلتك</span>
+                  <span className="font-title-md text-title-md text-primary font-bold whitespace-nowrap">ابحث عن رحلتك</span>
                 </div>
-                <div className="flex bg-surface-container rounded-full p-0.5 gap-0.5">
+                <div className="flex bg-surface-container rounded-full p-0.5 gap-0.5 shrink-0">
                   <button type="button" onClick={() => { setTripType("round-trip"); if (!flightReturnDate) setFlightReturnDate(weekLaterDate); }}
-                    className={`px-5 py-2 rounded-full font-label-md text-label-md transition-all cursor-pointer ${tripType === "round-trip" ? "bg-surface-container-lowest text-primary font-bold shadow-sm" : "text-on-surface-variant hover:text-on-surface"}`}>
+                    className={`px-3 md:px-5 py-2 rounded-full font-label-md text-label-md whitespace-nowrap transition-all cursor-pointer ${tripType === "round-trip" ? "bg-surface-container-lowest text-primary font-bold shadow-sm" : "text-on-surface-variant hover:text-on-surface"}`}>
                     ذهاب وعودة
                   </button>
                   <button type="button" onClick={() => { setTripType("one-way"); setFlightReturnDate(""); }}
-                    className={`px-5 py-2 rounded-full font-label-md text-label-md transition-all cursor-pointer ${tripType === "one-way" ? "bg-surface-container-lowest text-primary font-bold shadow-sm" : "text-on-surface-variant hover:text-on-surface"}`}>
+                    className={`px-3 md:px-5 py-2 rounded-full font-label-md text-label-md whitespace-nowrap transition-all cursor-pointer ${tripType === "one-way" ? "bg-surface-container-lowest text-primary font-bold shadow-sm" : "text-on-surface-variant hover:text-on-surface"}`}>
                     ذهاب فقط
                   </button>
                 </div>
@@ -172,7 +172,7 @@ export default function HomepagePage() {
               </div>
 
               {/* Options row */}
-              <div className="flex flex-wrap items-center justify-between px-6 pb-5 pt-1 gap-3">
+              <div className="flex flex-wrap items-center justify-between px-4 md:px-6 pb-5 pt-1 gap-3">
                 <div className="flex flex-wrap items-center gap-3">
                   <PaxCabinPicker value={pax} onChange={setPax} />
                   <button
@@ -192,7 +192,7 @@ export default function HomepagePage() {
                   </button>
                 </div>
                 <button onClick={handleFlightSearch}
-                  className="bg-primary text-on-primary px-10 py-3 rounded-xl font-label-lg text-label-lg font-bold flex items-center gap-2 hover:shadow-lg transition-all active:scale-[0.97] cursor-pointer shadow-md">
+                  className="w-full md:w-auto justify-center bg-primary text-on-primary px-10 py-3 rounded-xl font-label-lg text-label-lg font-bold flex items-center gap-2 hover:shadow-lg transition-all active:scale-[0.97] cursor-pointer shadow-md">
                   <span className="material-symbols-outlined !text-[22px]">search</span>
                   بحث
                 </button>
