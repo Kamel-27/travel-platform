@@ -25,6 +25,7 @@ something could not be confirmed from the public docs it is explicitly flagged
 | [api-contracts.md](./api-contracts.md) | **Full per-endpoint request/response contracts** with real JSON examples and error codes — self-contained, no portal access needed |
 | [architecture.md](./architecture.md) | **System architecture**: ports & adapters design, TypeScript interfaces/DTOs, sequence diagrams, error taxonomy, state-machine mapping |
 | [integration-guide.md](./integration-guide.md) | Step-by-step integration into the NestJS backend (phased, Duffel-safe) |
+| [phase-1-provider-port-spec.md](./phase-1-provider-port-spec.md) | **Standalone executable spec** for the `refactor/flight-provider-port` branch — the Duffel-safe abstraction, ready to hand to an implementer |
 | [duffel-coupling-and-gaps.md](./duffel-coupling-and-gaps.md) | Where the code is hard-wired to Duffel today, and what PKFare does **not** offer that we must resolve |
 | [switch-runbook.md](./switch-runbook.md) | Production cutover, disabling Duffel, and rollback |
 
