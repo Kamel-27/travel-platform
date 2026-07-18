@@ -244,7 +244,8 @@ describe('DuffelService', () => {
       const [, requestInit] = mockFetch.mock.calls[0];
       const sentBody = JSON.parse(requestInit.body as string);
       expect(sentBody.data.payments[0]).toEqual({
-        type: 'instant',
+        // Duffel's payment type enum is `balance` (not the order-level `instant`)
+        type: 'balance',
         amount: '1542.00',
         currency: 'USD',
       });

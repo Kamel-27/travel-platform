@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsEmail,
   IsEnum,
@@ -69,6 +69,18 @@ export class PassengerInputDto {
 
   @IsString()
   @IsNotEmpty()
+  // Strip spaces/dashes/parens and normalise a leading 00 to + so common
+  // inputs pass, then enforce E.164 — Duffel rejects anything else with a
+  // 422 invalid_phone_number at order creation (after the customer has paid).
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string'
+      ? value.replace(/[\s()-]/g, '').replace(/^00/, '+')
+      : value,
+  )
+  @Matches(/^\+[1-9]\d{6,14}$/, {
+    message:
+      'phone_number must be in international E.164 format, e.g. +201091241325',
+  })
   phone_number: string;
 
   @IsInt()
