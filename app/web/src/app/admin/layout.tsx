@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { href: "/admin/bookings", icon: "airplane_ticket", label: "الحجوزات" },
   { href: "/admin/ledger", icon: "account_balance_wallet", label: "دفتر الأستاذ" },
   { href: "/admin/refunds", icon: "currency_exchange", label: "الاستردادات" },
+  { href: "/admin/support", icon: "support_agent", label: "تذاكر الدعم" },
   { href: "/admin/users", icon: "group", label: "المستخدمون" },
   { href: "/admin/markup-rules", icon: "percent", label: "هامش الربح" },
   { href: "/admin/audit-logs", icon: "history", label: "سجل التدقيق" },

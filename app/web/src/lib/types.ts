@@ -199,6 +199,33 @@ export interface Paginated<T> {
   next_cursor: string | null;
 }
 
+// ── Support tickets ─────────────────────────────────────────────────────
+
+export type SupportTicketType =
+  | "cancellation"
+  | "flight_delay"
+  | "name_change"
+  | "refund"
+  | "other";
+
+export type SupportTicketStatus = "open" | "in_progress" | "resolved";
+
+export interface SupportTicket {
+  id: string;
+  type: SupportTicketType;
+  booking_reference: string | null;
+  description: string;
+  status: SupportTicketStatus;
+  admin_note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminSupportTicket extends SupportTicket {
+  user_id: string;
+  user_email: string | null;
+}
+
 // ── Admin surface (api_contract.md §7, technical_admin only) ────────────
 
 export interface AdminListMeta {

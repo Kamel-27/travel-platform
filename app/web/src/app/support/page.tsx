@@ -1,70 +1,93 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import Image from "next/image";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
+import { useAuth } from "@/lib/auth-context";
+import { api, ApiError } from "@/lib/api-client";
+import { formatSystemTimestamp } from "@/lib/datetime";
+import type { SupportTicket, SupportTicketType } from "@/lib/types";
 
-interface FileItem {
-  name: string;
-  size: string;
-}
+const TYPE_OPTIONS: { value: SupportTicketType; label: string }[] = [
+  { value: "cancellation", label: "إلغاء حجز" },
+  { value: "flight_delay", label: "تأخير رحلة" },
+  { value: "name_change", label: "تعديل اسم المسافر" },
+  { value: "refund", label: "استرداد مبلغ" },
+  { value: "other", label: "أخرى" },
+];
+
+const TYPE_LABELS = Object.fromEntries(TYPE_OPTIONS.map((o) => [o.value, o.label]));
+
+const STATUS_BADGES: Record<SupportTicket["status"], { label: string; classes: string }> = {
+  open: { label: "مفتوحة", classes: "bg-orange-500/10 border-orange-500/30 text-orange-600" },
+  in_progress: { label: "قيد المعالجة", classes: "bg-primary/10 border-primary/30 text-primary" },
+  resolved: { label: "تم الحل", classes: "bg-green-500/10 border-green-500/30 text-green-600" },
+};
 
 export default function HelpSupportPage() {
+  const { isAuthenticated, isLoading } = useAuth();
+
   // FAQ Accordion State
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
   // Form State
-  const [issueType, setIssueType] = useState("إلغاء حجز");
+  const [issueType, setIssueType] = useState<SupportTicketType>("cancellation");
   const [bookingRef, setBookingRef] = useState("");
   const [description, setDescription] = useState("");
-  const [attachments, setAttachments] = useState<FileItem[]>([]);
-  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitSuccess, setSubmitSuccess] = useState(false);
 
-  // Drag and Drop simulation
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const filesArray = Array.from(e.target.files).map((file) => ({
-        name: file.name,
-        size: (file.size / (1024 * 1024)).toFixed(2) + " MB",
-      }));
-      setAttachments((prev) => [...prev, ...filesArray]);
+  // My tickets
+  const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [ticketsLoaded, setTicketsLoaded] = useState(false);
+
+  const loadTickets = useCallback(async () => {
+    try {
+      const res = await api.get<{ data: SupportTicket[] }>("/support/tickets");
+      setTickets(res.data);
+    } catch {
+      // Non-fatal: the page still works without the history list.
+    } finally {
+      setTicketsLoaded(true);
     }
-  };
+  }, []);
 
-  const handleDragOver = (e: React.DragEvent) => {
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    void (async () => {
+      await loadTickets();
+    })();
+  }, [isAuthenticated, loadTickets]);
+
+  const handleTicketSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-  };
+    setSubmitting(true);
+    setSubmitError(null);
+    setSubmitSuccess(false);
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    if (e.dataTransfer.files) {
-      const filesArray = Array.from(e.dataTransfer.files).map((file) => ({
-        name: file.name,
-        size: (file.size / (1024 * 1024)).toFixed(2) + " MB",
-      }));
-      setAttachments((prev) => [...prev, ...filesArray]);
-    }
-  };
-
-  const removeAttachment = (index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  // Submit Ticket Simulation
-  const handleTicketSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitted(true);
-    setTimeout(() => {
-      setSubmitted(false);
+    try {
+      await api.post<SupportTicket>("/support/tickets", {
+        type: issueType,
+        booking_reference: bookingRef.trim() || undefined,
+        description: description.trim(),
+      });
+      setSubmitSuccess(true);
       setBookingRef("");
       setDescription("");
-      setAttachments([]);
-      alert("تم إرسال تذكرة الدعم بنجاح! سيقوم فريق خدمة العملاء بالتواصل معك قريباً.");
-    }, 2000);
+      void loadTickets();
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        setSubmitError(err.message || "فشل إرسال التذكرة، حاول مرة أخرى.");
+      } else {
+        setSubmitError("حدث خطأ غير متوقع أثناء إرسال التذكرة.");
+      }
+    } finally {
+      setSubmitting(false);
+    }
   };
-
-
 
   const toggleFaq = (index: number) => {
     setOpenFaq(openFaq === index ? null : index);
@@ -72,20 +95,20 @@ export default function HelpSupportPage() {
 
   const faqs = [
     {
-      q: "كيف يمكنني استرجاع مبلغ الحجز؟",
-      a: "يمكنك طلب الاسترجاع عبر الدخول إلى 'رحلاتي'، اختيار الرحلة المراد إلغاؤها، ثم النقر على 'طلب استرداد'. يرجى ملاحظة أن الرسوم تعتمد على سياسة شركة الطيران أو الفندق المختارة أثناء الحجز.",
+      q: "كيف يمكنني إلغاء حجزي واسترجاع المبلغ؟",
+      a: "من صفحة «رحلاتي» اختر الحجز ثم «إلغاء الحجز». تظهر لك رسوم الإلغاء والمبلغ المسترد قبل التأكيد، وبعض الحجوزات تتطلب مراجعة يدوية من فريق الدعم خلال 24 ساعة. يُرد المبلغ تلقائياً بنفس طريقة الدفع.",
     },
     {
-      q: "طريقة تعديل اسم المسافر وطريقة التواصل",
-      a: "تعديل الأسماء يخضع لشروط صارمة من قبل شركات الطيران. نوصي بالتواصل الفوري مع الدعم الفني عبر نموذج التذاكر على هذه الصفحة أو الدردشة المباشرة لتجنب أي رسوم إضافية قد تفرضها الناقلة.",
+      q: "كيف أحصل على تذكرتي الإلكترونية؟",
+      a: "بعد تأكيد الحجز يمكنك تحميل التذكرة الإلكترونية (PDF) من صفحة تفاصيل الحجز في «رحلاتي»، وتتضمن أرقام التذاكر الصادرة من شركة الطيران لكل مسافر.",
     },
     {
-      q: "سياسة الأمتعة الإضافية والأسعار",
-      a: "يمكنك إضافة أمتعة زائدة بأسعار مخفضة حتى 24 ساعة قبل موعد الإقلاع من خلال تطبيق سفريات أو البوابة الإلكترونية. الأسعار تختلف حسب الوجهة ووزن الحقيبة المضافة.",
+      q: "طريقة تعديل اسم المسافر",
+      a: "تعديل الأسماء يخضع لشروط صارمة من قبل شركات الطيران. افتح تذكرة دعم من نوع «تعديل اسم المسافر» مع رقم الحجز وسيتواصل معك الفريق بالخيارات المتاحة وأي رسوم تفرضها الناقلة.",
     },
     {
       q: "ما هي خيارات الدفع المتاحة؟",
-      a: "نحن ندعم مجموعة واسعة من خيارات الدفع الآمنة بما في ذلك بطاقات مدى البنكية، فيزا، ماستركارد، Apple Pay، والتحويل البنكي المباشر مع توفر خيارات التقسيط بدون فوائد.",
+      a: "الدفع الإلكتروني بالبطاقات البنكية (فيزا وماستركارد) عبر بوابة دفع آمنة ومشفرة. لا يتم تأكيد أي حجز إلا بعد نجاح عملية الدفع، ولا نخزن بيانات بطاقتك على خوادمنا.",
     },
   ];
 
@@ -106,146 +129,157 @@ export default function HelpSupportPage() {
 
         {/* Main Content Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-lg items-start mt-8">
-          {/* Left Column: Support Ticket Form */}
-          <section className="lg:col-span-7 bg-surface-container-lowest rounded-2xl p-md md:p-lg shadow-sm border border-outline-variant">
-            <div className="flex items-center gap-sm mb-lg">
-              <span className="material-symbols-outlined text-primary text-[32px]">
-                support_agent
-              </span>
-              <h2 className="font-headline-md text-headline-md text-on-surface font-bold">
-                فتح تذكرة دعم جديدة
-              </h2>
-            </div>
-            
-            <form onSubmit={handleTicketSubmit} className="space-y-md">
-              <div className="space-y-xs">
-                <label className="font-label-md text-label-md text-on-surface-variant block pr-1">
-                  نوع المشكلة
-                </label>
-                <div className="relative">
-                  <select
-                    value={issueType}
-                    onChange={(e) => setIssueType(e.target.value)}
-                    className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg h-12 pr-4 pl-10 text-on-surface focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none appearance-none cursor-pointer"
+          {/* Right Column (RTL first): Support Ticket Form */}
+          <section className="lg:col-span-7 space-y-lg">
+            <div className="bg-surface-container-lowest rounded-2xl p-md md:p-lg shadow-sm border border-outline-variant">
+              <div className="flex items-center gap-sm mb-lg">
+                <span className="material-symbols-outlined text-primary text-[32px]">
+                  support_agent
+                </span>
+                <h2 className="font-headline-md text-headline-md text-on-surface font-bold">
+                  فتح تذكرة دعم جديدة
+                </h2>
+              </div>
+
+              {!isLoading && !isAuthenticated ? (
+                <div className="text-center py-lg space-y-md">
+                  <span className="material-symbols-outlined text-outline text-5xl">lock</span>
+                  <p className="font-body-lg text-on-surface-variant">
+                    سجّل الدخول لفتح تذكرة دعم ومتابعة حالة تذاكرك السابقة.
+                  </p>
+                  <Link
+                    href="/signin?next=/support"
+                    className="inline-block bg-primary text-on-primary px-lg py-md rounded-xl font-bold font-title-lg shadow-md hover:opacity-90 active:scale-95 transition-all"
                   >
-                    <option value="إلغاء حجز">إلغاء حجز</option>
-                    <option value="تأخير رحلة">تأخير رحلة</option>
-                    <option value="تعديل اسم المسافر">تعديل اسم المسافر</option>
-                    <option value="أخرى">أخرى</option>
-                  </select>
-                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant">
-                    expand_more
-                  </span>
+                    تسجيل الدخول
+                  </Link>
                 </div>
-              </div>
-
-              <div className="space-y-xs">
-                <label className="font-label-md text-label-md text-on-surface-variant block pr-1">
-                  رقم الحجز
-                </label>
-                <input
-                  required
-                  value={bookingRef}
-                  onChange={(e) => setBookingRef(e.target.value)}
-                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg h-12 px-md text-on-surface placeholder-on-surface-variant/30 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
-                  placeholder="مثال: SAF-98249-RUH"
-                  type="text"
-                />
-              </div>
-
-              <div className="space-y-xs">
-                <label className="font-label-md text-label-md text-on-surface-variant block pr-1">
-                  شرح المشكلة
-                </label>
-                <textarea
-                  required
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg p-md text-on-surface placeholder-on-surface-variant/30 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none resize-none"
-                  placeholder="يرجى تزويدنا بكافة التفاصيل لنتمكن من مساعدتك بشكل أسرع..."
-                  rows={5}
-                ></textarea>
-              </div>
-
-              <div className="space-y-xs">
-                <label className="font-label-md text-label-md text-on-surface-variant block pr-1">
-                  المرفقات (اختياري)
-                </label>
-                <div
-                  onDragOver={handleDragOver}
-                  onDrop={handleDrop}
-                  className="border-2 border-dashed border-outline-variant rounded-xl p-lg text-center hover:bg-surface-container-low transition-colors cursor-pointer group relative"
-                >
-                  <input
-                    type="file"
-                    multiple
-                    onChange={handleFileUpload}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  />
-                  <span className="material-symbols-outlined text-outline text-[48px] group-hover:text-primary transition-colors">
-                    upload_file
-                  </span>
-                  <p className="text-on-surface-variant font-body-md mt-base font-medium">
-                    اسحب وأفلت صور الجوازات أو الإيصالات هنا أو انقر للتصفح
-                  </p>
-                  <p className="text-on-surface-variant/50 text-label-sm mt-xs">
-                    الحد الأقصى للحجم 5MB لكل ملف
-                  </p>
-                </div>
-
-                {/* Attachments List */}
-                {attachments.length > 0 && (
-                  <div className="mt-md space-y-sm bg-surface-container rounded-xl p-md border border-outline-variant">
-                    <p className="font-label-md text-label-md text-on-surface-variant font-bold">
-                      الملفات المرفقة ({attachments.length}):
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
-                      {attachments.map((file, index) => (
-                        <div
-                          key={index}
-                          className="flex justify-between items-center bg-surface-container-lowest p-sm rounded-lg border border-outline-variant/60"
-                        >
-                          <div className="flex items-center gap-xs truncate pl-2">
-                            <span className="material-symbols-outlined text-primary text-[20px]">
-                              description
-                            </span>
-                            <span className="font-label-sm text-label-sm text-on-surface truncate">
-                              {file.name}
-                            </span>
-                            <span className="text-[10px] text-outline">({file.size})</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => removeAttachment(index)}
-                            className="text-error hover:bg-error/10 p-1 rounded-full shrink-0 flex items-center justify-center transition-colors"
-                          >
-                            <span className="material-symbols-outlined text-[18px]">close</span>
-                          </button>
-                        </div>
-                      ))}
+              ) : (
+                <form onSubmit={handleTicketSubmit} className="space-y-md">
+                  <div className="space-y-xs">
+                    <label className="font-label-md text-label-md text-on-surface-variant block pr-1">
+                      نوع المشكلة
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={issueType}
+                        onChange={(e) => setIssueType(e.target.value as SupportTicketType)}
+                        className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg h-12 pr-4 pl-10 text-on-surface focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none appearance-none cursor-pointer"
+                      >
+                        {TYPE_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                      <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant">
+                        expand_more
+                      </span>
                     </div>
                   </div>
-                )}
-              </div>
 
-              <button
-                type="submit"
-                disabled={submitted}
-                className="w-full h-14 bg-primary text-on-primary font-bold text-title-lg rounded-xl shadow-md hover:shadow-lg active:scale-[0.98] transition-all duration-200 mt-md flex items-center justify-center gap-xs cursor-pointer"
-              >
-                {submitted ? (
-                  <>
-                    <span className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full"></span>
-                    <span>جاري إرسال التذكرة...</span>
-                  </>
-                ) : (
-                  <span>إرسال التذكرة</span>
-                )}
-              </button>
-            </form>
+                  <div className="space-y-xs">
+                    <label className="font-label-md text-label-md text-on-surface-variant block pr-1">
+                      رقم الحجز (اختياري)
+                    </label>
+                    <input
+                      value={bookingRef}
+                      onChange={(e) => setBookingRef(e.target.value)}
+                      className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg h-12 px-md text-on-surface placeholder-on-surface-variant/30 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none font-mono"
+                      placeholder="مثال: KKJNPU"
+                      type="text"
+                      dir="ltr"
+                    />
+                  </div>
+
+                  <div className="space-y-xs">
+                    <label className="font-label-md text-label-md text-on-surface-variant block pr-1">
+                      شرح المشكلة
+                    </label>
+                    <textarea
+                      required
+                      minLength={10}
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      className="w-full bg-surface-container-lowest border border-outline-variant rounded-lg p-md text-on-surface placeholder-on-surface-variant/30 focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none resize-none"
+                      placeholder="يرجى تزويدنا بكافة التفاصيل لنتمكن من مساعدتك بشكل أسرع..."
+                      rows={5}
+                    ></textarea>
+                  </div>
+
+                  {submitError && (
+                    <div className="bg-error-container/20 border border-error text-error p-md rounded-xl text-sm">
+                      {submitError}
+                    </div>
+                  )}
+                  {submitSuccess && (
+                    <div className="bg-green-500/10 border border-green-500/30 text-green-600 p-md rounded-xl text-sm font-bold flex items-center gap-xs">
+                      <span className="material-symbols-outlined text-[20px]">check_circle</span>
+                      تم إرسال التذكرة بنجاح — ستجدها في قائمة تذاكرك أدناه وسيتواصل معك الفريق قريباً.
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="w-full h-14 bg-primary text-on-primary font-bold text-title-lg rounded-xl shadow-md hover:shadow-lg active:scale-[0.98] transition-all duration-200 mt-md flex items-center justify-center gap-xs cursor-pointer disabled:opacity-60"
+                  >
+                    {submitting ? (
+                      <>
+                        <span className="animate-spin h-5 w-5 border-2 border-on-primary border-t-transparent rounded-full"></span>
+                        <span>جاري إرسال التذكرة...</span>
+                      </>
+                    ) : (
+                      <span>إرسال التذكرة</span>
+                    )}
+                  </button>
+                </form>
+              )}
+            </div>
+
+            {/* My tickets */}
+            {isAuthenticated && ticketsLoaded && tickets.length > 0 && (
+              <div className="bg-surface-container-lowest rounded-2xl p-md md:p-lg shadow-sm border border-outline-variant">
+                <div className="flex items-center gap-sm mb-md">
+                  <span className="material-symbols-outlined text-primary text-[28px]">
+                    confirmation_number
+                  </span>
+                  <h2 className="font-title-lg text-title-lg text-on-surface font-bold">
+                    تذاكري السابقة
+                  </h2>
+                </div>
+                <div className="space-y-sm">
+                  {tickets.map((t) => (
+                    <div key={t.id} className="border border-outline-variant/60 rounded-xl p-md space-y-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-xs">
+                        <div className="flex items-center gap-sm">
+                          <span className="font-label-md text-label-md font-bold text-on-surface">
+                            {TYPE_LABELS[t.type] ?? t.type}
+                          </span>
+                          {t.booking_reference && (
+                            <span className="font-mono text-xs text-on-surface-variant bg-surface-container px-sm py-[2px] rounded-full" dir="ltr">
+                              #{t.booking_reference}
+                            </span>
+                          )}
+                        </div>
+                        <span className={`border font-label-sm text-label-sm px-sm py-[2px] rounded-full ${STATUS_BADGES[t.status].classes}`}>
+                          {STATUS_BADGES[t.status].label}
+                        </span>
+                      </div>
+                      <p className="text-sm text-on-surface-variant leading-relaxed">{t.description}</p>
+                      {t.admin_note && (
+                        <div className="bg-primary/5 border border-primary/20 rounded-lg p-sm text-sm text-on-surface flex gap-xs items-start">
+                          <span className="material-symbols-outlined text-primary text-[18px] shrink-0 mt-0.5">support_agent</span>
+                          <p><span className="font-bold">رد فريق الدعم:</span> {t.admin_note}</p>
+                        </div>
+                      )}
+                      <p className="text-[11px] text-on-surface-variant/60">{formatSystemTimestamp(t.created_at)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </section>
 
-          {/* Right Column: FAQ Accordions */}
+          {/* Left Column: FAQ Accordions */}
           <section className="lg:col-span-5 space-y-md">
             <div className="flex items-center gap-sm mb-lg">
               <span className="material-symbols-outlined text-primary text-[32px]">
@@ -255,7 +289,7 @@ export default function HelpSupportPage() {
                 الأسئلة الأكثر شيوعاً
               </h2>
             </div>
-            
+
             <div className="space-y-base">
               {faqs.map((faq, index) => (
                 <div

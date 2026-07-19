@@ -8,6 +8,19 @@ import DatePicker from "@/components/DatePicker";
 import PaxCabinPicker, { type PaxCabinValue } from "@/components/PaxCabinPicker";
 import SiteHeader from "@/components/SiteHeader";
 import SiteFooter from "@/components/SiteFooter";
+import { getAirportByCode, type Airport } from "@/lib/airports";
+
+// Destination tiles reuse the shared airports table — no duplicated labels.
+const POPULAR_DESTINATIONS = ["DXB", "IST", "CAI", "LHR", "DOH", "JED", "BKK", "CDG"]
+  .map((code) => getAirportByCode(code))
+  .filter((a): a is Airport => Boolean(a));
+
+const DEST_GRADIENTS = [
+  "from-[#0f4c81] to-[#2286c3]",
+  "from-[#123f37] to-[#2aa198]",
+  "from-[#4c2f7c] to-[#8b5fd6]",
+  "from-[#7c2d4a] to-[#c2426f]",
+];
 
 export default function HomepagePage() {
   const router = useRouter();
@@ -23,8 +36,14 @@ export default function HomepagePage() {
   const [directOnly, setDirectOnly] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  const [newsletterEmail, setNewsletterEmail] = useState("");
-  const [subscribed, setSubscribed] = useState(false);
+  // Featured destination tiles fill the search card above and scroll to it —
+  // real functionality, no invented prices.
+  const pickDestination = (code: string) => {
+    setFlightDest(code);
+    if (flightOrigin === code) setFlightOrigin("");
+    setSearchError(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const handleFlightSearch = () => {
     if (!flightOrigin || !flightDest) {
@@ -201,66 +220,75 @@ export default function HomepagePage() {
           </div>
         </section>
 
-        {/* Why Safariyat */}
-        <section id="features" className="bg-surface-container py-xl">
-          <div className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-            <div className="mb-lg text-center">
-              <h2 className="font-headline-lg text-headline-lg text-primary">لماذا تختار سفريات؟</h2>
-              <p className="text-on-surface-variant font-body-md text-body-md mt-xs">أدوات حجز متكاملة تجعل تجربة سفرك أسهل</p>
+        {/* Popular destinations — tiles fill the search card above */}
+        <section className="py-xl px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+          <div className="flex items-end justify-between mb-lg">
+            <div>
+              <h2 className="font-headline-lg text-headline-lg text-on-surface font-bold">وجهات رائجة</h2>
+              <p className="text-on-surface-variant font-body-md text-body-md mt-xs">اختر وجهتك وسنجهّز البحث لك في الأعلى</p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-lg">
-              <div className="bg-surface-container-lowest rounded-xl p-lg border border-outline-variant text-center space-y-sm">
-                <span className="material-symbols-outlined text-primary text-5xl">flight_takeoff</span>
-                <h4 className="font-title-lg text-title-lg text-on-surface">أسعار لحظية</h4>
-                <p className="text-on-surface-variant font-body-md text-body-md">أسعار محدثة مباشرة من شركات الطيران بدون رسوم مخفية أو وسطاء.</p>
-              </div>
-              <div className="bg-surface-container-lowest rounded-xl p-lg border border-outline-variant text-center space-y-sm">
-                <span className="material-symbols-outlined text-primary text-5xl">verified_user</span>
-                <h4 className="font-title-lg text-title-lg text-on-surface">دفع آمن ومشفر</h4>
-                <p className="text-on-surface-variant font-body-md text-body-md">جميع عمليات الدفع تتم عبر بوابات معتمدة مع تأكيد فوري للحجز.</p>
-              </div>
-              <div className="bg-surface-container-lowest rounded-xl p-lg border border-outline-variant text-center space-y-sm">
-                <span className="material-symbols-outlined text-primary text-5xl">support_agent</span>
-                <h4 className="font-title-lg text-title-lg text-on-surface">دعم فني متواصل</h4>
-                <p className="text-on-surface-variant font-body-md text-body-md">فريق دعم جاهز لمساعدتك في أي وقت مع سياسة إلغاء واسترداد واضحة.</p>
-              </div>
-            </div>
+            <span className="material-symbols-outlined text-primary text-4xl hidden md:block">travel_explore</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-base md:gap-md">
+            {POPULAR_DESTINATIONS.map((d, i) => (
+              <button
+                key={d.code}
+                type="button"
+                onClick={() => pickDestination(d.code)}
+                className={`group relative overflow-hidden rounded-2xl p-md h-36 md:h-40 text-right text-white shadow-md hover:shadow-xl transition-all duration-300 hover:-translate-y-1 cursor-pointer bg-gradient-to-br ${DEST_GRADIENTS[i % DEST_GRADIENTS.length]}`}
+              >
+                <span className="absolute -left-4 -bottom-6 material-symbols-outlined text-white/10 text-[110px] rotate-[-20deg] group-hover:rotate-0 transition-transform duration-500 pointer-events-none">
+                  flight
+                </span>
+                <div className="relative z-10 flex flex-col h-full justify-between items-start">
+                  <span className="font-mono text-xs bg-white/15 backdrop-blur-sm rounded-full px-sm py-[2px] tracking-widest" dir="ltr">{d.code}</span>
+                  <div>
+                    <p className="font-headline-md text-headline-md font-extrabold leading-tight">{d.cityAr}</p>
+                    <p className="font-label-sm text-label-sm text-white/75">{d.countryAr}</p>
+                  </div>
+                </div>
+              </button>
+            ))}
           </div>
         </section>
 
-        {/* Newsletter */}
-        <section className="py-xl px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
-          <div className="bg-primary-container rounded-2xl p-lg md:p-xl flex flex-col md:flex-row items-center justify-between gap-lg relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-64 h-64 bg-primary/20 rounded-full -translate-x-1/2 -translate-y-1/2 blur-3xl"></div>
-            <div className="relative z-10 text-right md:w-1/2">
-              <h2 className="font-headline-lg text-headline-lg text-on-primary-fixed-variant mb-base">ابقَ على اطلاع بأفضل العروض</h2>
-              <p className="font-body-lg text-body-lg text-on-primary-container">اشترك في نشرتنا البريدية لتصلك أحدث الصفقات والخصومات الحصرية قبل أي شخص آخر.</p>
+        {/* How it works */}
+        <section className="bg-surface-container py-xl">
+          <div className="px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
+            <div className="mb-lg text-center">
+              <h2 className="font-headline-lg text-headline-lg text-on-surface font-bold">احجز رحلتك في ثلاث خطوات</h2>
+              <p className="text-on-surface-variant font-body-md text-body-md mt-xs">من البحث إلى التذكرة الإلكترونية في دقائق</p>
             </div>
-            <div className="relative z-10 w-full md:w-[45%] md:max-w-md shrink-0">
-              {subscribed ? (
-                <div className="flex items-center gap-sm bg-surface-container-lowest rounded-lg px-md py-3">
-                  <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
-                  <span className="font-body-md text-body-md text-on-surface">تم تسجيل بريدك — ستصلك أفضل العروض قريباً.</span>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-md md:gap-lg">
+              {[
+                { icon: "flight_takeoff", step: "١", title: "ابحث وقارن", desc: "حدد وجهتك وتاريخ سفرك وقارن الرحلات والأسعار المحدثة لحظياً من شركات الطيران." },
+                { icon: "credit_card", step: "٢", title: "ادفع بأمان", desc: "أدخل بيانات المسافرين وادفع عبر بوابة دفع مشفرة — لا يُؤكَّد الحجز إلا بعد نجاح الدفع." },
+                { icon: "airplane_ticket", step: "٣", title: "استلم تذكرتك", desc: "يصدر رقم الحجز (PNR) فوراً وتحمّل تذكرتك الإلكترونية PDF من صفحة رحلاتي في أي وقت." },
+              ].map((s) => (
+                <div key={s.step} className="relative bg-surface-container-lowest rounded-2xl p-lg border border-outline-variant shadow-sm">
+                  <div className="absolute -top-5 right-6 w-10 h-10 rounded-full bg-primary text-on-primary flex items-center justify-center font-headline-md font-bold shadow-md">
+                    {s.step}
+                  </div>
+                  <span className="material-symbols-outlined text-primary text-4xl mb-sm">{s.icon}</span>
+                  <h3 className="font-title-lg text-title-lg text-on-surface font-bold mb-xs">{s.title}</h3>
+                  <p className="text-on-surface-variant font-body-md text-body-md leading-relaxed">{s.desc}</p>
                 </div>
-              ) : (
-                <form
-                  className="flex flex-col sm:flex-row gap-base"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (newsletterEmail.includes("@")) setSubscribed(true);
-                  }}
-                >
-                  <input
-                    className="flex-grow bg-surface-container-lowest border-none rounded-lg px-md py-3 focus:ring-2 focus:ring-primary font-body-md text-body-md"
-                    placeholder="بريدك الإلكتروني"
-                    type="email"
-                    required
-                    value={newsletterEmail}
-                    onChange={(e) => setNewsletterEmail(e.target.value)}
-                  />
-                  <button type="submit" className="bg-primary text-on-primary px-md py-3 rounded-lg font-bold hover:bg-surface-tint transition-all whitespace-nowrap cursor-pointer">اشترك الآن</button>
-                </form>
-              )}
+              ))}
+            </div>
+
+            {/* Trust strip */}
+            <div className="mt-xl grid grid-cols-2 md:grid-cols-4 gap-base">
+              {[
+                { icon: "bolt", label: "تأكيد فوري للحجز" },
+                { icon: "lock", label: "دفع آمن ومشفر" },
+                { icon: "currency_exchange", label: "سياسة استرداد واضحة" },
+                { icon: "support_agent", label: "دعم فني متواصل" },
+              ].map((t) => (
+                <div key={t.icon} className="flex items-center gap-sm bg-surface-container-lowest border border-outline-variant/60 rounded-xl px-md py-sm">
+                  <span className="material-symbols-outlined text-primary">{t.icon}</span>
+                  <span className="font-label-md text-label-md text-on-surface">{t.label}</span>
+                </div>
+              ))}
             </div>
           </div>
         </section>
