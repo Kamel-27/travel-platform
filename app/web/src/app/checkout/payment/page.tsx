@@ -21,6 +21,12 @@ function PaymentInner() {
   const [error, setError] = useState<string | null>(null);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  // Terminal booking outcomes get a dedicated page (not the generic error box):
+  // "order_failed" = paid but airline couldn't ticket → auto-refunded;
+  // "offer_expired" = offer lapsed before any charge.
+  const [terminalStatus, setTerminalStatus] = useState<
+    "order_failed" | "offer_expired" | null
+  >(null);
 
   const pollingRef = useRef<boolean>(true);
 
@@ -44,9 +50,27 @@ function PaymentInner() {
 
         setBooking(bookingData);
 
-        // If already confirmed, redirect directly
-        if (bookingData.status === "confirmed") {
-          router.push(`/checkout/confirmation?booking_id=${bookingId}`);
+        // Only awaiting_payment bookings can take a payment intent. For any
+        // other status, route to the right screen WITHOUT calling
+        // payment-intent (which 409s and leaks a raw "must be in
+        // awaiting_payment" error) — this covers reloads of a finished flow.
+        if (bookingData.status !== "awaiting_payment") {
+          if (bookingData.status === "confirmed") {
+            router.push(`/checkout/confirmation?booking_id=${bookingId}`);
+          } else if (bookingData.status === "order_failed") {
+            setTerminalStatus("order_failed");
+            setLoading(false);
+          } else if (bookingData.status === "failed") {
+            setTerminalStatus("offer_expired");
+            setLoading(false);
+          } else {
+            // paid (or another in-flight state): payment already landed —
+            // show "confirming" and let the poller resolve to confirmed/failed.
+            setStatusMessage(
+              "تم استلام الدفع بنجاح. جاري تأكيد حجزك مع شركة الطيران...",
+            );
+            setLoading(false);
+          }
           return;
         }
 
@@ -89,6 +113,9 @@ function PaymentInner() {
   // 2. Countdown timer
   useEffect(() => {
     if (timeLeft === null || timeLeft <= 0) return;
+    // Once payment has landed (paid/confirmed/terminal), the offer countdown is
+    // irrelevant — don't let it overwrite the screen with an "expired" error.
+    if (booking?.status && booking.status !== "awaiting_payment") return;
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev === null || prev <= 0) {
@@ -100,7 +127,7 @@ function PaymentInner() {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [timeLeft]);
+  }, [timeLeft, booking?.status]);
 
   // 3. Polling for payment status (T4/T5 transitions)
   useEffect(() => {
@@ -125,9 +152,17 @@ function PaymentInner() {
           pollingRef.current = false;
           router.push(`/checkout/confirmation?booking_id=${bookingId}`);
           return;
-        } else if (updatedBooking.status === "order_failed" || updatedBooking.status === "failed") {
+        } else if (updatedBooking.status === "order_failed") {
+          // Paid, but the airline rejected ticketing — the booking is terminal
+          // and already auto-refunded. Retrying payment would 409, so show a
+          // dedicated refund page instead of asking the user to pay again.
           pollingRef.current = false;
-          setError("فشل تأكيد الحجز. يرجى محاولة الدفع مرة أخرى أو الاتصال بالدعم.");
+          setTerminalStatus("order_failed");
+          return;
+        } else if (updatedBooking.status === "failed") {
+          // Offer lapsed before any successful charge — no money moved.
+          pollingRef.current = false;
+          setTerminalStatus("offer_expired");
           return;
         }
       } catch (err) {
@@ -164,6 +199,62 @@ function PaymentInner() {
     );
   }
 
+  // Paid, but the airline couldn't issue the ticket → terminal + auto-refunded.
+  if (terminalStatus === "order_failed") {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-base text-center p-4" dir="rtl">
+        <div className="w-20 h-20 rounded-full bg-tertiary-container/40 flex items-center justify-center">
+          <span className="material-symbols-outlined text-tertiary text-4xl">currency_exchange</span>
+        </div>
+        <h1 className="font-headline-sm text-headline-sm font-bold text-on-surface max-w-md">
+          تعذّر إصدار التذكرة — ويجري ردّ مبلغك بالكامل
+        </h1>
+        <p className="font-body-md text-body-md text-on-surface-variant max-w-md leading-relaxed">
+          تم استلام دفعتك بنجاح، لكن لم تتمكّن شركة الطيران من إصدار التذكرة لهذا الحجز.
+          لا حاجة لأي إجراء منك — فقد بدأ ردّ كامل المبلغ تلقائياً إلى وسيلة الدفع نفسها،
+          وقد يستغرق ظهوره في حسابك من 5 إلى 10 أيام عمل حسب البنك.
+        </p>
+        <div className="flex flex-col sm:flex-row items-center gap-sm mt-sm">
+          <Link href="/flights" className="bg-primary text-on-primary px-lg py-3 rounded-xl font-label-md text-label-md font-bold flex items-center gap-xs">
+            <span className="material-symbols-outlined !text-[18px]">search</span>
+            البحث عن رحلة أخرى
+          </Link>
+          <Link href="/support" className="border border-outline-variant text-primary px-lg py-3 rounded-xl font-label-md text-label-md font-bold flex items-center gap-xs">
+            <span className="material-symbols-outlined !text-[18px]">support_agent</span>
+            تواصل مع الدعم
+          </Link>
+        </div>
+        {bookingId && (
+          <p className="font-label-sm text-label-sm text-on-surface-variant mt-xs">
+            رقم الحجز للمرجع: <span dir="ltr" className="font-mono">{bookingId.slice(0, 8)}</span>
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // Offer lapsed before any successful charge — reassure that no money moved.
+  if (terminalStatus === "offer_expired") {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-base text-center p-4" dir="rtl">
+        <div className="w-20 h-20 rounded-full bg-secondary-container/50 flex items-center justify-center">
+          <span className="material-symbols-outlined text-on-secondary-container text-4xl">timer_off</span>
+        </div>
+        <h1 className="font-headline-sm text-headline-sm font-bold text-on-surface max-w-md">
+          انتهت صلاحية عرض الرحلة
+        </h1>
+        <p className="font-body-md text-body-md text-on-surface-variant max-w-md leading-relaxed">
+          انتهت صلاحية هذا العرض قبل إتمام الدفع، ولم يتم خصم أي مبلغ من بطاقتك.
+          يمكنك البحث عن الرحلة من جديد للحصول على أحدث الأسعار المتاحة.
+        </p>
+        <Link href="/flights" className="mt-sm bg-primary text-on-primary px-lg py-3 rounded-xl font-label-md text-label-md font-bold flex items-center gap-xs">
+          <span className="material-symbols-outlined !text-[18px]">search</span>
+          العودة للبحث عن رحلات
+        </Link>
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-base text-center p-4" dir="rtl">
@@ -175,6 +266,23 @@ function PaymentInner() {
           <span className="material-symbols-outlined !text-[18px]">search</span>
           العودة للبحث عن رحلات
         </Link>
+      </div>
+    );
+  }
+
+  // Payment landed but the airline hasn't confirmed yet — the iframe is no
+  // longer relevant, so show a confirming screen while the poller waits.
+  if (booking?.status === "paid") {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-base text-center p-4" dir="rtl">
+        <span className="material-symbols-outlined text-primary text-5xl animate-spin">progress_activity</span>
+        <h1 className="font-headline-sm text-headline-sm font-bold text-on-surface max-w-md">
+          تم استلام دفعتك بنجاح
+        </h1>
+        <p className="font-body-md text-body-md text-on-surface-variant max-w-md leading-relaxed">
+          جاري تأكيد حجزك مع شركة الطيران وإصدار التذكرة. لا تُغلق هذه الصفحة —
+          سيتم تحويلك تلقائياً بمجرد اكتمال الحجز.
+        </p>
       </div>
     );
   }
