@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { api, ApiError } from "@/lib/api-client";
 import { formatMoney } from "@/lib/money";
-import { formatFlightTime, formatFlightDate, formatIsoDuration } from "@/lib/datetime";
+import { formatFlightTime, formatFlightDate, formatIsoDuration, formatSystemTimestamp } from "@/lib/datetime";
 import { getAirportLabel } from "@/lib/airports";
 import type { Booking, CancellationQuote } from "@/lib/types";
 
@@ -224,7 +224,7 @@ export default function UserDashboardPage() {
               </p>
             </div>
             <div>
-              <Link href="/" className="bg-primary text-white px-md py-sm rounded-lg font-label-md text-label-md shadow-sm hover:scale-98 active:scale-95 transition-transform flex items-center gap-xs">
+              <Link href="/" className="bg-primary text-on-primary px-md py-sm rounded-lg font-label-md text-label-md shadow-sm hover:scale-98 active:scale-95 transition-transform flex items-center gap-xs">
                 <span className="material-symbols-outlined text-[20px]">add</span>
                 <span>حجز رحلة جديدة</span>
               </Link>
@@ -290,19 +290,22 @@ export default function UserDashboardPage() {
                       </div>
                     </div>
 
-                    {b.snapshot?.slices.map((slice, i) => (
-                      <div key={slice.id} className="text-sm pl-4 border-l-2 border-primary/20 space-y-xs my-xs">
-                        <p className="font-bold text-white">
-                          {slice.segments.map(seg => getAirportLabel(seg.marketing_carrier)).join(" / ")} · {getAirportLabel(slice.origin)} ← {getAirportLabel(slice.destination)}
+                    {b.snapshot?.slices.map((slice) => (
+                      <div key={slice.id} className="text-sm pr-4 border-r-2 border-primary/20 space-y-xs my-xs">
+                        <p className="font-bold text-on-surface">
+                          {getAirportLabel(slice.origin)} ← {getAirportLabel(slice.destination)}
+                          <span className="text-on-surface-variant font-normal">
+                            {" "}· {slice.segments.map((seg) => `${seg.marketing_carrier} ${seg.flight_number}`).join(" / ")}
+                          </span>
                         </p>
-                        <p className="text-white/60 text-xs">
+                        <p className="text-on-surface-variant text-xs">
                           المغادرة: {formatFlightDate(slice.segments[0].departing_at.local)} · {formatFlightTime(slice.segments[0].departing_at.local)} · {formatIsoDuration(slice.duration)}
                         </p>
                       </div>
                     ))}
 
                     <div className="flex justify-between items-center flex-wrap gap-sm border-t border-outline-variant/20 pt-sm mt-xs">
-                      <span className="text-xs text-white/50">تاريخ الإنشاء: {new Date(b.created_at).toLocaleDateString("ar-SA")}</span>
+                      <span className="text-xs text-on-surface-variant">تاريخ الإنشاء: {formatSystemTimestamp(b.created_at)}</span>
                       <div className="flex gap-sm">
                         {b.status === "confirmed" && (
                           <button
@@ -342,7 +345,7 @@ export default function UserDashboardPage() {
             </h2>
 
             {loadingBookings ? null : pastBookings.length === 0 ? (
-              <div className="p-md bg-surface-container-high/20 rounded-xl text-center text-white/50 text-sm">
+              <div className="p-md bg-surface-container-high/20 rounded-xl text-center text-on-surface-variant text-sm">
                 لا توجد رحلات سابقة.
               </div>
             ) : (
@@ -351,23 +354,23 @@ export default function UserDashboardPage() {
                   <div key={b.id} className="bg-surface-container-high/30 rounded-xl p-md border border-outline-variant/30 flex justify-between gap-base items-center opacity-85 hover:opacity-100 transition-opacity">
                     <div className="flex-grow space-y-[2px]">
                       <div className="flex justify-between items-start flex-wrap gap-xs">
-                        <h4 className="font-label-md font-bold text-white">
+                        <h4 className="font-label-md font-bold text-on-surface">
                           {b.snapshot?.owner_airline_name || "رحلة سابقة"}
                         </h4>
-                        {b.status === "cancelled" && <span className="text-white/40 text-xs bg-white/5 px-sm py-[2px] rounded-full">ملغى</span>}
+                        {b.status === "cancelled" && <span className="text-on-surface-variant text-xs bg-surface-container-high px-sm py-[2px] rounded-full">ملغى</span>}
                         {b.status === "refunded" && <span className="text-teal-400 text-xs bg-teal-500/10 px-sm py-[2px] rounded-full">مسترجع</span>}
                         {(b.status === "failed" || b.status === "order_failed") && <span className="text-red-400 text-xs bg-red-500/10 px-sm py-[2px] rounded-full">فشل</span>}
                       </div>
                       <p className="text-on-surface-variant font-label-sm">
-                        {b.snapshot?.slices[0]?.origin} ← {b.snapshot?.slices[0]?.destination}
+                        {b.snapshot?.slices[0] ? `${getAirportLabel(b.snapshot.slices[0].origin)} ← ${getAirportLabel(b.snapshot.slices[0].destination)}` : ""}
                       </p>
                       {b.snapshot?.slices[0]?.segments[0]?.departing_at.local && (
-                        <p className="text-white/40 text-[10px]">
+                        <p className="text-on-surface-variant/70 text-[10px]">
                           {formatFlightDate(b.snapshot.slices[0].segments[0].departing_at.local)}
                         </p>
                       )}
                     </div>
-                    <span className="text-white/60 font-bold text-sm shrink-0">
+                    <span className="text-on-surface-variant font-bold text-sm shrink-0">
                       {formatMoney(b.total_amount, b.currency)}
                     </span>
                   </div>
