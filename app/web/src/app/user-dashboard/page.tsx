@@ -1,9 +1,11 @@
-/* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps, @typescript-eslint/no-unused-vars */
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
+import SiteHeader from "@/components/SiteHeader";
+import SiteFooter from "@/components/SiteFooter";
 import { api, ApiError } from "@/lib/api-client";
 import { formatMoney } from "@/lib/money";
 import { formatFlightTime, formatFlightDate, formatIsoDuration, formatSystemTimestamp } from "@/lib/datetime";
@@ -161,34 +163,7 @@ export default function UserDashboardPage() {
 
   return (
     <>
-      <header className="bg-surface-container-lowest dark:bg-inverse-surface shadow-sm sticky top-0 z-50">
-        <nav className="flex justify-between items-center w-full px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto h-16">
-          <div className="flex items-center gap-lg">
-            <Link href="/" className="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary dark:text-inverse-primary">
-              سفريات
-            </Link>
-            <div className="hidden md:flex gap-md">
-              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/">
-                رحلات طيران
-              </Link>
-              <Link className="text-primary dark:text-inverse-primary font-bold border-b-2 border-primary dark:border-inverse-primary pb-1 font-label-md text-label-md" href="/user-dashboard">
-                رحلاتي
-              </Link>
-            </div>
-          </div>
-          <div className="flex items-center gap-sm">
-            <span className="font-label-md text-label-md text-on-surface-variant hidden md:block">
-              {user?.full_name || user?.email}
-            </span>
-            <button
-              onClick={() => logout()}
-              className="bg-surface-container-high text-on-surface px-md py-xs rounded-lg font-label-md text-label-md hover:bg-surface-container-highest transition-all"
-            >
-              تسجيل الخروج
-            </button>
-          </div>
-        </nav>
-      </header>
+      <SiteHeader />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-lg grid grid-cols-1 md:grid-cols-12 gap-lg" dir="rtl">
         <aside className="md:col-span-3">
@@ -380,6 +355,8 @@ export default function UserDashboardPage() {
           </section>
         </div>
       </main>
+
+      <SiteFooter />
 
       {/* Cancellation Quote Modal */}
       {cancellingBooking && (
