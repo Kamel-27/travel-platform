@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { api, apiFetchBlob, ApiError } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
+import SiteHeader from "@/components/SiteHeader";
+import SiteFooter from "@/components/SiteFooter";
 import { formatFlightTime, formatFlightDate, formatIsoDuration } from "@/lib/datetime";
 import { getAirportLabel } from "@/lib/airports";
 import type { Booking } from "@/lib/types";
@@ -243,31 +245,11 @@ function ConfirmationInner() {
         }
       `}</style>
 
-      {/* TopNavBar */}
-      <header className="bg-surface-container-lowest dark:bg-inverse-surface shadow-sm sticky top-0 z-50 border-b border-outline-variant">
-        <nav className="flex justify-between items-center w-full px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto h-16">
-          <div className="flex items-center gap-md">
-            <Link href="/" className="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary dark:text-inverse-primary">
-              سفريات
-            </Link>
-            <div className="hidden md:flex gap-base">
-              <Link className="font-label-md text-label-md text-on-surface-variant dark:text-surface-variant hover:text-primary transition-colors px-xs" href="/">
-                رحلات طيران
-              </Link>
-              <Link className="font-label-md text-label-md text-on-surface-variant dark:text-surface-variant hover:text-primary transition-colors px-xs" href="/hotels">
-                فنادق
-              </Link>
-              <Link className="font-label-md text-label-md text-on-surface-variant dark:text-surface-variant hover:text-primary transition-colors px-xs" href="/support">
-                الدعم والمساعدة
-              </Link>
-            </div>
-          </div>
-        </nav>
-      </header>
+      <SiteHeader />
 
       {/* Toast notification */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 bg-[#0b1120] border border-teal-500/30 text-teal-400 px-lg py-md rounded-xl shadow-2xl flex items-center gap-base animate-bounce">
+        <div className="fixed bottom-5 right-5 z-50 bg-inverse-surface border border-outline-variant text-inverse-on-surface px-lg py-md rounded-xl shadow-2xl flex items-center gap-base">
           <span className="material-symbols-outlined">info</span>
           <span className="font-label-md">{toastMessage}</span>
         </div>
@@ -337,7 +319,7 @@ function ConfirmationInner() {
                             </p>
                             <p className="font-label-md text-label-md text-primary font-bold">{segment.marketing_carrier}</p>
                             <p className="font-label-sm text-label-sm text-on-surface-variant">{getAirportLabel(slice.origin)}</p>
-                            <p className="text-[10px] text-white/40">{formatFlightDate(segment.departing_at.local)}</p>
+                            <p className="text-[10px] text-on-surface-variant/70">{formatFlightDate(segment.departing_at.local)}</p>
                           </div>
 
                           <div className="flex-1 flex flex-col items-center relative px-md">
@@ -349,7 +331,9 @@ function ConfirmationInner() {
                               <div className="absolute -top-1 left-0 w-2 h-2 rounded-full bg-outline"></div>
                               <span className="material-symbols-outlined absolute left-1/2 -translate-x-1/2 -top-3 bg-surface-bright px-xs text-primary text-sm">flight</span>
                             </div>
-                            <span className="font-label-sm text-label-sm text-green-500 font-bold mt-xs">مباشر</span>
+                            <span className="font-label-sm text-label-sm text-green-500 font-bold mt-xs">
+                              {slice.segments.length === 1 ? "مباشر" : `${slice.segments.length - 1} توقف`}
+                            </span>
                           </div>
 
                           <div className="text-left">
@@ -358,7 +342,7 @@ function ConfirmationInner() {
                             </p>
                             <p className="font-label-md text-label-md text-primary font-bold">{segment.marketing_carrier}</p>
                             <p className="font-label-sm text-label-sm text-on-surface-variant">{getAirportLabel(slice.destination)}</p>
-                            <p className="text-[10px] text-white/40">{formatFlightDate(segment.arriving_at.local)}</p>
+                            <p className="text-[10px] text-on-surface-variant/70">{formatFlightDate(segment.arriving_at.local)}</p>
                           </div>
                         </div>
                       </div>
@@ -382,7 +366,7 @@ function ConfirmationInner() {
                             {p.title === "mr" ? "السيد" : p.title === "mrs" ? "السيدة" : p.title === "ms" ? "الآنسة" : "المسافر"}{" "}
                             {p.given_name} {p.family_name}
                           </p>
-                          <p className="text-xs text-white/40">{p.email || "بدون بريد إلكتروني"}</p>
+                          <p className="text-xs text-on-surface-variant/70">{p.email || "بدون بريد إلكتروني"}</p>
                         </div>
                       </div>
                     ))}
@@ -391,24 +375,6 @@ function ConfirmationInner() {
               </div>
             </div>
 
-            {/* Maps Preview Section */}
-            {booking?.snapshot?.slices[0] && (
-              <div className="h-48 w-full bg-surface-dim relative overflow-hidden mt-md">
-                <img 
-                  alt="Location Map" 
-                  className="w-full h-full object-cover opacity-60" 
-                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuDt_naIMsy_t3isLhagkZRAijm_oV4drZq9VSWnWoaNNx9TgQAcI1GWFFH2VbuQllFm0hhGLLej1I8fzG_KLbm8nyUV0XE7RO-8_irfK-stucbrVlBRUJGbndar_nNDbEoQ6a1a0nxZArTJT6oEIxEkYlEi4kfcO5-GBpPAPjARUqNrlxetjdA8ErJ2SxAx9t9TLLnHDT6yvQispZyp8ooUh0NRdHUZWyeKTiO-F3E814wDwBXubJqDRjiDQO_-vZv1qqimhpFtx01H" 
-                />
-                <div className="absolute inset-0 bg-black/10 flex items-center justify-center">
-                  <div className="bg-surface-container-lowest/90 backdrop-blur-md px-md py-sm rounded-full shadow-lg flex items-center gap-xs border border-outline-variant/50">
-                    <span className="material-symbols-outlined text-primary">location_on</span>
-                    <span className="font-label-md text-label-md font-bold text-on-surface">
-                      رحلتك إلى {getAirportLabel(booking.snapshot.slices[0].destination)} مؤكدة
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Right Column: Actions Panel */}
@@ -427,24 +393,6 @@ function ConfirmationInner() {
                   {downloadingPdf ? "جاري تحميل التذكرة..." : "تحميل تذكرة الطيران (PDF)"}
                 </button>
                 
-                {/* Secondary Email */}
-                <button
-                  onClick={() => handleActionClick("سيتم إرسال رسالة تأكيد الحجز والتذاكر إلى البريد الإلكتروني الخاص بالمسافر الرئيسي خلال دقائق.")}
-                  className="w-full bg-white hover:bg-surface-container text-primary border border-primary py-md px-md rounded-xl flex items-center justify-center gap-base font-label-md text-label-md active:scale-95 transition-transform cursor-pointer font-bold"
-                >
-                  <span className="material-symbols-outlined">mail</span>
-                  إرسال الحجز للبريد الإلكتروني
-                </button>
-                
-                {/* Apple Wallet Shortcut */}
-                <button
-                  onClick={() => handleActionClick("ميزة الإضافة إلى محفظة Apple Wallet ستكون متوفرة قريباً.")}
-                  className="w-full bg-black hover:bg-zinc-900 text-white py-md px-md rounded-xl flex items-center justify-center gap-base font-label-md text-label-md active:scale-95 transition-transform cursor-pointer font-bold border border-zinc-800"
-                >
-                  <span className="material-symbols-outlined">wallet</span>
-                  إضافة إلى محفظة Apple Wallet
-                </button>
-
                 <div className="h-px bg-outline-variant/30 my-sm"></div>
                 
                 {/* Secondary Links */}
@@ -473,21 +421,7 @@ function ConfirmationInner() {
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="bg-surface-container dark:bg-surface-dim border-t border-outline-variant mt-xl">
-        <div className="w-full py-lg px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto flex flex-col md:flex-row justify-between items-center gap-base">
-          <div className="flex flex-col gap-xs items-center md:items-start">
-            <span className="font-headline-md text-headline-md font-extrabold text-primary">سفريات</span>
-            <p className="font-label-sm text-label-sm text-on-surface-variant mt-1">© 2026 سفريات. جميع الحقوق محفوظة.</p>
-          </div>
-          <div className="flex flex-wrap justify-center gap-md">
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline opacity-80 hover:opacity-100 transition-opacity" href="/">عن سفريات</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline opacity-80 hover:opacity-100 transition-opacity" href="/">سياسة الخصوصية</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline opacity-80 hover:opacity-100 transition-opacity" href="/">الشروط والأحكام</Link>
-            <Link className="font-label-sm text-label-sm text-on-surface-variant hover:text-primary hover:underline opacity-80 hover:opacity-100 transition-opacity" href="/support">اتصل بنا</Link>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }
