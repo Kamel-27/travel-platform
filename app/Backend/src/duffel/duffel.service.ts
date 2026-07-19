@@ -335,7 +335,10 @@ export class DuffelService {
         passengers: params.passengers,
         payments: [
           {
-            type: 'instant' as const,
+            // Duffel's payments[].type enum accepts `balance` / `arc_bsp_cash` /
+            // `card` — NOT `instant`. `instant` is the *order-level* type below.
+            // We pay from the Duffel balance.
+            type: 'balance' as const,
             // Duffel requires this to exactly match the offer's own total —
             // sending our marked-up/gateway-converted amount gets rejected.
             amount: this.toMajorUnitsString(params.amount, params.currency),
@@ -393,9 +396,11 @@ export class DuffelService {
       this.logger.error(
         `Duffel createOrder definitive failure [${response.status}]: ${JSON.stringify(errorBody)}`,
       );
+      const detail = this.summarizeDuffelErrors(errorBody);
       throw new DuffelDefinitiveError(
         response.status,
-        `Order creation rejected by Duffel: HTTP ${response.status}`,
+        `Order creation rejected by Duffel: HTTP ${response.status}` +
+          (detail ? ` — ${detail}` : ''),
       );
     }
 
@@ -621,6 +626,31 @@ export class DuffelService {
         message: 'Flight cancellation is temporarily unavailable.',
       });
     }
+  }
+
+  /**
+   * Condenses a Duffel error body into a short, storable reason string like
+   * `invalid_phone_number (passengers/0/phone_number); validation_inclusion
+   * (payments/0/type)`. Persisted on the booking transition so an order_failed
+   * record explains itself without pulling container logs.
+   */
+  private summarizeDuffelErrors(errorBody: unknown): string {
+    const errors = (errorBody as { errors?: unknown } | null)?.errors;
+    if (!Array.isArray(errors)) {
+      return '';
+    }
+    return errors
+      .map((e) => {
+        const err = e as {
+          code?: string;
+          title?: string;
+          source?: { pointer?: string };
+        };
+        const label = err.code ?? err.title ?? 'error';
+        const pointer = err.source?.pointer;
+        return pointer ? `${label} (${pointer.replace(/^\//, '')})` : label;
+      })
+      .join('; ');
   }
 
   // ── Order Result Mapper ─────────────────────────────────────────
