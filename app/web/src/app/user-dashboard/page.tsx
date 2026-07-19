@@ -223,7 +223,7 @@ export default function UserDashboardPage() {
                           </Link>
                         )}
                         <Link
-                          href={`/checkout/confirmation?booking_id=${b.id}`}
+                          href={`/bookings/${b.id}`}
                           className="text-primary border border-primary hover:bg-primary/5 px-md py-base rounded-lg font-label-md font-bold transition-all text-center flex items-center justify-center"
                         >
                           تفاصيل الحجز

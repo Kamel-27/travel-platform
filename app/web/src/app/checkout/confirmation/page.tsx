@@ -396,8 +396,15 @@ function ConfirmationInner() {
                 <div className="h-px bg-outline-variant/30 my-sm"></div>
                 
                 {/* Secondary Links */}
-                <Link 
-                  href={dashboardPath} 
+                <Link
+                  href={`/bookings/${bookingId}`}
+                  className="flex items-center justify-center gap-xs font-label-md text-label-md text-primary font-bold hover:underline cursor-pointer py-xs"
+                >
+                  <span className="material-symbols-outlined text-lg">airplane_ticket</span>
+                  عرض صفحة الحجز الكاملة
+                </Link>
+                <Link
+                  href={dashboardPath}
                   className="flex items-center justify-center gap-xs font-label-md text-label-md text-primary font-bold hover:underline cursor-pointer py-xs"
                 >
                   <span className="material-symbols-outlined text-lg">dashboard</span>

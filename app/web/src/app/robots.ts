@@ -16,6 +16,7 @@ export default function robots(): MetadataRoute.Robots {
           "/auth",
           "/signin",
           "/user-dashboard",
+          "/bookings",
           "/dashboard-overview",
           "/manage-bookings",
           "/admin",
