@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
-import { useAuth } from "@/lib/auth-context";
+import Image from "next/image";
+import SiteHeader from "@/components/SiteHeader";
+import SiteFooter from "@/components/SiteFooter";
 
 interface FileItem {
   name: string;
@@ -10,10 +11,6 @@ interface FileItem {
 }
 
 export default function HelpSupportPage() {
-  const { user, isAuthenticated, logout } = useAuth();
-  const isAdmin = user?.role === "technical_admin";
-  const dashboardPath = isAdmin ? "/admin" : "/user-dashboard";
-
   // FAQ Accordion State
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
@@ -94,65 +91,17 @@ export default function HelpSupportPage() {
 
   return (
     <div className="min-h-screen bg-surface-container-low text-on-surface font-sans" dir="rtl">
-      {/* TopNavBar */}
-      <header className="fixed top-0 z-50 w-full bg-surface-container-lowest dark:bg-inverse-surface shadow-sm h-16 flex items-center border-b border-outline-variant">
-        <div className="flex justify-between items-center w-full px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto h-16">
-          <div className="flex items-center gap-lg">
-            <Link href="/" className="font-headline-lg-mobile text-headline-lg-mobile font-bold text-primary dark:text-inverse-primary hover:opacity-90 transition-opacity">
-              سفريات
-            </Link>
-            <nav className="hidden md:flex items-center gap-md">
-              <Link className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/">
-                رحلات طيران
-              </Link>
-              <Link className="font-label-md text-label-md text-primary font-bold transition-colors" href="/support">
-                مركز المساعدة
-              </Link>
-              <Link className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/manage-bookings">
-                رحلاتي
-              </Link>
-            </nav>
-          </div>
-          <div className="flex items-center gap-md">
-            <div className="hidden md:flex items-center gap-sm text-on-surface-variant">
-              <span className="material-symbols-outlined text-outline">language</span>
-              <span className="font-label-md text-label-md px-2">USD / AR</span>
-            </div>
-            {isAuthenticated ? (
-              <div className="flex items-center gap-sm">
-                <Link href={dashboardPath} className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors">حسابي</Link>
-                <button onClick={() => logout()} className="bg-surface-container-high text-on-surface px-md py-2 rounded-lg font-label-md text-label-md hover:bg-surface-container-highest transition-all">
-                  تسجيل الخروج
-                </button>
-              </div>
-            ) : (
-              <Link href="/signin" className="bg-primary text-white px-md py-xs rounded-lg font-label-md text-label-md scale-98 active:scale-95 transition-transform duration-200">
-                تسجيل الدخول
-              </Link>
-            )}
-          </div>
-        </div>
-      </header>
+      <SiteHeader />
 
-      <main className="pt-24 pb-20 px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto min-h-screen">
+      <main className="pt-lg pb-20 px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto min-h-screen">
         {/* Header Section */}
         <header className="text-center mb-xl max-w-3xl mx-auto">
           <h1 className="font-display-lg text-display-lg mb-md text-on-surface text-3xl md:text-5xl font-extrabold tracking-tight">
             كيف يمكننا مساعدتك اليوم؟
           </h1>
-          <p className="text-on-surface-variant/75 text-body-lg mb-lg">
-            ابحث عن إجابات سريعة، تواصل مع فريق الدعم الفني، أو دردش مع المساعد الذكي.
+          <p className="text-on-surface-variant/75 text-body-lg">
+            تواصل مع فريق الدعم الفني أو تصفّح إجابات الأسئلة الأكثر شيوعاً أدناه.
           </p>
-          <div className="relative group max-w-2xl mx-auto">
-            <span className="material-symbols-outlined absolute right-4 top-1/2 -translate-y-1/2 text-outline group-focus-within:text-primary transition-colors">
-              search
-            </span>
-            <input
-              className="w-full h-16 pr-14 pl-6 rounded-xl bg-surface-container-lowest border border-outline-variant text-on-surface placeholder-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-body-lg font-body-lg shadow-sm"
-              placeholder="ابحث عن إجابات سريعة، رقم الحجز، أو سياسات السفر..."
-              type="text"
-            />
-          </div>
         </header>
 
         {/* Main Content Layout */}
@@ -254,7 +203,7 @@ export default function HelpSupportPage() {
                       {attachments.map((file, index) => (
                         <div
                           key={index}
-                          className="flex justify-between items-center bg-white p-sm rounded-lg border border-outline-variant/60"
+                          className="flex justify-between items-center bg-surface-container-lowest p-sm rounded-lg border border-outline-variant/60"
                         >
                           <div className="flex items-center gap-xs truncate pl-2">
                             <span className="material-symbols-outlined text-primary text-[20px]">
@@ -282,7 +231,7 @@ export default function HelpSupportPage() {
               <button
                 type="submit"
                 disabled={submitted}
-                className="w-full h-14 bg-primary text-white font-bold text-title-lg rounded-xl shadow-md hover:shadow-lg active:scale-[0.98] transition-all duration-200 mt-md flex items-center justify-center gap-xs cursor-pointer"
+                className="w-full h-14 bg-primary text-on-primary font-bold text-title-lg rounded-xl shadow-md hover:shadow-lg active:scale-[0.98] transition-all duration-200 mt-md flex items-center justify-center gap-xs cursor-pointer"
               >
                 {submitted ? (
                   <>
@@ -311,7 +260,7 @@ export default function HelpSupportPage() {
               {faqs.map((faq, index) => (
                 <div
                   key={index}
-                  className="bg-white rounded-xl border border-outline-variant shadow-sm overflow-hidden transition-all duration-300"
+                  className="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm overflow-hidden transition-all duration-300"
                 >
                   <button
                     onClick={() => toggleFaq(index)}
@@ -343,16 +292,18 @@ export default function HelpSupportPage() {
 
             {/* Featured Card */}
             <div className="rounded-2xl overflow-hidden relative h-48 mt-lg group shadow-md border border-outline-variant">
-              <img
-                alt="Support Visual"
-                className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuD-id6twMKtcK_QeWWtn6TcmQZEBL9pMZlWq-8seAA-z_LIOIccYDyWsFYo3piJOD7gGVCQFy5V9LdqwtoJSM1nwuQh1YkXN2V4ANlIOmzAeK63TpoRfw11xe9IBC-4RO60_vQXsWHQdWbMmBccpjG-4yxneo2_rlxABfYbI3hTMbjn7U_SQs9hUXq3Nzi0vEl9Ent3R2In5ri56OKDIzrIuMRasRfbOf-Y-2aSHB2NidDRL9BEh1M6M4E6NtxHnZONSXLkggQusXWT"
+              <Image
+                alt="فريق دعم سفريات"
+                src="/images/hero/hero-2.jpg"
+                fill
+                sizes="(max-width: 1024px) 100vw, 40vw"
+                className="object-cover transition-transform duration-700 group-hover:scale-105"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-primary/95 via-primary/50 to-transparent"></div>
               <div className="absolute bottom-4 right-4 left-4 z-10">
                 <p className="font-label-md text-green-300 font-bold mb-1">خدمة عملاء مميزة</p>
                 <p className="font-title-lg text-white text-[18px] md:text-xl font-bold leading-tight">
-                  نحن معك على مدار الساعة في 120 دولة
+                  نحن معك على مدار الساعة أينما كنت
                 </p>
               </div>
             </div>
@@ -360,34 +311,7 @@ export default function HelpSupportPage() {
         </div>
       </main>
 
-
-
-      {/* Footer */}
-      <footer className="w-full py-lg px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto flex flex-col md:flex-row justify-between items-center gap-base bg-surface-container border-t border-outline-variant">
-        <div className="flex flex-col items-center md:items-start gap-xs">
-          <Link href="/" className="font-headline-md text-headline-md font-extrabold text-primary hover:opacity-90 transition-opacity">سفريات</Link>
-          <p className="text-on-secondary-container font-label-sm text-label-sm">
-            © 2026 سفريات. جميع الحقوق محفوظة.
-          </p>
-        </div>
-        <div className="flex flex-wrap justify-center gap-md">
-          <Link className="text-on-secondary-container font-label-sm text-label-sm hover:text-primary transition-opacity opacity-80 hover:opacity-100" href="/">
-            عن سفريات
-          </Link>
-          <Link className="text-on-secondary-container font-label-sm text-label-sm hover:text-primary transition-opacity opacity-80 hover:opacity-100" href="/">
-            سياسة الخصوصية
-          </Link>
-          <Link className="text-on-secondary-container font-label-sm text-label-sm hover:text-primary transition-opacity opacity-80 hover:opacity-100" href="/">
-            الشروط والأحكام
-          </Link>
-          <Link className="text-on-secondary-container font-label-sm text-label-sm hover:text-primary transition-opacity opacity-80 hover:opacity-100" href="/support">
-            اتصل بنا
-          </Link>
-          <Link className="text-on-secondary-container font-label-sm text-label-sm hover:text-primary transition-opacity opacity-80 hover:opacity-100" href="/support">
-            الأسئلة الشائعة
-          </Link>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

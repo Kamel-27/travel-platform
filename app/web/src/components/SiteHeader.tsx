@@ -14,6 +14,7 @@ export default function SiteHeader({ overlay = false }: { overlay?: boolean }) {
   const { user, isAuthenticated, logout } = useAuth();
   const isAdmin = user?.role === "technical_admin";
   const dashboardPath = isAdmin ? "/admin" : "/user-dashboard";
+  const myTripsPath = isAdmin ? "/admin/bookings" : "/user-dashboard";
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -65,7 +66,7 @@ export default function SiteHeader({ overlay = false }: { overlay?: boolean }) {
                   ? "text-white/85 hover:text-white drop-shadow-md"
                   : "text-on-surface-variant dark:text-surface-variant hover:text-primary dark:hover:text-inverse-primary"
               }`}
-              href="/manage-bookings"
+              href={myTripsPath}
             >
               رحلاتي
             </Link>
