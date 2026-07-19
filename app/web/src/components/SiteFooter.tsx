@@ -8,6 +8,7 @@ export default function SiteFooter() {
   const { user } = useAuth();
   const isAdmin = user?.role === "technical_admin";
   const dashboardPath = isAdmin ? "/admin" : "/user-dashboard";
+  const myTripsPath = isAdmin ? "/admin/bookings" : "/user-dashboard";
 
   return (
     <>
@@ -25,7 +26,7 @@ export default function SiteFooter() {
                 <h5 className="font-bold mb-md text-on-surface">الحجز</h5>
                 <ul className="space-y-sm text-on-surface-variant font-label-md text-label-md">
                   <li><Link className="hover:text-primary hover:underline transition-all" href="/">بحث عن رحلات</Link></li>
-                  <li><Link className="hover:text-primary hover:underline transition-all" href="/manage-bookings">إدارة حجوزاتي</Link></li>
+                  <li><Link className="hover:text-primary hover:underline transition-all" href={myTripsPath}>إدارة حجوزاتي</Link></li>
                 </ul>
               </div>
               <div>
@@ -65,7 +66,7 @@ export default function SiteFooter() {
             <span className="material-symbols-outlined">support_agent</span>
             <span className="font-label-sm text-label-sm">الدعم</span>
           </Link>
-          <Link className="flex flex-col items-center gap-xs text-on-surface-variant" href="/manage-bookings">
+          <Link className="flex flex-col items-center gap-xs text-on-surface-variant" href={myTripsPath}>
             <span className="material-symbols-outlined">airplane_ticket</span>
             <span className="font-label-sm text-label-sm">حجوزاتي</span>
           </Link>

@@ -277,7 +277,7 @@ function FlightsInner() {
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <Link href="/" className="font-headline-md text-headline-md font-bold text-primary">سفريات</Link>
           <nav className="flex items-center gap-md">
-            <Link href="/manage-bookings" className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors">رحلاتي</Link>
+            <Link href="/user-dashboard" className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors">رحلاتي</Link>
             <Link href={dashboardPath} className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors">حسابي</Link>
           </nav>
         </div>

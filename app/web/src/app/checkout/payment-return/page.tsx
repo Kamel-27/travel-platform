@@ -23,7 +23,7 @@ function PaymentReturnInner() {
 
     const destination = bookingId
       ? `/checkout/payment?booking_id=${bookingId}`
-      : "/manage-bookings";
+      : "/user-dashboard";
 
     if (window.top) {
       window.top.location.href = destination;

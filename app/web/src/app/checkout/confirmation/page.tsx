@@ -203,7 +203,7 @@ function ConfirmationInner() {
         <p className="font-title-md text-on-surface max-w-md">
           حالة هذا الحجز الحالية: {booking?.status ?? "غير معروفة"}
         </p>
-        <Link href="/manage-bookings" className="mt-md bg-primary text-on-primary px-md py-sm rounded-lg font-label-md text-label-md">
+        <Link href="/user-dashboard" className="mt-md bg-primary text-on-primary px-md py-sm rounded-lg font-label-md text-label-md">
           الذهاب إلى لوحة تحكم رحلاتي
         </Link>
       </div>

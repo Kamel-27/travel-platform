@@ -171,7 +171,7 @@ export default function UserDashboardPage() {
               <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/">
                 رحلات طيران
               </Link>
-              <Link className="text-on-surface-variant dark:text-surface-variant font-label-md text-label-md hover:text-primary transition-colors" href="/manage-bookings">
+              <Link className="text-primary dark:text-inverse-primary font-bold border-b-2 border-primary dark:border-inverse-primary pb-1 font-label-md text-label-md" href="/user-dashboard">
                 رحلاتي
               </Link>
             </div>
@@ -194,13 +194,13 @@ export default function UserDashboardPage() {
         <aside className="md:col-span-3">
           <div className="bg-surface-container-lowest rounded-xl p-md shadow-sm border border-outline-variant/30 sticky top-24">
             <nav className="flex flex-col gap-base">
-              <Link className="flex items-center gap-sm p-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all" href="/manage-bookings">
+              <Link className="flex items-center gap-sm p-sm rounded-lg bg-primary/10 text-primary font-bold transition-all" href="/user-dashboard">
                 <span className="material-symbols-outlined">event_available</span>
                 <span className="font-label-md text-label-md">حجوزاتي</span>
               </Link>
-              <Link className="flex items-center gap-sm p-sm rounded-lg bg-primary/10 text-primary font-bold transition-all" href="/user-dashboard">
-                <span className="material-symbols-outlined">person</span>
-                <span className="font-label-md text-label-md">الملف الشخصي</span>
+              <Link className="flex items-center gap-sm p-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-all" href="/support">
+                <span className="material-symbols-outlined">support_agent</span>
+                <span className="font-label-md text-label-md">الدعم والمساعدة</span>
               </Link>
               <button
                 onClick={() => logout()}

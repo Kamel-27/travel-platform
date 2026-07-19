@@ -108,7 +108,7 @@ export default function HelpSupportPage() {
               <Link className="font-label-md text-label-md text-primary font-bold transition-colors" href="/support">
                 مركز المساعدة
               </Link>
-              <Link className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/manage-bookings">
+              <Link className="font-label-md text-label-md text-on-surface-variant hover:text-primary transition-colors" href="/user-dashboard">
                 رحلاتي
               </Link>
             </nav>
