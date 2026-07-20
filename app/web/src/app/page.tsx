@@ -11,21 +11,26 @@ import SiteFooter from "@/components/SiteFooter";
 import { getAirportByCode, type Airport } from "@/lib/airports";
 
 // Destination tiles reuse the shared airports table — no duplicated labels.
-const POPULAR_DESTINATIONS = ["DXB", "IST", "CAI", "LHR", "DOH", "JED", "BKK", "CDG"]
+const POPULAR_DESTINATIONS = ["DXB", "IST", "RUH", "LHR", "DOH", "JED", "BKK", "CDG"]
   .map((code) => getAirportByCode(code))
   .filter((a): a is Airport => Boolean(a));
 
-const DEST_GRADIENTS = [
-  "from-[#0f4c81] to-[#2286c3]",
-  "from-[#123f37] to-[#2aa198]",
-  "from-[#4c2f7c] to-[#8b5fd6]",
-  "from-[#7c2d4a] to-[#c2426f]",
-];
+// Real landmark photos per city (Unsplash CDN, free license).
+const DEST_IMAGES: Record<string, string> = {
+  DXB: "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?w=600&q=70&fm=webp&fit=crop",
+  IST: "https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?w=600&q=70&fm=webp&fit=crop",
+  RUH: "https://images.unsplash.com/photo-1663900108404-a05e8bf82cda?w=600&q=70&fm=webp&fit=crop",
+  LHR: "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?w=600&q=70&fm=webp&fit=crop",
+  DOH: "https://images.unsplash.com/photo-1596986343464-332d54fa5702?w=600&q=70&fm=webp&fit=crop",
+  JED: "https://images.unsplash.com/photo-1707449908429-e0189297d671?w=600&q=70&fm=webp&fit=crop",
+  BKK: "https://images.unsplash.com/photo-1755251042986-91270ffd76f5?w=600&q=70&fm=webp&fit=crop",
+  CDG: "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?w=600&q=70&fm=webp&fit=crop",
+};
 
 export default function HomepagePage() {
   const router = useRouter();
   const [flightOrigin, setFlightOrigin] = useState("RUH");
-  const [flightDest, setFlightDest] = useState("DXB");
+  const [flightDest, setFlightDest] = useState("CAI");
   const [tripType, setTripType] = useState<"one-way" | "round-trip">("round-trip");
   const todayStr = new Date().toISOString().split("T")[0];
   const tomorrowDate = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; })();
@@ -230,21 +235,26 @@ export default function HomepagePage() {
             <span className="material-symbols-outlined text-primary text-4xl hidden md:block">travel_explore</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-base md:gap-md">
-            {POPULAR_DESTINATIONS.map((d, i) => (
+            {POPULAR_DESTINATIONS.map((d) => (
               <button
                 key={d.code}
                 type="button"
                 onClick={() => pickDestination(d.code)}
-                className={`group relative overflow-hidden rounded-2xl p-md h-36 md:h-40 text-right text-white shadow-md hover:shadow-xl transition-all duration-300 hover:-translate-y-1 cursor-pointer bg-gradient-to-br ${DEST_GRADIENTS[i % DEST_GRADIENTS.length]}`}
+                className="group relative overflow-hidden rounded-2xl p-md h-36 md:h-40 text-right text-white shadow-md hover:shadow-xl transition-all duration-300 hover:-translate-y-1 cursor-pointer bg-surface-container"
               >
-                <span className="absolute -left-4 -bottom-6 material-symbols-outlined text-white/10 text-[110px] rotate-[-20deg] group-hover:rotate-0 transition-transform duration-500 pointer-events-none">
-                  flight
-                </span>
+                <Image
+                  src={DEST_IMAGES[d.code]}
+                  alt={d.cityAr}
+                  fill
+                  sizes="(max-width: 768px) 50vw, 25vw"
+                  className="object-cover transition-transform duration-500 group-hover:scale-110"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/15 to-black/25 group-hover:from-black/85 transition-colors" />
                 <div className="relative z-10 flex flex-col h-full justify-between items-start">
                   <span className="font-mono text-xs bg-white/15 backdrop-blur-sm rounded-full px-sm py-[2px] tracking-widest" dir="ltr">{d.code}</span>
                   <div>
-                    <p className="font-headline-md text-headline-md font-extrabold leading-tight">{d.cityAr}</p>
-                    <p className="font-label-sm text-label-sm text-white/75">{d.countryAr}</p>
+                    <p className="font-headline-md text-headline-md font-extrabold leading-tight drop-shadow-md">{d.cityAr}</p>
+                    <p className="font-label-sm text-label-sm text-white/85 drop-shadow-md">{d.countryAr}</p>
                   </div>
                 </div>
               </button>
