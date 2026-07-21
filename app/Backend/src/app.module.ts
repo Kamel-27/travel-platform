@@ -36,6 +36,10 @@ import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
         WEB_APP_URL: Joi.string().default('http://localhost:3000'),
         // Optional integrations — empty string = unconfigured (endpoints
         // return a clean 503 via assertConfigured(); the app must still boot)
+        // Transactional email (feat/real-email). Empty RESEND_API_KEY =
+        // unconfigured → MailService falls back to console logging (dev mode).
+        RESEND_API_KEY: Joi.string().allow('').optional(),
+        MAIL_FROM: Joi.string().allow('').optional(),
         GOOGLE_CLIENT_ID: Joi.string().allow('').optional(),
         GOOGLE_CLIENT_SECRET: Joi.string().allow('').optional(),
         GOOGLE_REDIRECT_URI: Joi.string().uri().allow('').optional(),

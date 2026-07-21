@@ -227,7 +227,9 @@ export class DuffelWebhookProcessor extends WorkerHost {
       .getRepository(User)
       .findOneBy({ id: booking.userId });
     if (user && changes.length > 0) {
-      this.mailService.sendScheduleChangeEmail(
+      // Best-effort, fire-and-forget: sendScheduleChangeEmail catches its own
+      // transport errors, so we don't await it inside the DB transaction.
+      void this.mailService.sendScheduleChangeEmail(
         user.email,
         booking.id,
         booking.bookingReference,
