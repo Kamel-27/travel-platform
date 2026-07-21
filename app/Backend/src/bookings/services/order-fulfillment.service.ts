@@ -18,6 +18,9 @@ import { Payment } from '../../payments/entities/payment.entity';
 import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
 import { LedgerService } from '../../ledger/services/ledger.service';
 import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
+import { User } from '../../users/user.entity';
+import { TicketPdfService } from './ticket-pdf.service';
+import { MailService } from '../../auth/services/mail.service';
 
 @Injectable()
 export class OrderFulfillmentService {
@@ -29,6 +32,8 @@ export class OrderFulfillmentService {
     private readonly duffelService: DuffelService,
     private readonly stateMachine: BookingStateMachineService,
     private readonly ledgerService: LedgerService,
+    private readonly ticketPdfService: TicketPdfService,
+    private readonly mailService: MailService,
   ) {}
 
   /**
@@ -170,10 +175,65 @@ export class OrderFulfillmentService {
       `Booking ${booking.id} confirmed — order ${orderResult.orderId}, PNR: ${orderResult.bookingReference}`,
     );
 
-    // Stub: Enqueue PDF generation + confirmation email
-    this.logger.log(
-      `TODO: Enqueue itinerary PDF generation and confirmation email for booking ${booking.id}`,
-    );
+    // Render the e-ticket PDF and email it to the account holder. Best-effort:
+    // a failure here must never undo a confirmed booking (the ticket remains
+    // downloadable from the confirmation page / dashboard regardless).
+    await this.sendConfirmationEmail(booking.id);
+  }
+
+  /**
+   * Generates the itinerary PDF for a freshly-confirmed booking and emails it
+   * to the account holder. Swallows and logs all errors — the booking is
+   * already confirmed and committed by the time this runs.
+   */
+  private async sendConfirmationEmail(bookingId: string): Promise<void> {
+    try {
+      // Re-load the booking so we pick up the just-persisted PNR / status.
+      const booking = await this.entityManager
+        .getRepository(Booking)
+        .findOneBy({ id: bookingId });
+      if (!booking) return;
+
+      const [user, snapshot, passengers, documents] = await Promise.all([
+        this.entityManager
+          .getRepository(User)
+          .findOneBy({ id: booking.userId }),
+        this.entityManager.getRepository(FlightOfferSnapshot).findOne({
+          where: { bookingId },
+          relations: { slices: { segments: true } },
+        }),
+        this.entityManager
+          .getRepository(Passenger)
+          .find({ where: { bookingId } }),
+        this.entityManager
+          .getRepository(Document)
+          .find({ where: { bookingId } }),
+      ]);
+
+      if (!user?.email) {
+        this.logger.warn(
+          `No account email for booking ${bookingId}; skipping confirmation email.`,
+        );
+        return;
+      }
+
+      const pdf = await this.ticketPdfService.generate(
+        booking,
+        snapshot,
+        passengers,
+        documents,
+      );
+
+      await this.mailService.sendBookingConfirmation(user.email, booking, pdf);
+      this.logger.log(
+        `Confirmation email dispatched for booking ${bookingId} → ${user.email}`,
+      );
+    } catch (err: unknown) {
+      this.logger.error(
+        `Failed to send confirmation email for booking ${bookingId}`,
+        err instanceof Error ? err.stack : String(err),
+      );
+    }
   }
 
   /**

@@ -76,8 +76,10 @@ export class MagicLinkService {
     // Increment rate-limit counters
     await this.incrementRateLimits(normalizedEmail, ip);
 
-    // "Send" the magic link (dev: log to console)
-    this.mailService.sendMagicLink(normalizedEmail, rawToken);
+    // Send the magic link (dev: log to console; prod: real email transport).
+    // sendMagicLink never throws — a transport failure is logged internally,
+    // preserving the always-202 (no account enumeration) contract.
+    await this.mailService.sendMagicLink(normalizedEmail, rawToken);
   }
 
   /**

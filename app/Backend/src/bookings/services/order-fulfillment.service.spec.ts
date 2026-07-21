@@ -22,6 +22,9 @@ import { LedgerService } from '../../ledger/services/ledger.service';
 import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
 import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
 import { Refund } from '../../payments/entities/refund.entity';
+import { User } from '../../users/user.entity';
+import { TicketPdfService } from './ticket-pdf.service';
+import { MailService } from '../../auth/services/mail.service';
 
 describe('OrderFulfillmentService', () => {
   let service: OrderFulfillmentService;
@@ -95,6 +98,9 @@ describe('OrderFulfillmentService', () => {
   let mockSnapshotRepo: any;
   let mockPassengerRepo: any;
   let mockPaymentRepo: any;
+  let mockUserRepo: any;
+  let ticketPdfService: any;
+  let mailService: any;
 
   beforeEach(async () => {
     mockBookingRepo = {
@@ -103,12 +109,18 @@ describe('OrderFulfillmentService', () => {
     };
     mockSnapshotRepo = {
       findOneBy: jest.fn().mockResolvedValue(mockSnapshot),
+      findOne: jest.fn().mockResolvedValue(mockSnapshot),
     };
     mockPassengerRepo = {
       find: jest.fn().mockResolvedValue(mockPassengers),
     };
     mockPaymentRepo = {
       findOneBy: jest.fn().mockResolvedValue(mockPayment),
+    };
+    mockUserRepo = {
+      findOneBy: jest
+        .fn()
+        .mockResolvedValue({ id: 'user_001', email: 'user@example.com' }),
     };
 
     mockEntityManager = {
@@ -117,6 +129,7 @@ describe('OrderFulfillmentService', () => {
         if (cls === FlightOfferSnapshot) return mockSnapshotRepo;
         if (cls === Passenger) return mockPassengerRepo;
         if (cls === Payment) return mockPaymentRepo;
+        if (cls === User) return mockUserRepo;
         return {
           findOneBy: jest.fn().mockResolvedValue(null),
           find: jest.fn().mockResolvedValue([]),
@@ -151,6 +164,18 @@ describe('OrderFulfillmentService', () => {
             createEntry: jest.fn().mockResolvedValue(undefined),
           },
         },
+        {
+          provide: TicketPdfService,
+          useValue: {
+            generate: jest.fn().mockResolvedValue(Buffer.from('%PDF-mock')),
+          },
+        },
+        {
+          provide: MailService,
+          useValue: {
+            sendBookingConfirmation: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -160,6 +185,8 @@ describe('OrderFulfillmentService', () => {
     stateMachine = module.get<BookingStateMachineService>(
       BookingStateMachineService,
     );
+    ticketPdfService = module.get(TicketPdfService);
+    mailService = module.get(MailService);
   });
 
   afterEach(() => {
@@ -217,6 +244,35 @@ describe('OrderFulfillmentService', () => {
           supplier: Supplier.Duffel,
           bookingId: 'booking_001',
         }),
+      );
+
+      // Verify the e-ticket PDF was rendered and emailed to the account holder
+      expect(ticketPdfService.generate).toHaveBeenCalled();
+      expect(mailService.sendBookingConfirmation).toHaveBeenCalledWith(
+        'user@example.com',
+        expect.objectContaining({ id: 'booking_001' }),
+        expect.any(Buffer),
+      );
+    });
+  });
+
+  describe('fulfillOrder — confirmation email is best-effort', () => {
+    it('should still confirm the booking when the email transport throws', async () => {
+      mailService.sendBookingConfirmation.mockRejectedValueOnce(
+        new Error('Resend down'),
+      );
+
+      await expect(
+        service.fulfillOrder('booking_001'),
+      ).resolves.toBeUndefined();
+
+      // Booking still transitioned to confirmed despite the email failure
+      expect(stateMachine.transitionTo).toHaveBeenCalledWith(
+        expect.any(Object),
+        'booking_001',
+        BookingStatus.Confirmed,
+        null,
+        'Duffel order created successfully',
       );
     });
   });
