@@ -53,7 +53,7 @@ export class MailService {
     this.apiKey = this.config.get<string>('RESEND_API_KEY') || undefined;
     this.from =
       this.config.get<string>('MAIL_FROM') ||
-      'Safariyat <no-reply@safariyat.live>';
+      'Safariyat <no-reply@auth.safariyat.live>';
   }
 
   /** True when a real transport is configured. */
