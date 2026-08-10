@@ -26,7 +26,7 @@ jobs:
       - run: npm run build
 
   backend:
-    name: Backend (lint, typecheck, build)
+    name: Backend (lint, typecheck, build, unit tests)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -42,3 +42,52 @@ jobs:
       - run: npm run lint:check
       - run: npm run typecheck
       - run: npm run build
+      # Unit/service tests need no datastores — everything external is mocked.
+      # Runs with coverage so the thresholds in package.json gate the merge.
+      - run: npm run test:cov
+
+  backend-e2e:
+    name: Backend (e2e smoke)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/Backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: travelhub
+          POSTGRES_PASSWORD: travelhub
+          POSTGRES_DB: travelhub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U travelhub -d travelhub"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://travelhub:travelhub@localhost:5432/travelhub
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-e2e-secret-not-used-anywhere-real
+      WEB_APP_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/Backend/package-lock.json
+      - run: npm ci
+      - run: npm run migration:run
+      - run: npm run test:e2e

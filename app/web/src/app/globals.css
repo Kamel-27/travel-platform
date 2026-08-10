@@ -102,7 +102,7 @@
 }
 
 body {
-  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans-arabic), 'Segoe UI', system-ui, -apple-system, sans-serif;
   background: var(--bg-primary);
   color: var(--text-primary);
   min-height: 100vh;
@@ -360,44 +360,59 @@ body {
   --radius-xl: 0.75rem;
   --radius-full: 9999px;
   
-  font-family: 'IBM Plex Sans Arabic', sans-serif !important;
+  font-family: var(--font-sans-arabic), sans-serif !important;
 }
 
-.safariyat .font-display-lg { font-family: 'IBM Plex Sans Arabic', sans-serif; font-size: 38px; font-weight: 700; line-height: 50px; }
+.safariyat .font-display-lg { font-family: var(--font-sans-arabic), sans-serif; font-size: 38px; font-weight: 700; line-height: 50px; }
 .safariyat .text-display-lg { font-size: 38px; line-height: 50px; font-weight: 700; }
-.safariyat .font-headline-lg { font-family: 'IBM Plex Sans Arabic', sans-serif; font-size: 26px; font-weight: 700; line-height: 34px; }
+.safariyat .font-headline-lg { font-family: var(--font-sans-arabic), sans-serif; font-size: 26px; font-weight: 700; line-height: 34px; }
 .safariyat .text-headline-lg { font-size: 26px; line-height: 34px; font-weight: 700; }
-.safariyat .font-headline-lg-mobile { font-family: 'IBM Plex Sans Arabic', sans-serif; font-size: 20px; font-weight: 700; line-height: 28px; }
+.safariyat .font-headline-lg-mobile { font-family: var(--font-sans-arabic), sans-serif; font-size: 20px; font-weight: 700; line-height: 28px; }
 .safariyat .text-headline-lg-mobile { font-size: 20px; line-height: 28px; font-weight: 700; }
-.safariyat .font-headline-md { font-family: 'IBM Plex Sans Arabic', sans-serif; font-size: 20px; font-weight: 600; line-height: 28px; }
+.safariyat .font-headline-md { font-family: var(--font-sans-arabic), sans-serif; font-size: 20px; font-weight: 600; line-height: 28px; }
 .safariyat .text-headline-md { font-size: 20px; line-height: 28px; font-weight: 600; }
-.safariyat .font-title-lg { font-family: 'IBM Plex Sans Arabic', sans-serif; font-size: 18px; font-weight: 600; line-height: 24px; }
+.safariyat .font-title-lg { font-family: var(--font-sans-arabic), sans-serif; font-size: 18px; font-weight: 600; line-height: 24px; }
 .safariyat .text-title-lg { font-size: 18px; line-height: 24px; font-weight: 600; }
-.safariyat .font-body-lg { font-family: 'IBM Plex Sans Arabic', sans-serif; font-size: 16px; font-weight: 400; line-height: 24px; }
+.safariyat .font-body-lg { font-family: var(--font-sans-arabic), sans-serif; font-size: 16px; font-weight: 400; line-height: 24px; }
 .safariyat .text-body-lg { font-size: 16px; line-height: 24px; font-weight: 400; }
-.safariyat .font-body-md { font-family: 'IBM Plex Sans Arabic', sans-serif; font-size: 14px; font-weight: 400; line-height: 20px; }
+.safariyat .font-body-md { font-family: var(--font-sans-arabic), sans-serif; font-size: 14px; font-weight: 400; line-height: 20px; }
 .safariyat .text-body-md { font-size: 14px; line-height: 20px; font-weight: 400; }
-.safariyat .font-label-md { font-family: 'IBM Plex Sans Arabic', sans-serif; font-size: 13px; font-weight: 500; line-height: 18px; }
+.safariyat .font-label-md { font-family: var(--font-sans-arabic), sans-serif; font-size: 13px; font-weight: 500; line-height: 18px; }
 .safariyat .text-label-md { font-size: 13px; line-height: 18px; font-weight: 500; }
-.safariyat .font-label-sm { font-family: 'IBM Plex Sans Arabic', sans-serif; font-size: 11px; font-weight: 600; line-height: 14px; letter-spacing: 0.5px; }
+.safariyat .font-label-sm { font-family: var(--font-sans-arabic), sans-serif; font-size: 11px; font-weight: 600; line-height: 14px; letter-spacing: 0.5px; }
 .safariyat .text-label-sm { font-size: 11px; line-height: 14px; letter-spacing: 0.5px; font-weight: 600; }
 
 .safariyat .material-symbols-outlined {
-  font-family: 'Material Symbols Outlined';
+  font-family: var(--font-material-symbols);
   font-weight: normal;
   font-style: normal;
   font-size: 24px;
   line-height: 1;
   letter-spacing: normal;
   text-transform: none;
-  display: inline-block;
   white-space: nowrap;
   word-wrap: normal;
   direction: ltr;
   -webkit-font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
-  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  /* Only FILL ships now — the other three axes aren't in the subset, and
+     naming an axis a font doesn't have is a no-op anyway. */
+  font-variation-settings: 'FILL' 0;
   vertical-align: middle;
+
+  /* Pin the glyph to a 1em square and clip anything that overflows it.
+     Material Symbols glyphs are exactly 1em wide, so this changes nothing once
+     the font is live. It matters during the font-display: block window: the
+     ligature source text ("flight_takeoff") is laid out in a fallback face and
+     would otherwise be many ems wide, shoving the layout around before
+     snapping back. Clipping it keeps every icon slot stable from first paint. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  overflow: hidden;
 }
 
 .safariyat .glass-effect {
