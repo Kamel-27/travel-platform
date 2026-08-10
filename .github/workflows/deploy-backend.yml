@@ -16,13 +16,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify backend builds cleanly
+      - name: Verify backend builds and tests cleanly
         working-directory: app/Backend
         run: |
           npm ci
           npm run lint:check
           npm run typecheck
           npm run build
+          npm run test:cov
 
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3

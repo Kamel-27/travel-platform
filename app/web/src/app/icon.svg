@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0052cc" />
+      <stop offset="50%" stop-color="#003f9c" />
+      <stop offset="100%" stop-color="#00225e" />
+    </linearGradient>
+
+    <!-- Trail / Orbit Arc Gradient -->
+    <linearGradient id="trail-grad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ff9100" stop-opacity="0" />
+      <stop offset="40%" stop-color="#ff9100" stop-opacity="0.5" />
+      <stop offset="100%" stop-color="#ffb700" stop-opacity="0.95" />
+    </linearGradient>
+
+    <!-- Globe Grid Gradient -->
+    <linearGradient id="grid-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.25" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.05" />
+    </linearGradient>
+
+    <!-- Aircraft Body Gradient -->
+    <linearGradient id="plane-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="70%" stop-color="#f0f4ff" />
+      <stop offset="100%" stop-color="#d9e4ff" />
+    </linearGradient>
+
+    <!-- Airplane Wing Highlight -->
+    <linearGradient id="wing-accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3884ff" />
+      <stop offset="100%" stop-color="#0052cc" />
+    </linearGradient>
+
+    <!-- Drop Shadow Filter -->
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#001030" flood-opacity="0.45" />
+    </filter>
+
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="8" flood-color="#ffb700" flood-opacity="0.6" />
+    </filter>
+  </defs>
+
+  <!-- Base Squircle Container -->
+  <rect x="16" y="16" width="480" height="480" rx="112" ry="112" fill="url(#bg-grad)" />
+  <rect x="16" y="16" width="480" height="480" rx="112" ry="112" fill="none" stroke="url(#grid-grad)" stroke-width="4" />
+
+  <!-- Background Travel Globe / Latitude Ellipses -->
+  <g stroke="url(#grid-grad)" stroke-width="3" fill="none" opacity="0.6">
+    <circle cx="256" cy="256" r="170" stroke-dasharray="8 6" />
+    <ellipse cx="256" cy="256" rx="170" ry="75" transform="rotate(-25 256 256)" />
+    <ellipse cx="256" cy="256" rx="75" ry="170" transform="rotate(-25 256 256)" />
+  </g>
+
+  <!-- Flight Path Swoosh / Jet Trail -->
+  <path d="M 96 380 Q 140 280 230 210 T 360 150" 
+        fill="none" 
+        stroke="url(#trail-grad)" 
+        stroke-width="16" 
+        stroke-linecap="round" 
+        filter="url(#glow)" />
+
+  <!-- Stylized Modern Aircraft Icon -->
+  <g filter="url(#shadow)" transform="translate(4, -8)">
+    <!-- Main Body & Wings (Ascending angled airplane) -->
+    <path d="M 375 125 
+             C 385 115, 395 120, 390 135 
+             L 345 235 
+             L 320 230 
+             L 342 178 
+             L 245 220 
+             L 175 190 
+             L 205 175 
+             L 255 192 
+             L 320 155 
+             Z" 
+          fill="url(#wing-accent)" opacity="0.3" />
+
+    <!-- Pure Sleek Jet Silhouette -->
+    <path d="M 395 120 
+             C 405 110, 412 118, 402 128 
+             L 318 212 
+             L 295 320 
+             C 292 328, 280 330, 276 322 
+             L 248 268 
+             L 165 298 
+             C 156 301, 148 293, 153 285 
+             L 190 232 
+             L 230 200 
+             L 172 138 
+             C 166 131, 172 122, 180 125 
+             L 270 162 
+             L 340 128 
+             Z" 
+          fill="url(#plane-grad)" />
+
+    <!-- Accent Wing Tip / Cockpit Gleam -->
+    <path d="M 395 120 
+             C 402 113, 408 118, 400 126 
+             L 362 164 
+             L 335 150 
+             Z" 
+          fill="#ffffff" />
+  </g>
+
+  <!-- Destination / Star Pin Accent -->
+  <circle cx="395" cy="120" r="8" fill="#ffca28" filter="url(#glow)" />
+</svg>
