@@ -1,3 +1,6 @@
+// Must stay the first import: Sentry patches libraries as they're required,
+// so anything imported above it loses instrumentation.
+import './instrument';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';

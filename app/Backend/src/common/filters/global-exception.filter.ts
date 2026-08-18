@@ -8,8 +8,10 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import * as Sentry from '@sentry/nestjs';
 import { ErrorCode } from '../dto/error-response.dto';
 import type { ErrorEnvelope } from '../dto/error-response.dto';
+import { getRequestId } from '../logging/request-context';
 
 /**
  * Global exception filter that normalizes every error response into the
@@ -97,6 +99,14 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       'Unhandled exception',
       exception instanceof Error ? exception.stack : String(exception),
     );
+
+    // Report only genuine faults. Everything above this point is an
+    // HttpException — 401s, 404s, validation failures — which are normal
+    // business outcomes, not incidents; paging on them would bury the real
+    // ones. The request id ties the Sentry event to the structured logs.
+    Sentry.captureException(exception, {
+      tags: { requestId: getRequestId() ?? 'none' },
+    });
 
     return {
       status: HttpStatus.INTERNAL_SERVER_ERROR,

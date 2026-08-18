@@ -96,12 +96,107 @@ git pull
 docker compose -f docker-compose.prod.yml up -d --build backend
 ```
 
+## 8. Database backups
+
+`scripts/backup-db.sh` dumps Postgres out of the container to
+`~/backups/postgres/travelhub-<timestamp>.dump`, verifies the archive is
+readable, and prunes dumps older than `RETENTION_DAYS` (default 14).
+
+### Scheduling it
+
+The script does nothing until cron runs it. On the VM:
+
+```bash
+crontab -l | grep backup-db || (crontab -l 2>/dev/null; echo '15 3 * * * cd ~/travel-platform && ./scripts/backup-db.sh >> ~/backup.log 2>&1') | crontab -
+```
+
+Confirm it's registered and that the log shows recent successful runs:
+
+```bash
+crontab -l && tail -20 ~/backup.log && ls -lh ~/backups/postgres/
+```
+
+### Off-site copy — required for this to count as a backup
+
+By default dumps land on the **same VM and disk as the database**. That covers
+a bad migration or an accidental `DELETE`; it does **not** cover losing the VM.
+Until an off-site destination is configured, a dead VM is still total data
+loss. The `OFF-SITE COPY` block at the bottom of `scripts/backup-db.sh` has
+three ready-to-uncomment options (Azure Blob, rclone to any S3-compatible
+bucket, or pulling to your own machine with `rsync`).
+
+### Restoring
+
+Restore into a scratch database first and inspect it — never straight over the
+live one.
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T postgres createdb -U travelhub travelhub_restore
+docker compose -f docker-compose.prod.yml exec -T postgres pg_restore -U travelhub -d travelhub_restore --no-owner < ~/backups/postgres/travelhub-<timestamp>.dump
+docker compose -f docker-compose.prod.yml exec -T postgres psql -U travelhub -d travelhub_restore -c '\dt'
+```
+
+To promote it over the live database, stop the backend first so nothing writes
+mid-swap:
+
+```bash
+docker compose -f docker-compose.prod.yml stop backend
+docker compose -f docker-compose.prod.yml exec -T postgres psql -U travelhub -d postgres -c 'ALTER DATABASE travelhub RENAME TO travelhub_old;'
+docker compose -f docker-compose.prod.yml exec -T postgres psql -U travelhub -d postgres -c 'ALTER DATABASE travelhub_restore RENAME TO travelhub;'
+docker compose -f docker-compose.prod.yml start backend
+```
+
+Keep `travelhub_old` until the app is verified healthy, then drop it.
+
+> **A backup you have never restored is not a backup.** Walk through the
+> scratch-database restore above at least once, and note the date you last did
+> it — that rehearsal is what tells you the dumps are actually usable.
+
+## 9. Monitoring and error reporting
+
+### Sentry
+
+Both apps report unhandled errors to Sentry. Every Sentry call is a no-op when
+the DSN is unset, so local dev and CI need no configuration.
+
+| Where | Variable | Notes |
+|---|---|---|
+| Backend (`.env.prod` on the VM) | `SENTRY_DSN` | From the Sentry project settings |
+| Backend | `SENTRY_ENVIRONMENT` | Optional; defaults to `NODE_ENV` |
+| Frontend (Vercel env vars) | `NEXT_PUBLIC_SENTRY_DSN` | DSNs are write-only and public by design |
+| Frontend | `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | Optional; defaults to `NODE_ENV` |
+
+Optional, for readable stack traces in the frontend — set all three in Vercel
+and the build uploads source maps; leave them unset and it skips the upload:
+`SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`.
+
+What gets reported: the backend sends only genuine faults — `HttpException`s
+(401/404/validation) are normal outcomes and are deliberately not reported, or
+they'd bury the real incidents. Request bodies, cookies, and `Authorization`
+headers are stripped before send (passenger PII and payment payloads). Session
+Replay is off on the frontend for the same reason.
+
+### Uptime checks
+
+`GET /health` is a real readiness probe — it pings Postgres and Redis and
+returns 503 if either is down, so it fails when the API is up but its
+datastores are not. It is exempt from the `api/v1` prefix:
+
+```bash
+curl -sS https://api.safariyat.live/health
+```
+
+Point an external uptime monitor at that URL (UptimeRobot, Better Stack, and
+Cronitor all have free tiers that cover a 5-minute interval with email alerts).
+This has to be **external** — a check running on the VM cannot tell you the VM
+is unreachable.
+
 ## Notes
 
 - Postgres/Redis are **not** exposed on host ports in `docker-compose.prod.yml` —
   only reachable from the `backend` container over the internal Docker network.
   Only 80/443 (Caddy) and 22 (SSH) need to be open externally.
-- No managed backups: Postgres data lives in the `pgdata` named volume on this
-  one VM. Fine for a portfolio demo; if this becomes real, add an off-box backup.
+- Backups are self-managed via `scripts/backup-db.sh` (§8), not a managed
+  service. Data lives in the `pgdata` named volume on this one VM.
 - Full staging/production separation is a deliberate scope cut (roadmap.md §5) —
   this is the one deployed environment.

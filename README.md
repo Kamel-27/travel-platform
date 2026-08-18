@@ -195,8 +195,9 @@ The backend validates its environment on boot (Joi). Full list and defaults are 
 | `DUFFEL_API_KEY`, `DUFFEL_WEBHOOK_SECRET` | Flight supplier |
 | `PAYMOB_*` | Payment provider |
 | `RESEND_API_KEY`, `MAIL_FROM` | Transactional email (empty key ⇒ magic links log to console) |
+| `SENTRY_DSN`, `SENTRY_ENVIRONMENT` | Error reporting (empty DSN ⇒ every Sentry call is a no-op) |
 
-Frontend: `NEXT_PUBLIC_API_URL` points at the backend.
+Frontend: `NEXT_PUBLIC_API_URL` points at the backend; `NEXT_PUBLIC_SENTRY_DSN` enables browser error reporting.
 
 ---
 
@@ -205,6 +206,12 @@ Frontend: `NEXT_PUBLIC_API_URL` points at the backend.
 - **Frontend** — Vercel, auto-deployed on merge to `main`; `NEXT_PUBLIC_API_URL` targets the backend.
 - **Backend** — an Ubuntu **Azure VM** running the production stack via `docker-compose.prod.yml` (backend + Postgres + Redis + **Caddy** for reverse proxy and automatic HTTPS). CI/CD is a **GitHub Actions** workflow that deploys on merge to `main`; TypeORM migrations run automatically on container start.
 - Deploy config is host-agnostic (any Docker-capable Ubuntu VM). Operational runbook, env layout, and gotchas are in [`docs/deployment.md`](docs/deployment.md).
+
+### Operations
+
+- **Error reporting** — unhandled exceptions from both apps go to **Sentry**. The backend reports only genuine faults; `HttpException`s (401/404/validation) are normal outcomes and are deliberately excluded. Request bodies, cookies, and auth headers are stripped before send, and frontend Session Replay is off — both carry passenger PII.
+- **Health** — `GET /health` pings Postgres and Redis and returns 503 if either is down, so an external uptime monitor catches a half-up API rather than just a live port.
+- **Backups** — `scripts/backup-db.sh` dumps Postgres nightly via cron, verifies each archive is readable, and prunes on a retention window. Restore procedure and the off-site-copy step are in [`docs/deployment.md`](docs/deployment.md) §8.
 
 ---
 

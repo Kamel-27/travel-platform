@@ -36,6 +36,8 @@
     "@nestjs/terminus": "^11.1.1",
     "@nestjs/throttler": "^6.5.0",
     "@nestjs/typeorm": "^11.0.3",
+    "@sentry/nestjs": "^10.70.0",
+    "@sentry/node": "^10.70.0",
     "bullmq": "^5.79.2",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
