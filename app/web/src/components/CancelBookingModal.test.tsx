@@ -45,11 +45,11 @@ function stubApi({
   quote: () => Response;
   cancel?: () => Response;
 }) {
-  const fetchMock = vi.fn(async (url: string | URL) => {
+  const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
     const href = String(url);
     if (href.endsWith("/cancellation-quote")) return quote();
     if (href.endsWith("/cancel")) return cancel ? cancel() : jsonResponse(200, { requires_admin: false });
-    throw new Error(`unexpected request: ${href}`);
+    throw new Error(`unexpected request: ${init?.method ?? "GET"} ${href}`);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
