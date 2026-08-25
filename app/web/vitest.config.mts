@@ -22,11 +22,13 @@ export default defineConfig({
       include: ["src/lib/**", "src/components/**"],
       // Static data table and type declarations — nothing to exercise.
       exclude: ["src/lib/types.ts"],
+      // Set a little under what the suite currently achieves (97/90/96/99),
+      // so an untested addition trips the gate without every refactor doing so.
       thresholds: {
-        statements: 85,
+        statements: 90,
         branches: 85,
-        functions: 85,
-        lines: 85,
+        functions: 90,
+        lines: 90,
       },
     },
   },
