@@ -3,7 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { HttpException, ServiceUnavailableException } from '@nestjs/common';
 import { createHmac } from 'crypto';
-import { DuffelService } from './duffel.service';
+import { DuffelAmbiguousError, DuffelService } from './duffel.service';
 import { REDIS_CLIENT } from '../redis/redis.module';
 import { ErrorCode } from '../common/dto/error-response.dto';
 
@@ -249,6 +249,139 @@ describe('DuffelService', () => {
         amount: '1542.00',
         currency: 'USD',
       });
+    });
+  });
+
+  describe('createOrder 503 handling', () => {
+    const orderParams = {
+      offerId: 'off_123',
+      passengers: [],
+      amount: 154200,
+      currency: 'USD',
+      metadata: {},
+    };
+    const status503 = () => ({
+      ok: false,
+      status: 503,
+      headers: { get: () => 'req_503' },
+      json: async () => ({ errors: [] }),
+    });
+
+    beforeEach(() => {
+      jest.spyOn(service as any, 'sleep').mockResolvedValue(undefined);
+    });
+
+    it('re-POSTs after a 503 and succeeds — Duffel created nothing on 503', async () => {
+      const mockFetch = jest
+        .fn()
+        .mockImplementationOnce(async () => status503())
+        .mockImplementationOnce(async () => ({
+          ok: true,
+          headers: { get: () => undefined },
+          json: async () => ({
+            data: { id: 'ord_ok', booking_reference: 'PNR123', documents: [] },
+          }),
+        }));
+      global.fetch = mockFetch;
+
+      const result = await service.createOrder(orderParams);
+
+      expect(result.orderId).toBe('ord_ok');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('gives up as ambiguous after 3 retries of 503', async () => {
+      const mockFetch = jest.fn().mockImplementation(async () => status503());
+      global.fetch = mockFetch;
+
+      await expect(service.createOrder(orderParams)).rejects.toBeInstanceOf(
+        DuffelAmbiguousError,
+      );
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+    });
+
+    it('never re-POSTs a 500 — outcome unknown', async () => {
+      const mockFetch = jest.fn().mockImplementation(async () => ({
+        ...status503(),
+        status: 500,
+      }));
+      global.fetch = mockFetch;
+
+      await expect(service.createOrder(orderParams)).rejects.toBeInstanceOf(
+        DuffelAmbiguousError,
+      );
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('findOrder', () => {
+    const page = (orders: object[], after: string | null) => ({
+      ok: true,
+      json: async () => ({ data: orders, meta: { after } }),
+    });
+    const isTarget = (o: Record<string, unknown>) =>
+      (o['metadata'] as Record<string, string>)?.['k'] === 'target';
+
+    it('follows the after cursor until it finds the match', async () => {
+      const mockFetch = jest
+        .fn()
+        .mockImplementationOnce(async () =>
+          page([{ id: 'ord_1', metadata: { k: 'other' } }], 'cursor_2'),
+        )
+        .mockImplementationOnce(async () =>
+          page([{ id: 'ord_2', metadata: { k: 'target' } }], 'cursor_3'),
+        );
+      global.fetch = mockFetch;
+
+      const result = await service.findOrder(isTarget);
+
+      expect(result).toEqual({
+        order: { id: 'ord_2', metadata: { k: 'target' } },
+        complete: true,
+      });
+      expect(mockFetch.mock.calls[1][0]).toContain('after=cursor_2');
+    });
+
+    it('reports a verified absence only after reading the last page', async () => {
+      global.fetch = jest
+        .fn()
+        .mockImplementation(async () =>
+          page([{ id: 'ord_1', metadata: { k: 'other' } }], null),
+        );
+
+      expect(await service.findOrder(isTarget)).toEqual({
+        order: null,
+        complete: true,
+      });
+    });
+
+    it('reports complete: false when the page cap is hit', async () => {
+      global.fetch = jest.fn().mockImplementation(async () => page([], 'more'));
+
+      expect(await service.findOrder(isTarget, { maxPages: 2 })).toEqual({
+        order: null,
+        complete: false,
+      });
+    });
+
+    it('throws instead of reporting absence when Duffel errors', async () => {
+      global.fetch = jest.fn().mockImplementation(async () => ({
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+      }));
+
+      await expect(service.findOrder(isTarget)).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
+    });
+
+    it('throws on a network failure', async () => {
+      global.fetch = jest.fn().mockRejectedValue(new Error('ECONNRESET'));
+
+      await expect(service.findOrder(isTarget)).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
     });
   });
 

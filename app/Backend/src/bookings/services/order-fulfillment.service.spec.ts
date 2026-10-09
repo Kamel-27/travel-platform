@@ -8,7 +8,7 @@ import {
   DuffelDefinitiveError,
   DuffelAmbiguousError,
 } from '../../duffel/duffel.service';
-import { BookingStateMachineService } from './booking-state-machine.service';
+import { FulfillmentOutcomeService } from './fulfillment-outcome.service';
 import { Booking, BookingStatus, Supplier } from '../entities/booking.entity';
 import { FlightOfferSnapshot } from '../entities/flight-offer-snapshot.entity';
 import {
@@ -17,20 +17,11 @@ import {
   PassengerTitle,
   PassengerGender,
 } from '../entities/passenger.entity';
-import { Document } from '../entities/document.entity';
-import { LedgerService } from '../../ledger/services/ledger.service';
-import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
-import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
-import { Refund } from '../../payments/entities/refund.entity';
-import { User } from '../../users/user.entity';
-import { TicketPdfService } from './ticket-pdf.service';
-import { MailService } from '../../auth/services/mail.service';
 
 describe('OrderFulfillmentService', () => {
   let service: OrderFulfillmentService;
-  let ledgerService: any;
   let duffelService: DuffelService;
-  let stateMachine: BookingStateMachineService;
+  let outcome: any;
   let mockEntityManager: any;
 
   const mockBooking: Partial<Booking> = {
@@ -51,35 +42,27 @@ describe('OrderFulfillmentService', () => {
     id: 'snapshot_001',
     bookingId: 'booking_001',
     supplierOfferId: 'off_0000AUd7VfJtL0S4Lq7xLq',
+    totalAmount: 100000,
+    currency: 'USD',
   };
 
-  const mockPassengers: Partial<Passenger>[] = [
-    {
-      id: 'pax_001',
-      bookingId: 'booking_001',
-      supplierPassengerId: 'pas_duffel_001',
-      type: PassengerType.Adult,
-      title: PassengerTitle.Mr,
-      gender: PassengerGender.M,
-      givenName: 'John',
-      familyName: 'Doe',
-      dateOfBirth: '1990-01-01',
-      email: 'john@example.com',
-      phoneNumber: '+1234567890',
-      documentType: 'passport',
-      documentNumber: 'AB123456',
-      documentExpiry: '2030-01-01',
-      nationality: 'US',
-      responsibleAdultPassengerId: null,
-    },
-  ];
-
-  const mockPayment: Partial<Payment> = {
-    id: 'pay_001',
+  const adult: Partial<Passenger> = {
+    id: 'pax_001',
     bookingId: 'booking_001',
-    status: PaymentStatus.Succeeded,
-    amount: 105000,
-    currency: 'USD',
+    supplierPassengerId: 'pas_duffel_001',
+    type: PassengerType.Adult,
+    title: PassengerTitle.Mr,
+    gender: PassengerGender.M,
+    givenName: 'John',
+    familyName: 'Doe',
+    dateOfBirth: '1990-01-01',
+    email: 'john@example.com',
+    phoneNumber: '+201091241325',
+    documentType: 'passport',
+    documentNumber: 'AB123456',
+    documentExpiry: '2030-01-01',
+    nationality: 'EG',
+    responsibleAdultPassengerId: null,
   };
 
   const mockOrderResult = {
@@ -95,47 +78,28 @@ describe('OrderFulfillmentService', () => {
   };
 
   let mockBookingRepo: any;
-  let mockSnapshotRepo: any;
   let mockPassengerRepo: any;
-  let mockPaymentRepo: any;
-  let mockUserRepo: any;
-  let ticketPdfService: any;
-  let mailService: any;
+
+  const sentPassengers = () =>
+    (duffelService.createOrder as jest.Mock).mock.calls[0][0].passengers;
 
   beforeEach(async () => {
     mockBookingRepo = {
       findOneBy: jest.fn().mockResolvedValue(mockBooking),
-      update: jest.fn().mockResolvedValue(undefined),
-    };
-    mockSnapshotRepo = {
-      findOneBy: jest.fn().mockResolvedValue(mockSnapshot),
-      findOne: jest.fn().mockResolvedValue(mockSnapshot),
     };
     mockPassengerRepo = {
-      find: jest.fn().mockResolvedValue(mockPassengers),
-    };
-    mockPaymentRepo = {
-      findOneBy: jest.fn().mockResolvedValue(mockPayment),
-    };
-    mockUserRepo = {
-      findOneBy: jest
-        .fn()
-        .mockResolvedValue({ id: 'user_001', email: 'user@example.com' }),
+      find: jest.fn().mockResolvedValue([adult]),
     };
 
     mockEntityManager = {
       getRepository: jest.fn().mockImplementation((cls) => {
         if (cls === Booking) return mockBookingRepo;
-        if (cls === FlightOfferSnapshot) return mockSnapshotRepo;
+        if (cls === FlightOfferSnapshot) {
+          return { findOneBy: jest.fn().mockResolvedValue(mockSnapshot) };
+        }
         if (cls === Passenger) return mockPassengerRepo;
-        if (cls === Payment) return mockPaymentRepo;
-        if (cls === User) return mockUserRepo;
-        return {
-          findOneBy: jest.fn().mockResolvedValue(null),
-          find: jest.fn().mockResolvedValue([]),
-        };
+        return { findOneBy: jest.fn().mockResolvedValue(null) };
       }),
-      save: jest.fn().mockImplementation((cls, val) => Promise.resolve(val)),
       transaction: jest.fn().mockImplementation((cb) => cb(mockEntityManager)),
     };
 
@@ -149,206 +113,147 @@ describe('OrderFulfillmentService', () => {
           },
         },
         {
-          provide: BookingStateMachineService,
+          provide: FulfillmentOutcomeService,
           useValue: {
-            transitionTo: jest.fn().mockResolvedValue(mockBooking),
+            confirmPaidBooking: jest.fn().mockResolvedValue(true),
+            failPaidBookingAndRefund: jest.fn().mockResolvedValue(true),
+            sendConfirmationEmail: jest.fn().mockResolvedValue(undefined),
           },
         },
-        {
-          provide: EntityManager,
-          useValue: mockEntityManager,
-        },
-        {
-          provide: LedgerService,
-          useValue: {
-            createEntry: jest.fn().mockResolvedValue(undefined),
-          },
-        },
-        {
-          provide: TicketPdfService,
-          useValue: {
-            generate: jest.fn().mockResolvedValue(Buffer.from('%PDF-mock')),
-          },
-        },
-        {
-          provide: MailService,
-          useValue: {
-            sendBookingConfirmation: jest.fn().mockResolvedValue(undefined),
-          },
-        },
+        { provide: EntityManager, useValue: mockEntityManager },
       ],
     }).compile();
 
-    service = module.get<OrderFulfillmentService>(OrderFulfillmentService);
-    ledgerService = module.get(LedgerService);
-    duffelService = module.get<DuffelService>(DuffelService);
-    stateMachine = module.get<BookingStateMachineService>(
-      BookingStateMachineService,
-    );
-    ticketPdfService = module.get(TicketPdfService);
-    mailService = module.get(MailService);
+    service = module.get(OrderFulfillmentService);
+    duffelService = module.get(DuffelService);
+    outcome = module.get(FulfillmentOutcomeService);
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  describe('fulfillOrder — 201 success (T5)', () => {
-    it('should transition booking to confirmed and create document rows', async () => {
+  describe('201 success (T5)', () => {
+    it('creates the order at the offer total and confirms through the shared outcome', async () => {
       await service.fulfillOrder('booking_001');
 
-      // Verify createOrder was called with correct params
       expect(duffelService.createOrder).toHaveBeenCalledWith(
         expect.objectContaining({
           offerId: 'off_0000AUd7VfJtL0S4Lq7xLq',
+          amount: 100000,
+          currency: 'USD',
           metadata: {
             booking_id: 'booking_001',
             supplier_idempotency_key: 'idempotency_key_001',
           },
         }),
       );
-
-      // Verify booking was updated with order details
-      expect(mockBookingRepo.update).toHaveBeenCalledWith('booking_001', {
-        supplierOrderId: 'ord_duffel_001',
-        bookingReference: 'ABC123',
-      });
-
-      // Verify T5 transition
-      expect(stateMachine.transitionTo).toHaveBeenCalledWith(
-        expect.any(Object),
+      expect(outcome.confirmPaidBooking).toHaveBeenCalledWith(
+        mockEntityManager,
         'booking_001',
-        BookingStatus.Confirmed,
-        null,
+        mockOrderResult,
         'Duffel order created successfully',
       );
+      expect(outcome.sendConfirmationEmail).toHaveBeenCalledWith('booking_001');
+    });
 
-      // Verify Document row was created
-      expect(mockEntityManager.save).toHaveBeenCalledWith(
-        Document,
-        expect.objectContaining({
-          bookingId: 'booking_001',
-          type: 'electronic_ticket',
-          uniqueIdentifier: '0123456789',
-          supplierPassengerIds: ['pas_duffel_001'],
-        }),
-      );
+    it('sends no second email when the webhook already confirmed the booking', async () => {
+      outcome.confirmPaidBooking.mockResolvedValueOnce(false);
 
-      // Verify the supplier charge hit the ledger with a negative base amount
-      expect(ledgerService.createEntry).toHaveBeenCalledWith(
-        expect.any(Object),
-        expect.objectContaining({
-          entryType: LedgerEntryType.SupplierCharge,
-          amount: -100000,
-          currency: 'USD',
-          supplier: Supplier.Duffel,
-          bookingId: 'booking_001',
-        }),
-      );
+      await service.fulfillOrder('booking_001');
 
-      // Verify the e-ticket PDF was rendered and emailed to the account holder
-      expect(ticketPdfService.generate).toHaveBeenCalled();
-      expect(mailService.sendBookingConfirmation).toHaveBeenCalledWith(
-        'user@example.com',
-        expect.objectContaining({ id: 'booking_001' }),
-        expect.any(Buffer),
-      );
+      expect(outcome.sendConfirmationEmail).not.toHaveBeenCalled();
     });
   });
 
-  describe('fulfillOrder — confirmation email is best-effort', () => {
-    it('should still confirm the booking when the email transport throws', async () => {
-      mailService.sendBookingConfirmation.mockRejectedValueOnce(
-        new Error('Resend down'),
-      );
-
-      await expect(
-        service.fulfillOrder('booking_001'),
-      ).resolves.toBeUndefined();
-
-      // Booking still transitioned to confirmed despite the email failure
-      expect(stateMachine.transitionTo).toHaveBeenCalledWith(
-        expect.any(Object),
-        'booking_001',
-        BookingStatus.Confirmed,
-        null,
-        'Duffel order created successfully',
-      );
-    });
-  });
-
-  describe('fulfillOrder — 4xx definitive failure (T6)', () => {
-    it('should transition booking to order_failed and create auto-refund', async () => {
+  describe('4xx definitive failure (T6)', () => {
+    it('fails the booking and refunds through the shared outcome', async () => {
       (duffelService.createOrder as jest.Mock).mockRejectedValue(
-        new DuffelDefinitiveError(422, 'Offer expired at supplier'),
+        new DuffelDefinitiveError(422, 'offer_no_longer_available'),
       );
 
       await service.fulfillOrder('booking_001');
 
-      // Verify T6 transition
-      expect(stateMachine.transitionTo).toHaveBeenCalledWith(
-        expect.any(Object),
+      expect(outcome.failPaidBookingAndRefund).toHaveBeenCalledWith(
         'booking_001',
-        BookingStatus.OrderFailed,
-        null,
         expect.stringContaining('Duffel order rejected'),
+        'supplier_order_rejected',
       );
-
-      // Verify auto-refund created
-      expect(mockEntityManager.save).toHaveBeenCalledWith(
-        Refund,
-        expect.objectContaining({
-          paymentId: 'pay_001',
-          amount: 105000,
-          currency: 'USD',
-          reason: 'supplier_order_rejected',
-        }),
-      );
+      expect(outcome.confirmPaidBooking).not.toHaveBeenCalled();
     });
   });
 
-  describe('fulfillOrder — 500/timeout ambiguous failure', () => {
-    it('should NOT change booking status — stays in paid', async () => {
+  describe('500/timeout ambiguous failure', () => {
+    it('leaves the booking in paid for reconciliation', async () => {
       (duffelService.createOrder as jest.Mock).mockRejectedValue(
         new DuffelAmbiguousError('Timeout', 'req_123'),
       );
 
       await service.fulfillOrder('booking_001');
 
-      // No state transition should happen
-      expect(stateMachine.transitionTo).not.toHaveBeenCalled();
-
-      // No refund should be created
-      expect(mockEntityManager.save).not.toHaveBeenCalledWith(
-        Refund,
-        expect.anything(),
-      );
+      expect(outcome.confirmPaidBooking).not.toHaveBeenCalled();
+      expect(outcome.failPaidBookingAndRefund).not.toHaveBeenCalled();
     });
   });
 
-  describe('fulfillOrder — guard checks', () => {
-    it('should skip fulfillment if booking is not in paid status', async () => {
-      const notPaidBooking = {
+  describe('passenger mapping', () => {
+    it('puts infant_passenger_id on the responsible ADULT, pointing at the infant', async () => {
+      const infant: Partial<Passenger> = {
+        ...adult,
+        id: 'pax_002',
+        supplierPassengerId: 'pas_duffel_infant',
+        type: PassengerType.Infant,
+        givenName: 'Baby',
+        dateOfBirth: '2026-01-01',
+        responsibleAdultPassengerId: 'pax_001',
+      };
+      mockPassengerRepo.find.mockResolvedValue([adult, infant]);
+
+      await service.fulfillOrder('booking_001');
+
+      const [sentAdult, sentInfant] = sentPassengers();
+      expect(sentAdult.infant_passenger_id).toBe('pas_duffel_infant');
+      expect(sentInfant.infant_passenger_id).toBeUndefined();
+    });
+
+    it('sends a complete identity document', async () => {
+      await service.fulfillOrder('booking_001');
+
+      expect(sentPassengers()[0].identity_documents).toEqual([
+        {
+          type: 'passport',
+          unique_identifier: 'AB123456',
+          expires_on: '2030-01-01',
+          issuing_country_code: 'EG',
+        },
+      ]);
+    });
+
+    it('omits an incomplete identity document instead of sending blanks', async () => {
+      mockPassengerRepo.find.mockResolvedValue([
+        { ...adult, documentExpiry: null },
+      ]);
+
+      await service.fulfillOrder('booking_001');
+
+      expect(sentPassengers()[0].identity_documents).toBeUndefined();
+    });
+  });
+
+  describe('guard checks', () => {
+    it('skips fulfillment if booking is not in paid status', async () => {
+      mockBookingRepo.findOneBy.mockResolvedValue({
         ...mockBooking,
         status: BookingStatus.Confirmed,
-      };
-      mockEntityManager.getRepository = jest.fn().mockImplementation((cls) => {
-        if (cls === Booking) {
-          return { findOneBy: jest.fn().mockResolvedValue(notPaidBooking) };
-        }
-        return { findOneBy: jest.fn().mockResolvedValue(null) };
       });
 
       await service.fulfillOrder('booking_001');
 
       expect(duffelService.createOrder).not.toHaveBeenCalled();
-      expect(stateMachine.transitionTo).not.toHaveBeenCalled();
     });
 
-    it('should handle missing booking gracefully', async () => {
-      mockEntityManager.getRepository = jest.fn().mockReturnValue({
-        findOneBy: jest.fn().mockResolvedValue(null),
-      });
+    it('handles a missing booking gracefully', async () => {
+      mockBookingRepo.findOneBy.mockResolvedValue(null);
 
       await service.fulfillOrder('nonexistent');
 

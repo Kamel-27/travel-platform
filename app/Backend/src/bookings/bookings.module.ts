@@ -35,6 +35,8 @@ import { RefundExecutionProcessor } from './queues/refund-execution.processor';
 import { REFUND_EXECUTION_QUEUE } from './queues/refund-execution.queue';
 import { DuffelWebhookSweepService } from './services/duffel-webhook-sweep.service';
 import { TicketPdfService } from './services/ticket-pdf.service';
+import { FulfillmentOutcomeService } from './services/fulfillment-outcome.service';
+import { RefundRequeueSweepService } from './services/refund-requeue-sweep.service';
 
 @Module({
   imports: [
@@ -77,6 +79,8 @@ import { TicketPdfService } from './services/ticket-pdf.service';
     DuffelWebhookProcessor,
     DuffelWebhookSweepService,
     TicketPdfService,
+    FulfillmentOutcomeService,
+    RefundRequeueSweepService,
   ],
   exports: [
     BookingsService,
