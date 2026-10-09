@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/nestjs';
+import { redact } from './common/logging/redact';
 
 /**
  * Sentry initialisation.
@@ -13,10 +14,12 @@ import * as Sentry from '@sentry/nestjs';
  */
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
-  environment: process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV,
-  // Errors are the signal we act on; traces are sampled low to stay inside
-  // the free tier's event quota.
-  tracesSampleRate: 0.1,
+  // `||`, not `??`: .env.example ships SENTRY_ENVIRONMENT= (empty), which
+  // must fall back rather than tag every event with environment "".
+  environment: process.env.SENTRY_ENVIRONMENT || process.env.NODE_ENV,
+  // Errors only — no tracesSampleRate, so no per-request/per-query spans.
+  // The VM has 842MB shared with Postgres, Redis and Caddy, and nobody reads
+  // performance traces here.
   // Never ship request bodies: they carry passenger PII and payment payloads.
   sendDefaultPii: false,
   beforeSend(event) {
@@ -27,6 +30,12 @@ Sentry.init({
         delete event.request.headers['authorization'];
         delete event.request.headers['cookie'];
       }
+    }
+    // Error messages can embed customer emails/phones (e.g. a Duffel
+    // validation echo) — same scrub the JSON logs get.
+    event.message = redact(event.message);
+    for (const value of event.exception?.values ?? []) {
+      value.value = redact(value.value);
     }
     return event;
   },

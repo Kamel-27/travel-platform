@@ -161,20 +161,35 @@ the DSN is unset, so local dev and CI need no configuration.
 
 | Where | Variable | Notes |
 |---|---|---|
-| Backend (`.env.prod` on the VM) | `SENTRY_DSN` | From the Sentry project settings |
-| Backend | `SENTRY_ENVIRONMENT` | Optional; defaults to `NODE_ENV` |
+| Backend (`~/travel-platform/app/Backend/.env` on the VM — the file `docker-compose.prod.yml` passes to the container via `env_file`, **not** the root `.env`) | `SENTRY_DSN` | From the Sentry project settings |
+| Backend (same file) | `SENTRY_ENVIRONMENT` | Optional; blank or unset falls back to `NODE_ENV` |
 | Frontend (Vercel env vars) | `NEXT_PUBLIC_SENTRY_DSN` | DSNs are write-only and public by design |
-| Frontend | `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | Optional; defaults to `NODE_ENV` |
+| Frontend | `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | Optional; blank or unset falls back to `NODE_ENV` |
+
+After editing the backend file, apply it with
+`docker compose -f docker-compose.prod.yml up -d backend`. `restart` does
+**not** re-read `env_file`.
 
 Optional, for readable stack traces in the frontend — set all three in Vercel
 and the build uploads source maps; leave them unset and it skips the upload:
 `SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`.
 
-What gets reported: the backend sends only genuine faults — `HttpException`s
-(401/404/validation) are normal outcomes and are deliberately not reported, or
-they'd bury the real incidents. Request bodies, cookies, and `Authorization`
-headers are stripped before send (passenger PII and payment payloads). Session
-Replay is off on the frontend for the same reason.
+What gets reported: on the backend, **every error-level log line**. The app
+logger (`StructuredLoggerService`) forwards them, which covers:
+- unhandled exceptions;
+- deliberate 5xx responses such as `SUPPLIER_UNAVAILABLE` while Duffel is down;
+- the background work that never passes through an HTTP filter: BullMQ
+  processors (order fulfillment, refunds, payment/Duffel webhooks) and cron
+  sweeps (reconciliation, expiry, refund requeue).
+
+4xx `HttpException`s (401/404/validation) are normal outcomes and are not
+reported. Repeat failures are grouped by message with ids stripped, so one
+failure mode is one Sentry issue. The backend sends errors only (no
+performance tracing), to spare the VM's memory.
+
+PII handling: request bodies, cookies and `Authorization` headers are stripped
+before send. Emails and phone numbers are scrubbed from messages, the same way
+the JSON logs are. Session Replay is off on the frontend for the same reason.
 
 ### Uptime checks
 
