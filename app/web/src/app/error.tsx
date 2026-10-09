@@ -22,7 +22,11 @@ export default function Error({
   unstable_retry: () => void;
 }) {
   useEffect(() => {
-    Sentry.captureException(error);
+    // Server-render errors arrive here with a digest and a redacted message;
+    // instrumentation.ts onRequestError already reported the real one.
+    if (!error.digest) {
+      Sentry.captureException(error);
+    }
   }, [error]);
 
   return (
@@ -43,8 +47,9 @@ export default function Error({
           </h1>
 
           <p className="font-body-lg text-body-lg text-on-surface-variant/80">
-            نعتذر عن هذا العطل. لم يتأثر أي من حجوزاتك أو مدفوعاتك، ويمكنك
-            المحاولة مرة أخرى أو العودة إلى الصفحة الرئيسية.
+            نعتذر عن هذا العطل. إذا كنت قد قمت بعملية للتو (دفع أو إلغاء)،
+            فراجع صفحة «رحلاتي» قبل تكرارها، ثم حاول مرة أخرى أو عد إلى الصفحة
+            الرئيسية.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-sm mt-base">

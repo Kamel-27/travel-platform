@@ -12,7 +12,7 @@ const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 if (dsn) {
   Sentry.init({
     dsn,
-    environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ?? process.env.NODE_ENV,
+    environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || process.env.NODE_ENV,
     tracesSampleRate: 0.1,
     enabled: process.env.NODE_ENV === "production",
     // Session Replay is off: it records customer PII (passenger names, card

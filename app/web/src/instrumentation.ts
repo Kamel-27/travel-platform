@@ -13,7 +13,7 @@ export function register() {
 
   Sentry.init({
     dsn,
-    environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ?? process.env.NODE_ENV,
+    environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT || process.env.NODE_ENV,
     // Traces are sampled well below 100%: the free tier's quota is small and
     // errors, not spans, are what we actually act on.
     tracesSampleRate: 0.1,

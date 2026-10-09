@@ -22,7 +22,11 @@ export default function CheckoutError({
   error: Error & { digest?: string };
 }) {
   useEffect(() => {
-    Sentry.captureException(error, { tags: { flow: "checkout" } });
+    // Server-render errors arrive here with a digest and a redacted message;
+    // instrumentation.ts onRequestError already reported the real one.
+    if (!error.digest) {
+      Sentry.captureException(error, { tags: { flow: "checkout" } });
+    }
   }, [error]);
 
   return (
@@ -46,7 +50,7 @@ export default function CheckoutError({
             حدث عطل أثناء معالجة طلبك. من فضلك{" "}
             <strong className="text-on-surface">لا تُعِد عملية الدفع</strong>{" "}
             قبل مراجعة صفحة «رحلاتي» — إذا تم خصم المبلغ فسيظهر الحجز هناك خلال
-            دقائق، ولن يتم خصم أي مبلغ مرتين.
+            دقائق. وإذا لاحظت خصماً مكرراً، تواصل مع الدعم وسنرد لك المبلغ الزائد.
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-sm mt-base">
