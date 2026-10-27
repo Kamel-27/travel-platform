@@ -20,6 +20,25 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Testing
+
+| Command | What it runs |
+|---|---|
+| `npm test` | Vitest + Testing Library, once |
+| `npm run test:watch` | the same, in watch mode |
+| `npm run test:cov` | the same with coverage; thresholds in `vitest.config.mts` gate CI |
+| `npm run test:e2e` | Playwright smoke run (builds the app and starts it on port 3100) |
+
+Unit and component specs live next to the code they cover as `*.test.ts(x)`
+and run in jsdom. The Playwright specs live in `e2e/` and drive a real
+production build in Chromium; every `/api/v1` call is intercepted in the specs
+(`e2e/api-mock.ts`), so no backend, Postgres or Redis is needed. The first
+`npm run test:e2e` on a machine needs `npx playwright install chromium`.
+
+The suite pins `TZ=America/Los_Angeles`: flight times come back as local
+wall-clock strings that must never be UTC-normalised, and a UTC runner would
+hide a regression there.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

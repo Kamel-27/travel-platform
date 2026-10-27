@@ -1,0 +1,35 @@
+import { defineConfig } from "vitest/config";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  // Resolves the "@/*" alias straight from tsconfig.json — Vite handles this
+  // natively now, so no vite-tsconfig-paths plugin.
+  resolve: { tsconfigPaths: true },
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./vitest.setup.ts"],
+    // Only unit/component tests. The Playwright specs under e2e/ drive a real
+    // browser and are run by `npm run test:e2e`.
+    include: ["src/**/*.test.{ts,tsx}"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text-summary", "lcov"],
+      // Scoped to the layers this suite actually covers — the shared libs and
+      // components. Route pages are exercised by the Playwright smoke run, not
+      // here, so folding them in would make the thresholds meaningless. Widen
+      // this (and raise the numbers) as page-level tests get added.
+      include: ["src/lib/**", "src/components/**"],
+      // Static data table and type declarations — nothing to exercise.
+      exclude: ["src/lib/types.ts"],
+      // Set a little under what the suite currently achieves (97/90/96/99),
+      // so an untested addition trips the gate without every refactor doing so.
+      thresholds: {
+        statements: 90,
+        branches: 85,
+        functions: 90,
+        lines: 90,
+      },
+    },
+  },
+});
