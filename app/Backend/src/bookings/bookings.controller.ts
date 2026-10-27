@@ -45,7 +45,9 @@ export class BookingsController {
     @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<any> {
     if (idempotencyKey) {
-      const redisKey = `idempotency_booking:${idempotencyKey}`;
+      // Scoped per user: the header is client-chosen, so two users picking
+      // the same value must not collide on one lock or one replayed booking.
+      const redisKey = `idempotency_booking:${user.sub}:${idempotencyKey}`;
       const existingValue = await this.redis.get(redisKey);
 
       if (existingValue) {
