@@ -217,6 +217,7 @@ export class RefundExecutionService {
       refund.amount,
       refund.currency,
     );
+    const claimedAt = new Date();
     // Phase 1 — claim the row. Committed before the gateway call so that a
     // crash or a failed recording afterwards leaves `executing` behind, and
     // no retry can issue the refund a second time.
@@ -232,7 +233,7 @@ export class RefundExecutionService {
           return false;
         }
         row.status = RefundStatus.Executing;
-        row.gatewayAttemptedAt = new Date();
+        row.gatewayAttemptedAt = claimedAt;
         await manager.save(Refund, row);
         return true;
       },
@@ -268,7 +269,17 @@ export class RefundExecutionService {
       this.logger.error(
         `Refund ${refund.id}: gateway outcome unknown (${err instanceof Error ? err.message : String(err)}); row left in executing for manual verification.`,
       );
-      return { refund, executed: false, fullyRefunded: false, parked: true };
+      return {
+        // Report the row as it now is: claimed, outcome unknown.
+        refund: {
+          ...refund,
+          status: RefundStatus.Executing,
+          gatewayAttemptedAt: claimedAt,
+        },
+        executed: false,
+        fullyRefunded: false,
+        parked: true,
+      };
     }
 
     // Phase 3 — record the result.
