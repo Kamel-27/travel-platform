@@ -4,8 +4,10 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { ConfigService } from '@nestjs/config';
 import { AppModule } from './../src/app.module';
 import { GlobalExceptionFilter } from './../src/common/filters/global-exception.filter';
+import { configureTrustProxy } from './../src/common/http/trust-proxy';
 
 /**
  * End-to-end smoke suite.
@@ -37,6 +39,7 @@ describe('App (e2e)', () => {
 
     // Mirror the global setup in src/main.ts. If these drift apart, the e2e
     // suite stops testing what production actually serves.
+    configureTrustProxy(app, app.get(ConfigService));
     app.use(helmet());
     app.use(cookieParser());
     app.useGlobalPipes(

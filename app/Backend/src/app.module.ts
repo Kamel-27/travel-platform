@@ -35,6 +35,9 @@ import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
         ACCESS_TOKEN_TTL_SECONDS: Joi.number().default(900),
         REFRESH_TOKEN_TTL_DAYS: Joi.number().default(30),
         WEB_APP_URL: Joi.string().default('http://localhost:3000'),
+        // Reverse-proxy hops in front of the API (Caddy = 1). Unset means
+        // 1 in production and 0 elsewhere — see common/http/trust-proxy.ts.
+        TRUST_PROXY_HOPS: Joi.number().integer().min(0).optional(),
         // Optional integrations — empty string = unconfigured (endpoints
         // return a clean 503 via assertConfigured(); the app must still boot)
         // Transactional email (feat/real-email). Empty RESEND_API_KEY =

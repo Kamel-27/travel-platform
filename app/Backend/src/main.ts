@@ -10,10 +10,17 @@ import { json } from 'express';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { StructuredLoggerService } from './common/logging/structured-logger.service';
+import { configureTrustProxy } from './common/http/trust-proxy';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
   const config = app.get(ConfigService);
+
+  // ── Client address behind Caddy ─────────────────────────────────
+  // Without this, req.ip is the proxy's address for every request, so the
+  // per-IP throttle, the magic-link IP cap and the search inbound limit all
+  // collapse into one shared bucket for the whole site.
+  configureTrustProxy(app, config);
 
   // ── Structured JSON logs in production (nfr.md §7) — pretty console
   // output stays the default in dev, where a human is reading the terminal.
