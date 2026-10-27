@@ -43,7 +43,7 @@ export class Payment {
     type: 'enum',
     enum: PaymentProvider,
     enumName: 'payment_provider',
-    default: PaymentProvider.Stripe,
+    default: PaymentProvider.Paymob,
   })
   provider: PaymentProvider;
 

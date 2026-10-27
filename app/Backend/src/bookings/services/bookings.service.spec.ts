@@ -295,7 +295,7 @@ describe('BookingsService', () => {
         'user_123',
         'Passengers details saved',
       );
-      expect(result.client_secret).toBeDefined();
+      expect(result).not.toHaveProperty('client_secret');
       expect(result.status).toBe(BookingStatus.AwaitingPayment);
     });
 

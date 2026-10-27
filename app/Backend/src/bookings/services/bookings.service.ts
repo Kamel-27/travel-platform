@@ -449,11 +449,11 @@ export class BookingsService {
         'Passengers details saved',
       );
 
-      // Return booking details with mock client secret
+      // Payment is started by a separate POST /bookings/:id/payment-intent;
+      // nothing payment-related is returned here.
       return {
         booking_id: updatedBooking.id,
         status: updatedBooking.status,
-        client_secret: `pi_mock_${updatedBooking.id.substring(0, 8)}_secret_mocksecret`,
         total_amount: updatedBooking.totalAmount,
         currency: updatedBooking.currency,
       };
