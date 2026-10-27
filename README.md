@@ -82,7 +82,9 @@ travel-platform/
 │   │   └── Dockerfile
 │   └── web/                # Next.js 16 App Router frontend (Arabic RTL)
 │       └── src/app/        # file-system routes (see below)
-├── docs/                   # PRD, ERD, API contract, state machine, deployment, …
+├── docs/                   # architecture, testing, API contract, ERD, state machine, deployment, …
+│   ├── archive/            # finished planning docs, kept for history
+│   └── pkfare/             # spec for the second flight supplier (not built)
 ├── .github/                # CI/CD workflows
 ├── docker-compose.yml      # local dev: Postgres + Redis
 ├── docker-compose.prod.yml # production stack: backend + Postgres + Redis + Caddy
@@ -217,13 +219,16 @@ Frontend: `NEXT_PUBLIC_API_URL` points at the backend; `NEXT_PUBLIC_SENTRY_DSN` 
 
 ## Testing
 
-The backend ships with a Jest suite (unit + service-level) covering auth, the booking state machine, order fulfillment, payments/refunds, webhooks, the ledger, and the mail transport. Run it with:
+Four layers, all run by CI on every pull request:
 
-```bash
-cd app/Backend && npm test
-```
+| Layer | Tool | Run locally |
+|---|---|---|
+| Backend unit / service specs (everything external mocked) | Jest | `cd app/Backend && npm test` |
+| Backend e2e smoke against real Postgres + Redis | Jest + Supertest | `docker compose up -d && cd app/Backend && npm run test:e2e` |
+| Web unit / component tests (jsdom) | Vitest + Testing Library | `cd app/web && npm test` |
+| Web smoke against a production build, API intercepted | Playwright | `cd app/web && npm run test:e2e` |
 
-CI runs typecheck, lint, and tests on pull requests.
+Coverage thresholds gate the merge in both apps. What each layer proves, what it does not, and the known gaps are in [`docs/TESTING.md`](docs/TESTING.md).
 
 ---
 
@@ -233,8 +238,8 @@ Design docs live in [`docs/`](docs/):
 
 | Doc | What it covers |
 |---|---|
-| [`prd.md`](docs/prd.md) | Product scope, roles, monetization |
-| [`roadmap.md`](docs/roadmap.md) | Milestones and delivery order |
+| [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) | What exists and why: topology, module map, queues and crons, frontend map, known limitations |
+| [`TESTING.md`](docs/TESTING.md) | Test layers, commands, coverage gates, CI jobs, gaps |
 | [`erd.md`](docs/erd.md) | Data model |
 | [`api_contract.md`](docs/api_contract.md) | Request/response shapes per endpoint |
 | [`booking_state_machine.md`](docs/booking_state_machine.md) | Status transition rules |
@@ -243,6 +248,11 @@ Design docs live in [`docs/`](docs/):
 | [`nfr.md`](docs/nfr.md) | Sessions, PCI scope, rate limiting |
 | [`duffel_api_integration_guide.md`](docs/duffel_api_integration_guide.md) | Supplier capabilities & integration notes |
 | [`deployment.md`](docs/deployment.md) | Production deployment runbook |
+| [`booking_flow_v2_plan.md`](docs/booking_flow_v2_plan.md) | The next booking-path overhaul (pricing, hold and retry, checkout, ledger) and its locked decisions |
+| [`pkfare/`](docs/pkfare/) | Spec for a second flight supplier behind a provider port (not built) |
+| [`archive/`](docs/archive/) | Finished planning docs (PRD, roadmap), kept for history only |
+
+Every doc carries a status line saying when it was last verified against the code. A PR that changes the API, the data model or the booking lifecycle updates the matching doc in the same PR. The operating manual for contributors and coding agents is [`AGENTS.md`](AGENTS.md).
 
 Contribution conventions (branching, commits, PRs) are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
@@ -252,7 +262,7 @@ Contribution conventions (branching, commits, PRs) are in [`CONTRIBUTING.md`](CO
 
 Shipped: flights B2C search→book→pay→e-ticket, passwordless + Google auth, refunds/cancellations, supplier/customer ledger, admin console, support tickets, real transactional email.
 
-Planned: multi-tenant **agency layer** (Travel Companies / Travel Agents with a richer RBAC model), and **hotels** (Duffel Stays).
+Next: the booking-path overhaul in [`docs/booking_flow_v2_plan.md`](docs/booking_flow_v2_plan.md) (post-payment experience, pricing engine, Duffel-driven checkout form, hold-then-pay with automatic retry, fare options in search). Later: a multi-tenant **agency layer** with a richer RBAC model, a second flight supplier ([`docs/pkfare/`](docs/pkfare/)), and **hotels** (Duffel Stays).
 
 ---
 
