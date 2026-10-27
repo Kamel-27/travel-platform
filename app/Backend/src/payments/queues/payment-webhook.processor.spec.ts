@@ -161,7 +161,11 @@ describe('PaymentWebhookProcessor', () => {
 
     expect(mockEntityManager.save).toHaveBeenCalledWith(
       PaymentAttempt,
-      expect.objectContaining({ status: PaymentAttemptStatus.Succeeded }),
+      expect.objectContaining({
+        status: PaymentAttemptStatus.Succeeded,
+        // Persisted so a refund months later does not depend on the webhook row.
+        providerTransactionId: '99999',
+      }),
     );
     expect(mockEntityManager.save).toHaveBeenCalledWith(
       Payment,

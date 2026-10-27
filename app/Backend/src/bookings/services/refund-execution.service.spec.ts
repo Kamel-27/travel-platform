@@ -16,6 +16,7 @@ describe('RefundExecutionService', () => {
   let paymentRepo: any;
   let refundRepo: any;
   let webhookEventRepo: any;
+  let attemptRepo: any;
   let paymobService: any;
   let stateMachine: any;
   let ledgerService: any;
@@ -112,10 +113,15 @@ describe('RefundExecutionService', () => {
     stateMachine = { transitionTo: jest.fn().mockResolvedValue(undefined) };
     ledgerService = { createEntry: jest.fn().mockResolvedValue(undefined) };
 
+    // Default: no attempt carries a transaction id, so the legacy webhook
+    // lookup is exercised; the tests below override it.
+    attemptRepo = { findOne: jest.fn().mockResolvedValue(null) };
+
     service = new RefundExecutionService(
       paymentRepo,
       refundRepo,
       webhookEventRepo,
+      attemptRepo,
       paymobService,
       stateMachine,
       ledgerService,
@@ -298,6 +304,46 @@ describe('RefundExecutionService', () => {
       expect(refundRepo.update).toHaveBeenCalledWith(
         { id: 'refund_1', status: RefundStatus.Pending },
         { status: RefundStatus.Failed },
+      );
+    });
+  });
+
+  describe('resolving the Paymob transaction id for a refund', () => {
+    it('uses the id stored on the succeeded attempt, so a pruned webhook row cannot block the refund', async () => {
+      attemptRepo.findOne.mockResolvedValue({
+        id: 'att_1',
+        paymentId: 'pay_1',
+        status: 'succeeded',
+        providerTransactionId: '555',
+      });
+      webhookEventRepo.findOne.mockResolvedValue(null);
+
+      await service.executeRefund('ref_1');
+
+      expect(attemptRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            paymentId: 'pay_1',
+            status: 'succeeded',
+          }),
+        }),
+      );
+      expect(paymobService.refundTransaction).toHaveBeenCalledWith(
+        555,
+        expect.any(Number),
+      );
+      expect(webhookEventRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the stored transaction.succeeded webhook for attempts that predate the column', async () => {
+      attemptRepo.findOne.mockResolvedValue(null);
+
+      await service.executeRefund('ref_1');
+
+      expect(webhookEventRepo.findOne).toHaveBeenCalled();
+      expect(paymobService.refundTransaction).toHaveBeenCalledWith(
+        987654,
+        expect.any(Number),
       );
     });
   });

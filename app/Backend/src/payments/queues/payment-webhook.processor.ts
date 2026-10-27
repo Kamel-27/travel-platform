@@ -184,8 +184,16 @@ export class PaymentWebhookProcessor extends WorkerHost {
           'Paymob transaction succeeded',
         );
 
-        // Update payment and attempt statuses
+        // Update payment and attempt statuses. The Paymob transaction id is
+        // what a later refund needs, and the webhook row carrying it is
+        // pruned after 90 days — so it is persisted on the attempt here.
+        const rawTransactionId: unknown = (transaction as { id?: unknown }).id;
         attempt.status = PaymentAttemptStatus.Succeeded;
+        attempt.providerTransactionId =
+          typeof rawTransactionId === 'number' ||
+          typeof rawTransactionId === 'string'
+            ? String(rawTransactionId)
+            : null;
         payment.status = PaymentStatus.Succeeded;
 
         await manager.save(PaymentAttempt, attempt);

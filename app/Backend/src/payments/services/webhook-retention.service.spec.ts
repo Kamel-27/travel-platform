@@ -36,4 +36,12 @@ describe('WebhookRetentionService', () => {
     const expectedCutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
     expect(Math.abs(cutoff.getTime() - expectedCutoff)).toBeLessThan(5000);
   });
+
+  it('never prunes transaction.succeeded rows, the audit trail for money in', async () => {
+    await service.pruneOldWebhookEvents();
+
+    const call = mockRepo.delete.mock.calls[0][0];
+    expect(call.eventType._type).toBe('not');
+    expect(call.eventType._value).toBe('transaction.succeeded');
+  });
 });

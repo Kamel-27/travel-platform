@@ -10,7 +10,12 @@ const RETENTION_MS = 90 * 24 * 60 * 60 * 1000; // nfr.md §8: 90-day retention
  * Prunes processed PaymentWebhookEvent rows past the 90-day retention window
  * (nfr.md §8). Never touches unprocessed rows regardless of age — those stay
  * for DuffelWebhookSweepService-style reprocessing/dispute investigation.
+ *
+ * `transaction.succeeded` rows are kept for good: they are the audit record
+ * of money coming in, and the fallback source of the Paymob transaction id
+ * for attempts that succeeded before provider_transaction_id existed.
  */
+const KEPT_FOREVER_EVENT_TYPE = 'transaction.succeeded';
 @Injectable()
 export class WebhookRetentionService {
   private readonly logger = new Logger(WebhookRetentionService.name);
@@ -26,6 +31,7 @@ export class WebhookRetentionService {
     const result = await this.webhookRepo.delete({
       receivedAt: LessThan(cutoff),
       processedAt: Not(IsNull()),
+      eventType: Not(KEPT_FOREVER_EVENT_TYPE),
     });
     if (result.affected) {
       this.logger.log(

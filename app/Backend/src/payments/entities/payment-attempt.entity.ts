@@ -44,6 +44,15 @@ export class PaymentAttempt {
   })
   status: PaymentAttemptStatus;
 
+  /**
+   * Paymob transaction id (webhook `obj.id`), set when the attempt succeeds.
+   * The refund API takes this id, not the order id above, so it must outlive
+   * the webhook row it came from (see WebhookRetentionService).
+   */
+  @Index('ix_payment_attempts_provider_txn')
+  @Column({ name: 'provider_transaction_id', type: 'varchar', nullable: true })
+  providerTransactionId: string | null;
+
   @Column({ name: 'failure_reason', type: 'varchar', nullable: true })
   failureReason: string | null;
 

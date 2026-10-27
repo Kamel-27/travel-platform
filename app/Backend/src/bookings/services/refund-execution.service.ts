@@ -6,7 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, Repository } from 'typeorm';
+import { EntityManager, In, IsNull, Not, Repository } from 'typeorm';
 
 import {
   PaymobService,
@@ -15,6 +15,10 @@ import {
 import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
 import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
 import { PaymentWebhookEvent } from '../../payments/entities/payment-webhook-event.entity';
+import {
+  PaymentAttempt,
+  PaymentAttemptStatus,
+} from '../../payments/entities/payment-attempt.entity';
 import { Booking, BookingStatus } from '../entities/booking.entity';
 import { BookingStateMachineService } from './booking-state-machine.service';
 import { ErrorCode } from '../../common/dto/error-response.dto';
@@ -59,6 +63,8 @@ export class RefundExecutionService {
     private readonly refundRepo: Repository<Refund>,
     @InjectRepository(PaymentWebhookEvent)
     private readonly webhookEventRepo: Repository<PaymentWebhookEvent>,
+    @InjectRepository(PaymentAttempt)
+    private readonly attemptRepo: Repository<PaymentAttempt>,
     private readonly paymobService: PaymobService,
     private readonly stateMachine: BookingStateMachineService,
     private readonly ledgerService: LedgerService,
@@ -285,11 +291,28 @@ export class RefundExecutionService {
   }
 
   /**
-   * The Paymob refund API needs the transaction id (webhook payload obj.id).
-   * Attempts only store the Paymob order id, so it is read back from the
-   * stored `transaction.succeeded` webhook event.
+   * The Paymob refund API needs the transaction id (webhook payload obj.id),
+   * not the order id the attempt is keyed by. Since migration 1759… the
+   * webhook processor stores it on the succeeded attempt; attempts that
+   * succeeded before that fall back to the stored `transaction.succeeded`
+   * webhook event, which WebhookRetentionService keeps for that reason.
    */
   private async resolvePaymobTransactionId(paymentId: string): Promise<number> {
+    const attempt = await this.attemptRepo.findOne({
+      where: {
+        paymentId,
+        status: PaymentAttemptStatus.Succeeded,
+        providerTransactionId: Not(IsNull()),
+      },
+      order: { attemptedAt: 'DESC' },
+    });
+    if (attempt?.providerTransactionId) {
+      const fromAttempt = Number(attempt.providerTransactionId);
+      if (!Number.isNaN(fromAttempt)) {
+        return fromAttempt;
+      }
+    }
+
     const event = await this.webhookEventRepo.findOne({
       where: { paymentId, eventType: 'transaction.succeeded' },
       order: { receivedAt: 'DESC' },

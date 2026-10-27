@@ -16,6 +16,7 @@ import { Document } from './entities/document.entity';
 import { SupplierWebhookEvent } from './entities/supplier-webhook-event.entity';
 import { Payment } from '../payments/entities/payment.entity';
 import { Refund } from '../payments/entities/refund.entity';
+import { PaymentAttempt } from '../payments/entities/payment-attempt.entity';
 import { PaymentWebhookEvent } from '../payments/entities/payment-webhook-event.entity';
 import { PaymobModule } from '../payments/paymob.module';
 import { LedgerModule } from '../ledger/ledger.module';
@@ -52,6 +53,7 @@ import { RefundRequeueSweepService } from './services/refund-requeue-sweep.servi
       Document,
       SupplierWebhookEvent,
       Payment,
+      PaymentAttempt,
       Refund,
       PaymentWebhookEvent,
     ]),

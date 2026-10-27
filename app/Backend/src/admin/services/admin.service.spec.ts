@@ -23,6 +23,7 @@ import {
 } from '../../bookings/entities/markup-rule.entity';
 import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
 import { PaymentWebhookEvent } from '../../payments/entities/payment-webhook-event.entity';
+import { PaymentAttempt } from '../../payments/entities/payment-attempt.entity';
 import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
 import { User, UserRole } from '../../users/user.entity';
 import { RefreshToken } from '../../auth/entities/refresh-token.entity';
@@ -239,6 +240,12 @@ describe('AdminService', () => {
         {
           provide: getRepositoryToken(PaymentWebhookEvent),
           useValue: mockWebhookEventRepo,
+        },
+        {
+          // No attempt carries a transaction id in these fixtures, so the
+          // refund path falls back to the succeeded webhook event above.
+          provide: getRepositoryToken(PaymentAttempt),
+          useValue: { findOne: jest.fn().mockResolvedValue(null) },
         },
         { provide: getRepositoryToken(AuditLog), useValue: mockAuditLogRepo },
         { provide: DuffelService, useValue: duffelService },
