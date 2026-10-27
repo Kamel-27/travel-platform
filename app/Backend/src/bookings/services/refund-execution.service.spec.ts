@@ -10,6 +10,7 @@ import { Booking, BookingStatus } from '../entities/booking.entity';
 import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
 import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
 import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
+import { PaymobGatewayError } from '../../payments/services/paymob.service';
 
 describe('RefundExecutionService', () => {
   let service: RefundExecutionService;
@@ -273,21 +274,36 @@ describe('RefundExecutionService', () => {
       expect(result.fullyRefunded).toBe(true);
     });
 
-    it('does not record anything when the row settled during the gateway call', async () => {
-      // The pre-check sees pending, but the locked re-read finds it already
-      // succeeded (another executor won the race).
+    it('does not record anything when the row changed while the gateway call was in flight', async () => {
+      // The claim sees pending, but by the time the gateway answers an
+      // admin has moved the row on; the locked re-read must not overwrite.
       refundRepo.findOneBy.mockResolvedValue(pendingRefund());
-      lastSavedRefund = {
-        ...pendingRefund(),
-        status: RefundStatus.Succeeded,
-      };
+      lastSavedRefund = pendingRefund();
+      paymobService.refundTransaction.mockImplementation(() => {
+        lastSavedRefund = { ...lastSavedRefund, status: RefundStatus.Failed };
+        return Promise.resolve({ refundId: 'rfnd_9' });
+      });
 
       const result = await service.executeRefund('refund_1');
 
       expect(paymobService.refundTransaction).toHaveBeenCalled();
-      expect(mockManager.save).not.toHaveBeenCalled();
+      // Only the claim was saved; nothing after the gateway.
+      const savedStatuses = mockManager.save.mock.calls
+        .filter((c: unknown[]) => c[0] === Refund)
+        .map((c: any[]) => c[1].status);
+      expect(savedStatuses).toEqual([RefundStatus.Executing]);
       expect(result.executed).toBe(true);
       expect(result.fullyRefunded).toBe(false);
+    });
+
+    it('is a no-op for a row another executor already claimed', async () => {
+      refundRepo.findOneBy.mockResolvedValue(pendingRefund());
+      lastSavedRefund = { ...pendingRefund(), status: RefundStatus.Executing };
+
+      const result = await service.executeRefund('refund_1');
+
+      expect(paymobService.refundTransaction).not.toHaveBeenCalled();
+      expect(result.executed).toBe(false);
     });
 
     it('throws (retryable) when no succeeded gateway transaction is stored', async () => {
@@ -320,6 +336,7 @@ describe('RefundExecutionService', () => {
         providerTransactionId: '555',
       });
       webhookEventRepo.findOne.mockResolvedValue(null);
+      lastSavedRefund = pendingRefund(); // row the claim's locked read returns
 
       await service.executeRefund('ref_1');
 
@@ -340,6 +357,7 @@ describe('RefundExecutionService', () => {
 
     it('falls back to the stored transaction.succeeded webhook for attempts that predate the column', async () => {
       attemptRepo.findOne.mockResolvedValue(null);
+      lastSavedRefund = pendingRefund(); // row the claim's locked read returns
 
       await service.executeRefund('ref_1');
 
@@ -429,6 +447,81 @@ describe('RefundExecutionService', () => {
           entryType: LedgerEntryType.GatewayRefund,
           amount: -1000,
         }),
+      );
+    });
+  });
+
+  describe('three-phase execution (no double refund at the gateway)', () => {
+    it('claims the row as executing, with a timestamp, before calling the gateway', async () => {
+      lastSavedRefund = pendingRefund();
+      const order: string[] = [];
+      mockManager.save.mockImplementation((cls: unknown, obj: any) => {
+        if (cls === Refund) {
+          order.push('save:' + obj.status);
+          lastSavedRefund = { ...obj, id: obj.id ?? 'refund_1' };
+        }
+        return Promise.resolve({ ...obj, id: obj.id ?? 'refund_1' });
+      });
+      paymobService.refundTransaction.mockImplementation(() => {
+        order.push('gateway');
+        return Promise.resolve({ refundId: 'rfnd_9' });
+      });
+
+      await service.executeRefund('refund_1');
+
+      expect(order).toEqual([
+        'save:' + RefundStatus.Executing,
+        'gateway',
+        'save:' + RefundStatus.Succeeded,
+      ]);
+      const claim = mockManager.save.mock.calls.find(
+        (c: any[]) => c[0] === Refund && c[1].status === RefundStatus.Executing,
+      );
+      expect(claim[1].gatewayAttemptedAt).toBeInstanceOf(Date);
+    });
+
+    it('never calls the gateway for a row left in executing (unknown outcome)', async () => {
+      refundRepo.findOneBy.mockResolvedValue({
+        ...pendingRefund(),
+        status: RefundStatus.Executing,
+        gatewayAttemptedAt: new Date('2026-10-27T00:00:00Z'),
+      });
+
+      const result = await service.executeRefund('refund_1');
+
+      expect(paymobService.refundTransaction).not.toHaveBeenCalled();
+      expect(result.executed).toBe(false);
+      expect(result.parked).toBe(true);
+      expect(mockManager.save).not.toHaveBeenCalled();
+    });
+
+    it('leaves the row in executing and does not throw when the gateway outcome is unknown', async () => {
+      lastSavedRefund = pendingRefund();
+      paymobService.refundTransaction.mockRejectedValue(
+        new PaymobGatewayError('Unable to reach payment gateway.', false, null),
+      );
+
+      const result = await service.executeRefund('refund_1');
+
+      expect(result.executed).toBe(false);
+      expect(result.parked).toBe(true);
+      expect(refundRepo.update).not.toHaveBeenCalled();
+      expect(lastSavedRefund.status).toBe(RefundStatus.Executing);
+    });
+
+    it('hands the row back to pending and rethrows when Paymob definitively rejected the call', async () => {
+      lastSavedRefund = pendingRefund();
+      paymobService.refundTransaction.mockRejectedValue(
+        new PaymobGatewayError('Response: invalid transaction', true, 400),
+      );
+
+      await expect(service.executeRefund('refund_1')).rejects.toThrow(
+        PaymobGatewayError,
+      );
+
+      expect(refundRepo.update).toHaveBeenCalledWith(
+        { id: 'refund_1', status: RefundStatus.Executing },
+        { status: RefundStatus.Pending },
       );
     });
   });

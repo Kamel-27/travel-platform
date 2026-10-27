@@ -25,6 +25,7 @@ import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CancelBookingDto } from './dto/cancel-booking.dto';
 import { RefundPaymentDto } from './dto/refund-payment.dto';
+import { RetryRefundDto } from './dto/retry-refund.dto';
 import {
   CreateMarkupRuleDto,
   UpdateMarkupRuleDto,
@@ -97,13 +98,20 @@ export class AdminController {
     return this.adminService.listRefunds(query);
   }
 
-  /** POST /admin/refunds/:id/retry — re-enqueue a failed/stuck refund. */
+  /**
+   * POST /admin/refunds/:id/retry — re-enqueue a failed/stuck refund. A row
+   * in `executing` needs `{ "gateway_checked": true }`: the admin confirms
+   * Paymob shows no refund for it before it may be issued again.
+   */
   @Post('refunds/:id/retry')
   retryRefund(
     @CurrentUser() admin: JwtPayload,
     @Param('id', ParseUUIDPipe) refundId: string,
+    @Body() body: RetryRefundDto,
   ) {
-    return this.adminService.retryRefund(admin.sub, refundId);
+    return this.adminService.retryRefund(admin.sub, refundId, {
+      gatewayChecked: body?.gateway_checked === true,
+    });
   }
 
   /** GET /admin/markup-rules */

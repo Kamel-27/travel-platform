@@ -14,6 +14,11 @@ import { User } from '../../users/user.entity';
 
 export enum RefundStatus {
   Pending = 'pending',
+  /**
+   * Claimed by an executor: the gateway call is in flight or its outcome is
+   * unknown. Never retried automatically — see RefundExecutionService.
+   */
+  Executing = 'executing',
   Succeeded = 'succeeded',
   Failed = 'failed',
 }
@@ -71,6 +76,10 @@ export class Refund {
     default: RefundStatus.Pending,
   })
   status: RefundStatus;
+
+  /** When an executor claimed the row and went to the gateway. */
+  @Column({ name: 'gateway_attempted_at', type: 'timestamptz', nullable: true })
+  gatewayAttemptedAt: Date | null;
 
   @Column({ type: 'varchar', nullable: true })
   reason: string | null;

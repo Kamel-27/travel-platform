@@ -89,6 +89,7 @@ export function BookingStatusBadge({ status }: { status: BookingStatus }) {
 
 const REFUND_STATUS_LABELS: Record<RefundStatus, { label: string; cls: string }> = {
   pending: { label: "قيد التنفيذ", cls: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400" },
+  executing: { label: "بانتظار التحقق من البوابة", cls: "bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-400" },
   succeeded: { label: "تم الاسترداد", cls: "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400" },
   failed: { label: "فشل", cls: "bg-error-container/20 text-error" },
 };

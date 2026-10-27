@@ -93,6 +93,22 @@ const HMAC_FIELDS = [
 ] as const;
 
 @Injectable()
+/**
+ * Any failed call to Paymob. `definitive` is true when Paymob answered with
+ * a 4xx — it rejected the request and executed nothing — and false when the
+ * outcome is unknown: network error, timeout, or a 5xx. Refund execution
+ * uses the distinction to decide whether a retry may call the gateway again.
+ */
+export class PaymobGatewayError extends ServiceUnavailableException {
+  constructor(
+    message: string,
+    public readonly definitive: boolean,
+    public readonly httpStatus: number | null,
+  ) {
+    super({ code: ErrorCode.SUPPLIER_UNAVAILABLE, message });
+  }
+}
+
 export class PaymobService {
   private readonly logger = new Logger(PaymobService.name);
   private readonly apiBase: string;
@@ -311,10 +327,11 @@ export class PaymobService {
       this.logger.error(
         `Paymob request to ${path} failed: ${(err as Error).message}`,
       );
-      throw new ServiceUnavailableException({
-        code: ErrorCode.SUPPLIER_UNAVAILABLE,
-        message: 'Unable to reach payment gateway.',
-      });
+      throw new PaymobGatewayError(
+        'Unable to reach payment gateway.',
+        false,
+        null,
+      );
     }
 
     if (!response.ok) {
@@ -322,10 +339,11 @@ export class PaymobService {
       this.logger.error(
         `Paymob request to ${path} returned HTTP ${response.status}: ${errText}`,
       );
-      throw new ServiceUnavailableException({
-        code: ErrorCode.SUPPLIER_UNAVAILABLE,
-        message: `Unable to initialize payment gateway. Response: ${errText}`,
-      });
+      throw new PaymobGatewayError(
+        `Unable to initialize payment gateway. Response: ${errText}`,
+        response.status >= 400 && response.status < 500,
+        response.status,
+      );
     }
 
     return (await response.json()) as T;

@@ -253,7 +253,7 @@ export interface AdminBooking {
   updated_at: string;
 }
 
-export type RefundStatus = "pending" | "succeeded" | "failed";
+export type RefundStatus = "pending" | "executing" | "succeeded" | "failed";
 
 export interface AdminRefund {
   id: string;

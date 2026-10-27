@@ -512,6 +512,7 @@ export class AdminService {
   async retryRefund(
     adminUserId: string,
     refundId: string,
+    options: { gatewayChecked?: boolean } = {},
   ): Promise<Record<string, unknown>> {
     const refund = await this.refundRepo.findOneBy({ id: refundId });
     if (!refund) {
@@ -525,6 +526,23 @@ export class AdminService {
         code: ErrorCode.ILLEGAL_TRANSITION,
         message: 'Refund already succeeded; nothing to retry.',
       });
+    }
+
+    // executing → pending only on the admin's word that Paymob shows no
+    // refund for it: the previous gateway call may have gone through and
+    // only the recording failed, so an automatic retry could pay twice.
+    if (refund.status === RefundStatus.Executing) {
+      if (!options.gatewayChecked) {
+        throw new ConflictException({
+          code: ErrorCode.ILLEGAL_TRANSITION,
+          message:
+            'Refund has an unrecorded gateway attempt. Check the Paymob dashboard for an existing refund, then retry with gateway_checked=true.',
+        });
+      }
+      await this.refundRepo.update(
+        { id: refund.id, status: RefundStatus.Executing },
+        { status: RefundStatus.Pending },
+      );
     }
 
     // failed → pending so the executor picks it up again; a stuck pending
@@ -542,7 +560,9 @@ export class AdminService {
       'refund.retry',
       'refund',
       refund.id,
-      { previous_status: refund.status },
+      refund.status === RefundStatus.Executing
+        ? { previous_status: refund.status, gateway_checked: true }
+        : { previous_status: refund.status },
     );
 
     await this.refundExecutionQueue.add(

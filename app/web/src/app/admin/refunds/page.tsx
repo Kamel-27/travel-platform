@@ -12,6 +12,7 @@ const PAGE_SIZE = 20;
 const STATUS_FILTERS: { value: RefundStatus | ""; label: string }[] = [
   { value: "", label: "كل الحالات" },
   { value: "failed", label: "فشل (بحاجة لإعادة محاولة)" },
+  { value: "executing", label: "بانتظار التحقق من البوابة" },
   { value: "pending", label: "قيد التنفيذ" },
   { value: "succeeded", label: "تم الاسترداد" },
 ];
@@ -48,10 +49,21 @@ export default function AdminRefundsPage() {
   }, [load]);
 
   const retry = async (refund: AdminRefund) => {
+    // An "executing" row means a gateway call was made and its outcome was
+    // never recorded: the refund may already exist at Paymob. The backend
+    // refuses to issue it again unless the admin asserts they checked.
+    let body: { gateway_checked: true } | undefined;
+    if (refund.status === "executing") {
+      const checked = window.confirm(
+        `هذا الاسترداد (${formatMoney(refund.amount, refund.currency)}) سبق إرساله إلى بوابة الدفع ولم تُسجَّل نتيجته.\n\nهل تحققت في لوحة Paymob من عدم وجود استرداد مُنفَّذ له بالفعل؟ الضغط على "موافق" سيُعيد إرساله إلى البوابة.`
+      );
+      if (!checked) return;
+      body = { gateway_checked: true };
+    }
     setRetryingId(refund.id);
     setActionMsg(null);
     try {
-      await api.post(`/admin/refunds/${refund.id}/retry`);
+      await api.post(`/admin/refunds/${refund.id}/retry`, body);
       setActionMsg(
         `تمت إعادة جدولة الاسترداد ${formatMoney(refund.amount, refund.currency)} — سيُنفَّذ خلال دقائق (حدّث الصفحة لمتابعة الحالة).`
       );

@@ -24,6 +24,7 @@ import {
 import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
 import { PaymentWebhookEvent } from '../../payments/entities/payment-webhook-event.entity';
 import { PaymentAttempt } from '../../payments/entities/payment-attempt.entity';
+import { PaymobGatewayError } from '../../payments/services/paymob.service';
 import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
 import { User, UserRole } from '../../users/user.entity';
 import { RefreshToken } from '../../auth/entities/refresh-token.entity';
@@ -568,16 +569,32 @@ describe('AdminService', () => {
       );
     });
 
-    it('marks the pending row failed and rethrows when the gateway rejects', async () => {
+    it('marks the pending row failed and rethrows when the gateway definitively rejects', async () => {
       paymobService.refundTransaction.mockRejectedValue(
-        new Error('paymob down'),
+        new PaymobGatewayError('paymob rejected', true, 400),
       );
 
       await expect(
         service.refundPayment(ADMIN_ID, 'pay_001', 1000),
-      ).rejects.toThrow('paymob down');
+      ).rejects.toThrow('paymob rejected');
+      // executing → pending (handed back by the executor), then → failed
       expect(mockRefundRepo.update).toHaveBeenCalledWith(
         { id: 'generated_id', status: RefundStatus.Pending },
+        { status: RefundStatus.Failed },
+      );
+    });
+
+    it('leaves the row executing for manual verification when the gateway outcome is unknown', async () => {
+      paymobService.refundTransaction.mockRejectedValue(
+        new PaymobGatewayError('Unable to reach payment gateway.', false, null),
+      );
+
+      const result = await service.refundPayment(ADMIN_ID, 'pay_001', 1000);
+
+      expect(result.status).toBe(RefundStatus.Executing);
+      // Not failed: a retry must not call Paymob again without a human check.
+      expect(mockRefundRepo.update).not.toHaveBeenCalledWith(
+        expect.anything(),
         { status: RefundStatus.Failed },
       );
     });
@@ -727,6 +744,48 @@ describe('AdminService', () => {
         ConflictException,
       );
       expect(mockRefundQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('refuses to retry an executing refund unless the admin confirms the gateway was checked', async () => {
+      mockRefundRepo.findOneBy.mockResolvedValue({
+        id: 'refund_001',
+        status: RefundStatus.Executing,
+      });
+
+      await expect(service.retryRefund(ADMIN_ID, 'refund_001')).rejects.toThrow(
+        ConflictException,
+      );
+      expect(mockRefundRepo.update).not.toHaveBeenCalled();
+      expect(mockRefundQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('resets an executing refund to pending when the admin checked the gateway, and audits that', async () => {
+      mockRefundRepo.findOneBy.mockResolvedValue({
+        id: 'refund_001',
+        status: RefundStatus.Executing,
+      });
+
+      await service.retryRefund(ADMIN_ID, 'refund_001', {
+        gatewayChecked: true,
+      });
+
+      expect(mockRefundRepo.update).toHaveBeenCalledWith(
+        { id: 'refund_001', status: RefundStatus.Executing },
+        { status: RefundStatus.Pending },
+      );
+      expect(auditLogService.logAction).toHaveBeenCalledWith(
+        mockEntityManager,
+        ADMIN_ID,
+        'refund.retry',
+        'refund',
+        'refund_001',
+        { previous_status: RefundStatus.Executing, gateway_checked: true },
+      );
+      expect(mockRefundQueue.add).toHaveBeenCalledWith(
+        'execute_refund',
+        expect.objectContaining({ refundId: 'refund_001' }),
+        expect.objectContaining({ jobId: 'refund:refund_001' }),
+      );
     });
 
     it('resets a failed refund to pending, audits, and re-enqueues it', async () => {
