@@ -1,3 +1,6 @@
+// Must stay the first import: Sentry patches libraries as they're required,
+// so anything imported above it loses instrumentation.
+import './instrument';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';
@@ -14,9 +17,12 @@ async function bootstrap() {
 
   // ── Structured JSON logs in production (nfr.md §7) — pretty console
   // output stays the default in dev, where a human is reading the terminal.
-  if (config.get<string>('NODE_ENV') === 'production') {
-    app.useLogger(new StructuredLoggerService());
-  }
+  // The same logger forwards error-level lines to Sentry in every mode.
+  app.useLogger(
+    new StructuredLoggerService({
+      json: config.get<string>('NODE_ENV') === 'production',
+    }),
+  );
 
   // ── Security headers ────────────────────────────────────────────
   app.use(helmet());

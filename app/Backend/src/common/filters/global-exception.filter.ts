@@ -28,6 +28,17 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const res = ctx.getResponse<Response>();
 
     const { status, body } = this.buildResponse(exception);
+
+    // A deliberate 5xx (e.g. SUPPLIER_UNAVAILABLE while Duffel is down) is an
+    // incident, not a business outcome — log it at error level, which the app
+    // logger also forwards to Sentry. 4xx (401/404/validation) stay quiet.
+    if (exception instanceof HttpException && status >= 500) {
+      this.logger.error(
+        `HTTP ${status} ${body.error.code}: ${body.error.message}`,
+        exception.stack,
+      );
+    }
+
     res.status(status).json(body);
   }
 

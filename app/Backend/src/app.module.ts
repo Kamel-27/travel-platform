@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bullmq';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { SentryModule } from '@sentry/nestjs/setup';
 import * as Joi from 'joi';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -50,8 +51,15 @@ import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
         PAYMOB_INTEGRATION_ID: Joi.string().allow('').optional(),
         PAYMOB_IFRAME_ID: Joi.string().allow('').optional(),
         PAYMOB_HMAC_SECRET: Joi.string().allow('').optional(),
+        // Error reporting. Empty SENTRY_DSN = unconfigured → every Sentry
+        // call is a no-op, which is the expected state in dev and CI.
+        SENTRY_DSN: Joi.string().allow('').optional(),
+        SENTRY_ENVIRONMENT: Joi.string().allow('').optional(),
       }),
     }),
+    // Wires Sentry into Nest's DI so thrown exceptions carry the resolved
+    // route, controller, and handler rather than a bare stack trace.
+    SentryModule.forRoot(),
     ScheduleModule.forRoot(),
     // Inbound rate limiting per nfr.md §3 — blanket per-IP ceiling; specific
     // endpoints (e.g. flights/search) tighten this with @Throttle().
