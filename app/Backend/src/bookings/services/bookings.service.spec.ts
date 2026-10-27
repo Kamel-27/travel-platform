@@ -11,7 +11,11 @@ import {
 } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 
-import { BookingsService } from './bookings.service';
+import {
+  BookingsService,
+  assignSupplierPassengerIds,
+  normalizePassengerType,
+} from './bookings.service';
 import { DuffelService } from '../../duffel/duffel.service';
 import { MarkupService } from './markup.service';
 import { BookingStateMachineService } from './booking-state-machine.service';
@@ -540,5 +544,62 @@ describe('BookingsService', () => {
         service.getDocuments(mockCurrentUser, 'booking_123'),
       ).rejects.toThrow(ForbiddenException);
     });
+  });
+});
+
+describe('normalizePassengerType', () => {
+  it("maps Duffel's infant_without_seat to our infant", () => {
+    expect(normalizePassengerType('infant_without_seat')).toBe(
+      PassengerType.Infant,
+    );
+    expect(normalizePassengerType('adult')).toBe(PassengerType.Adult);
+    expect(normalizePassengerType('child')).toBe(PassengerType.Child);
+    expect(normalizePassengerType(null)).toBeNull();
+  });
+});
+
+describe('assignSupplierPassengerIds', () => {
+  const offerPassengers = [
+    { id: 'pas_adult_1', type: 'adult' },
+    { id: 'pas_infant_1', type: 'infant_without_seat' },
+    { id: 'pas_adult_2', type: 'adult' },
+  ];
+
+  it('matches by type in order, not by raw index', () => {
+    const ids = assignSupplierPassengerIds(
+      [
+        { type: PassengerType.Adult },
+        { type: PassengerType.Adult },
+        { type: PassengerType.Infant },
+      ],
+      offerPassengers,
+    );
+
+    expect(ids).toEqual(['pas_adult_1', 'pas_adult_2', 'pas_infant_1']);
+  });
+
+  it('lets untyped (age-searched) offer passengers fill remaining slots', () => {
+    const ids = assignSupplierPassengerIds(
+      [{ type: PassengerType.Adult }, { type: PassengerType.Child }],
+      [
+        { id: 'pas_adult', type: 'adult' },
+        { id: 'pas_aged', type: null },
+      ],
+    );
+
+    expect(ids).toEqual(['pas_adult', 'pas_aged']);
+  });
+
+  it('rejects inputs whose types cannot cover the offer', () => {
+    expect(() =>
+      assignSupplierPassengerIds(
+        [
+          { type: PassengerType.Adult },
+          { type: PassengerType.Child },
+          { type: PassengerType.Adult },
+        ],
+        offerPassengers,
+      ),
+    ).toThrow(BadRequestException);
   });
 });

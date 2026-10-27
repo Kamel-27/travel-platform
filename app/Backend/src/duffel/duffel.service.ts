@@ -132,6 +132,8 @@ export class DuffelService {
   private readonly webhookSecret: string | undefined;
   private readonly baseUrl = 'https://api.duffel.com';
   private readonly duffelVersion = 'v2';
+  /** Backoff before each createOrder re-POST on 503 (3 retries). */
+  private readonly createOrder503RetryDelaysMs = [2_000, 5_000, 10_000];
 
   constructor(
     private readonly config: ConfigService,
@@ -351,23 +353,44 @@ export class DuffelService {
     };
 
     let response: Response;
-    try {
-      response = await fetch(`${this.baseUrl}/air/orders`, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify(body),
-        // Duffel SLA: order creation can take up to 130 seconds
-        signal: AbortSignal.timeout(130_000),
-      });
-    } catch (err: unknown) {
+    let attempt = 0;
+    for (;;) {
+      attempt++;
+      try {
+        response = await fetch(`${this.baseUrl}/air/orders`, {
+          method: 'POST',
+          headers: this.getHeaders(),
+          body: JSON.stringify(body),
+          // Duffel SLA: order creation can take up to 130 seconds
+          signal: AbortSignal.timeout(130_000),
+        });
+      } catch (err: unknown) {
+        await this.recordMetric(true);
+        // Network error or timeout — outcome is ambiguous
+        const message =
+          err instanceof Error ? err.message : 'Unknown network error';
+        this.logger.error(
+          `Duffel createOrder network/timeout error: ${message}`,
+        );
+        throw new DuffelAmbiguousError(
+          `Order creation failed with ambiguous outcome: ${message}`,
+        );
+      }
+
+      // booking_state_machine.md §4: a 503 means Duffel created nothing, so
+      // it is the one failure that is safe to re-POST — with backoff.
+      if (
+        response.status !== 503 ||
+        attempt > this.createOrder503RetryDelaysMs.length
+      ) {
+        break;
+      }
       await this.recordMetric(true);
-      // Network error or timeout — outcome is ambiguous
-      const message =
-        err instanceof Error ? err.message : 'Unknown network error';
-      this.logger.error(`Duffel createOrder network/timeout error: ${message}`);
-      throw new DuffelAmbiguousError(
-        `Order creation failed with ambiguous outcome: ${message}`,
+      const delayMs = this.createOrder503RetryDelaysMs[attempt - 1];
+      this.logger.warn(
+        `Duffel createOrder returned 503 (attempt ${attempt}) — retrying in ${delayMs}ms`,
       );
+      await this.sleep(delayMs);
     }
 
     // Parse the request_id header for admin tracing
@@ -405,13 +428,13 @@ export class DuffelService {
     }
 
     if (response.status === 503) {
-      // 503 — Duffel guarantees nothing was created, but we treat as ambiguous
-      // to let the reconciliation sweep handle it safely
+      // Still 503 after every retry. Duffel guarantees nothing was created,
+      // but we stay ambiguous so the reconciliation sweep resolves it safely.
       this.logger.error(
-        `Duffel createOrder 503 (request_id: ${requestId}): ${JSON.stringify(errorBody)}`,
+        `Duffel createOrder 503 after ${attempt} attempts (request_id: ${requestId}): ${JSON.stringify(errorBody)}`,
       );
       throw new DuffelAmbiguousError(
-        `Order creation returned 503 — outcome ambiguous`,
+        `Order creation returned 503 after ${attempt} attempts — outcome ambiguous`,
         requestId,
       );
     }
@@ -427,46 +450,73 @@ export class DuffelService {
   }
 
   /**
-   * List orders from Duffel for reconciliation matching.
-   * GET /air/orders
+   * Scans Duffel's orders for the first one `match` accepts.
+   * GET /air/orders, following the `meta.after` cursor page by page.
+   *
+   * Reconciliation refunds the customer when this says "not found", so it
+   * must never report absence it hasn't proven: any HTTP/network failure
+   * THROWS (it used to return [] — indistinguishable from "no order"), and
+   * `complete: false` means the page cap was hit before the list ran out.
    */
-  async listOrders(params: {
-    createdAfter?: string;
-    limit?: number;
-  }): Promise<Record<string, unknown>[]> {
+  async findOrder(
+    match: (order: Record<string, unknown>) => boolean,
+    options: { pageSize?: number; maxPages?: number } = {},
+  ): Promise<{ order: Record<string, unknown> | null; complete: boolean }> {
     this.assertConfigured();
 
-    const queryParams = new URLSearchParams();
-    if (params.createdAfter) {
-      queryParams.set('created_after', params.createdAfter);
-    }
-    queryParams.set('limit', String(params.limit ?? 50));
+    const pageSize = options.pageSize ?? 50;
+    const maxPages = options.maxPages ?? 40;
+    let after: string | null = null;
 
     try {
-      const response = await fetch(
-        `${this.baseUrl}/air/orders?${queryParams.toString()}`,
-        {
-          method: 'GET',
-          headers: this.getHeaders(),
-          signal: AbortSignal.timeout(30_000),
-        },
-      );
+      for (let page = 0; page < maxPages; page++) {
+        const queryParams = new URLSearchParams({ limit: String(pageSize) });
+        if (after) {
+          queryParams.set('after', after);
+        }
 
-      if (!response.ok) {
-        this.logger.error(
-          `Duffel listOrders failed with status ${response.status}`,
+        const response = await fetch(
+          `${this.baseUrl}/air/orders?${queryParams.toString()}`,
+          {
+            method: 'GET',
+            headers: this.getHeaders(),
+            signal: AbortSignal.timeout(30_000),
+          },
         );
-        return [];
+
+        if (!response.ok) {
+          await this.handleErrorResponse(response);
+        }
+
+        const json = (await response.json()) as Record<string, unknown>;
+        const data = (json['data'] as Record<string, unknown>[]) ?? [];
+        const found = data.find(match);
+        if (found) {
+          await this.recordMetric(false);
+          return { order: found, complete: true };
+        }
+
+        after =
+          ((json['meta'] as Record<string, unknown> | undefined)?.['after'] as
+            string | null | undefined) ?? null;
+        if (!after) {
+          await this.recordMetric(false);
+          return { order: null, complete: true };
+        }
       }
 
-      const json = (await response.json()) as Record<string, unknown>;
-      const data = json['data'] as Record<string, unknown>[] | undefined;
       await this.recordMetric(false);
-      return data ?? [];
+      return { order: null, complete: false };
     } catch (err: unknown) {
       await this.recordMetric(true);
-      this.logger.error('Duffel listOrders failed', err);
-      return [];
+      if (err instanceof HttpException) {
+        throw err;
+      }
+      this.logger.error('Duffel order listing failed', err);
+      throw new ServiceUnavailableException({
+        code: ErrorCode.SUPPLIER_UNAVAILABLE,
+        message: 'Order lookup is temporarily unavailable.',
+      });
     }
   }
 
@@ -655,7 +705,12 @@ export class DuffelService {
 
   // ── Order Result Mapper ─────────────────────────────────────────
 
-  private mapOrderResult(raw: any): DuffelOrderResult {
+  /**
+   * Normalizes a raw Duffel order (createOrder response, getOrder, or a list
+   * entry) — shared by every confirmation path so they all read the same
+   * fields the same way.
+   */
+  mapOrderResult(raw: any): DuffelOrderResult {
     const documents: DuffelDocument[] = (raw.documents ?? []).map(
       (doc: any) => ({
         type: doc.type as string,
@@ -678,6 +733,11 @@ export class DuffelService {
   }
 
   // ── Helpers & Mappers ─────────────────────────────────────────────
+
+  /** Wrapped so specs can skip the real backoff delays. */
+  protected sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
   private getHeaders(): Record<string, string> {
     return {

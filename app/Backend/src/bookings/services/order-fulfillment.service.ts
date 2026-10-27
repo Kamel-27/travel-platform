@@ -1,26 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectEntityManager } from '@nestjs/typeorm';
 import { EntityManager } from 'typeorm';
-import { randomUUID } from 'crypto';
 
 import {
   DuffelService,
   DuffelDefinitiveError,
   DuffelAmbiguousError,
   CreateOrderPassenger,
+  DuffelOrderResult,
 } from '../../duffel/duffel.service';
-import { BookingStateMachineService } from './booking-state-machine.service';
+import { FulfillmentOutcomeService } from './fulfillment-outcome.service';
 import { Booking, BookingStatus } from '../entities/booking.entity';
 import { FlightOfferSnapshot } from '../entities/flight-offer-snapshot.entity';
 import { Passenger, PassengerType } from '../entities/passenger.entity';
-import { Document } from '../entities/document.entity';
-import { Payment } from '../../payments/entities/payment.entity';
-import { Refund, RefundStatus } from '../../payments/entities/refund.entity';
-import { LedgerService } from '../../ledger/services/ledger.service';
-import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
-import { User } from '../../users/user.entity';
-import { TicketPdfService } from './ticket-pdf.service';
-import { MailService } from '../../auth/services/mail.service';
 
 @Injectable()
 export class OrderFulfillmentService {
@@ -30,10 +22,7 @@ export class OrderFulfillmentService {
     @InjectEntityManager()
     private readonly entityManager: EntityManager,
     private readonly duffelService: DuffelService,
-    private readonly stateMachine: BookingStateMachineService,
-    private readonly ledgerService: LedgerService,
-    private readonly ticketPdfService: TicketPdfService,
-    private readonly mailService: MailService,
+    private readonly fulfillmentOutcome: FulfillmentOutcomeService,
   ) {}
 
   /**
@@ -120,119 +109,24 @@ export class OrderFulfillmentService {
   }
 
   /**
-   * T5: Successful order creation — transition to confirmed.
+   * T5: Successful order creation — transition to confirmed. A no-op when
+   * the `order.created` webhook won the race; whichever path actually
+   * confirms sends the confirmation email.
    */
   private async handleOrderSuccess(
     booking: Booking,
-    orderResult: {
-      orderId: string;
-      bookingReference: string;
-      documents: {
-        type: string;
-        uniqueIdentifier: string;
-        passengerIds: string[];
-      }[];
-    },
+    orderResult: DuffelOrderResult,
   ): Promise<void> {
-    await this.entityManager.transaction(async (manager) => {
-      // Set supplier order ID and booking reference
-      await manager.getRepository(Booking).update(booking.id, {
-        supplierOrderId: orderResult.orderId,
-        bookingReference: orderResult.bookingReference,
-      });
-
-      // T5: paid → confirmed
-      await this.stateMachine.transitionTo(
+    const applied = await this.entityManager.transaction((manager) =>
+      this.fulfillmentOutcome.confirmPaidBooking(
         manager,
         booking.id,
-        BookingStatus.Confirmed,
-        null, // system transition
+        orderResult,
         'Duffel order created successfully',
-      );
-
-      // Record supplier charge
-      await this.ledgerService.createEntry(manager, {
-        entryType: LedgerEntryType.SupplierCharge,
-        amount: -booking.baseAmount, // negative amount
-        currency: booking.currency,
-        supplier: booking.supplier,
-        bookingId: booking.id,
-        note: 'Duffel order created successfully',
-      });
-
-      // Create Document rows from e-ticket data
-      for (const doc of orderResult.documents) {
-        const document = new Document();
-        document.bookingId = booking.id;
-        document.type = doc.type;
-        document.uniqueIdentifier = doc.uniqueIdentifier;
-        document.supplierPassengerIds = doc.passengerIds;
-        await manager.save(Document, document);
-      }
-    });
-
-    this.logger.log(
-      `Booking ${booking.id} confirmed — order ${orderResult.orderId}, PNR: ${orderResult.bookingReference}`,
+      ),
     );
-
-    // Render the e-ticket PDF and email it to the account holder. Best-effort:
-    // a failure here must never undo a confirmed booking (the ticket remains
-    // downloadable from the confirmation page / dashboard regardless).
-    await this.sendConfirmationEmail(booking.id);
-  }
-
-  /**
-   * Generates the itinerary PDF for a freshly-confirmed booking and emails it
-   * to the account holder. Swallows and logs all errors — the booking is
-   * already confirmed and committed by the time this runs.
-   */
-  private async sendConfirmationEmail(bookingId: string): Promise<void> {
-    try {
-      // Re-load the booking so we pick up the just-persisted PNR / status.
-      const booking = await this.entityManager
-        .getRepository(Booking)
-        .findOneBy({ id: bookingId });
-      if (!booking) return;
-
-      const [user, snapshot, passengers, documents] = await Promise.all([
-        this.entityManager
-          .getRepository(User)
-          .findOneBy({ id: booking.userId }),
-        this.entityManager.getRepository(FlightOfferSnapshot).findOne({
-          where: { bookingId },
-          relations: { slices: { segments: true } },
-        }),
-        this.entityManager
-          .getRepository(Passenger)
-          .find({ where: { bookingId } }),
-        this.entityManager
-          .getRepository(Document)
-          .find({ where: { bookingId } }),
-      ]);
-
-      if (!user?.email) {
-        this.logger.warn(
-          `No account email for booking ${bookingId}; skipping confirmation email.`,
-        );
-        return;
-      }
-
-      const pdf = await this.ticketPdfService.generate(
-        booking,
-        snapshot,
-        passengers,
-        documents,
-      );
-
-      await this.mailService.sendBookingConfirmation(user.email, booking, pdf);
-      this.logger.log(
-        `Confirmation email dispatched for booking ${bookingId} → ${user.email}`,
-      );
-    } catch (err: unknown) {
-      this.logger.error(
-        `Failed to send confirmation email for booking ${bookingId}`,
-        err instanceof Error ? err.stack : String(err),
-      );
+    if (applied) {
+      await this.fulfillmentOutcome.sendConfirmationEmail(booking.id);
     }
   }
 
@@ -243,41 +137,10 @@ export class OrderFulfillmentService {
     booking: Booking,
     error: DuffelDefinitiveError,
   ): Promise<void> {
-    await this.entityManager.transaction(async (manager) => {
-      // T6: paid → order_failed
-      await this.stateMachine.transitionTo(
-        manager,
-        booking.id,
-        BookingStatus.OrderFailed,
-        null, // system transition
-        `Duffel order rejected: ${error.message}`,
-      );
-
-      // Auto-create refund for full amount (PRD §5.3)
-      const payment = await manager
-        .getRepository(Payment)
-        .findOneBy({ bookingId: booking.id });
-
-      if (payment) {
-        const refund = new Refund();
-        refund.paymentId = payment.id;
-        refund.providerRefundId = `auto_refund_${randomUUID().slice(0, 8)}`;
-        refund.amount = booking.totalAmount;
-        refund.currency = booking.currency;
-        refund.status = RefundStatus.Pending;
-        refund.reason = 'supplier_order_rejected';
-        refund.initiatedByUserId = null; // system-initiated
-
-        await manager.save(Refund, refund);
-
-        this.logger.log(
-          `Auto-refund created for booking ${booking.id}: ${refund.amount} ${refund.currency}`,
-        );
-      }
-    });
-
-    this.logger.warn(
-      `Booking ${booking.id} → order_failed. Duffel HTTP ${error.statusCode}: ${error.message}`,
+    await this.fulfillmentOutcome.failPaidBookingAndRefund(
+      booking.id,
+      `Duffel order rejected: ${error.message}`,
+      'supplier_order_rejected',
     );
   }
 
@@ -316,25 +179,34 @@ export class OrderFulfillmentService {
           phone_number: p.phoneNumber,
         };
 
-        // Link infant to responsible adult's Duffel passenger ID
-        if (p.type === PassengerType.Infant && p.responsibleAdultPassengerId) {
-          // Find the adult's supplier passenger ID
-          const adult = passengers.find(
-            (a) => a.id === p.responsibleAdultPassengerId,
+        // Duffel links a lap infant from the ADULT's side: the responsible
+        // adult carries `infant_passenger_id` = the infant's Duffel id.
+        if (p.type === PassengerType.Adult) {
+          const infant = passengers.find(
+            (i) =>
+              i.type === PassengerType.Infant &&
+              i.responsibleAdultPassengerId === p.id &&
+              i.supplierPassengerId,
           );
-          if (adult?.supplierPassengerId) {
-            duffelPax.infant_passenger_id = adult.supplierPassengerId;
+          if (infant) {
+            duffelPax.infant_passenger_id = infant.supplierPassengerId!;
           }
         }
 
-        // Attach identity documents if present
-        if (p.documentType && p.documentNumber) {
+        // Send a document only when it is complete — blank expiry/country
+        // strings are rejected by Duffel after the customer has already paid.
+        if (
+          p.documentType &&
+          p.documentNumber &&
+          p.documentExpiry &&
+          p.nationality
+        ) {
           duffelPax.identity_documents = [
             {
-              type: p.documentType === 'passport' ? 'passport' : p.documentType,
+              type: p.documentType,
               unique_identifier: p.documentNumber,
-              expires_on: p.documentExpiry ?? '',
-              issuing_country_code: p.nationality ?? '',
+              expires_on: p.documentExpiry,
+              issuing_country_code: p.nationality,
             },
           ];
         }

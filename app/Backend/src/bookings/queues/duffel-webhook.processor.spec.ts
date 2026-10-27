@@ -6,6 +6,7 @@ import { DuffelWebhookProcessor } from './duffel-webhook.processor';
 import { DuffelService } from '../../duffel/duffel.service';
 import { DuffelReconciliationService } from '../services/duffel-reconciliation.service';
 import { MailService } from '../../auth/services/mail.service';
+import { FulfillmentOutcomeService } from '../services/fulfillment-outcome.service';
 import { SupplierWebhookEvent } from '../entities/supplier-webhook-event.entity';
 import { Booking, BookingStatus } from '../entities/booking.entity';
 import { FlightOfferSnapshot } from '../entities/flight-offer-snapshot.entity';
@@ -17,6 +18,7 @@ describe('DuffelWebhookProcessor', () => {
   let duffelService: DuffelService;
   let reconciliation: DuffelReconciliationService;
   let mailService: MailService;
+  let outcome: any;
   let mockEntityManager: any;
   let mockEventQueryBuilder: any;
 
@@ -105,7 +107,13 @@ describe('DuffelWebhookProcessor', () => {
         {
           provide: DuffelReconciliationService,
           useValue: {
-            confirmBookingFromOrder: jest.fn().mockResolvedValue(undefined),
+            confirmBookingFromOrder: jest.fn().mockResolvedValue(true),
+          },
+        },
+        {
+          provide: FulfillmentOutcomeService,
+          useValue: {
+            sendConfirmationEmail: jest.fn().mockResolvedValue(undefined),
           },
         },
         {
@@ -120,6 +128,7 @@ describe('DuffelWebhookProcessor', () => {
     duffelService = module.get(DuffelService);
     reconciliation = module.get(DuffelReconciliationService);
     mailService = module.get(MailService);
+    outcome = module.get(FulfillmentOutcomeService);
   });
 
   it('skips an already-processed event', async () => {
@@ -155,13 +164,13 @@ describe('DuffelWebhookProcessor', () => {
     );
   });
 
-  it('order.created: falls back to matching via order metadata idempotency key', async () => {
+  it('order.created: falls back to matching on the supplier_idempotency_key createOrder writes', async () => {
     mockBookingRepo.findOneBy
       .mockResolvedValueOnce(null) // direct supplierOrderId lookup misses
       .mockResolvedValueOnce({ ...paidBooking }); // supplierIdempotencyKey lookup hits
     (duffelService.getOrder as jest.Mock).mockResolvedValue({
       id: 'ord_1',
-      metadata: { idempotency_key: 'idemp_abc' },
+      metadata: { supplier_idempotency_key: 'idemp_abc' },
     });
 
     await processor.process({ data: { eventId: 'evt_1' } } as any);
@@ -170,6 +179,54 @@ describe('DuffelWebhookProcessor', () => {
       supplierIdempotencyKey: 'idemp_abc',
     });
     expect(reconciliation.confirmBookingFromOrder).toHaveBeenCalled();
+    // One Duffel round trip — the order fetched for matching is reused.
+    expect(duffelService.getOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it('order.created: still accepts the legacy idempotency_key metadata name', async () => {
+    mockBookingRepo.findOneBy
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ ...paidBooking });
+    (duffelService.getOrder as jest.Mock).mockResolvedValue({
+      id: 'ord_1',
+      metadata: { idempotency_key: 'idemp_old' },
+    });
+
+    await processor.process({ data: { eventId: 'evt_1' } } as any);
+
+    expect(mockBookingRepo.findOneBy).toHaveBeenNthCalledWith(2, {
+      supplierIdempotencyKey: 'idemp_old',
+    });
+  });
+
+  it('order.created: emails the ticket after the confirming transaction commits', async () => {
+    mockBookingRepo.findOneBy.mockResolvedValue({ ...paidBooking });
+    const order: string[] = [];
+    mockEntityManager.transaction.mockImplementation(async (cb: any) => {
+      const result = await cb(mockEntityManager);
+      order.push('commit');
+      return result;
+    });
+    outcome.sendConfirmationEmail.mockImplementation(() => {
+      order.push('email');
+      return Promise.resolve();
+    });
+
+    await processor.process({ data: { eventId: 'evt_1' } } as any);
+
+    expect(outcome.sendConfirmationEmail).toHaveBeenCalledWith('booking_1');
+    expect(order).toEqual(['commit', 'email']);
+  });
+
+  it('order.created: no email when another path already confirmed the booking', async () => {
+    mockBookingRepo.findOneBy.mockResolvedValue({ ...paidBooking });
+    (reconciliation.confirmBookingFromOrder as jest.Mock).mockResolvedValue(
+      false,
+    );
+
+    await processor.process({ data: { eventId: 'evt_1' } } as any);
+
+    expect(outcome.sendConfirmationEmail).not.toHaveBeenCalled();
   });
 
   it('order.created: leaves the event unprocessed when the booking cannot be resolved', async () => {

@@ -95,6 +95,8 @@ Duffel accepts no idempotency key, so `paid` is the state where mistakes cost re
 | 500 | **Stay `paid`.** No retry; surface to admin with `request_id` |
 | Timeout / crash / 202 | **Stay `paid`.** Reconciliation only: match `order.created` webhook, or list orders filtering on our `supplier_idempotency_key` echoed in order `metadata`. Found → T5. Verified absent after the reconciliation window (default: 15 min of repeated checks) → T6 |
 
+"Verified absent" means the **entire** Duffel order list was read without a metadata match. A failed or truncated lookup proves nothing: the booking stays `paid` and is re-checked on the next run, because refunding a booking whose ticket was in fact issued loses the supplier cost. Every path out of `paid` (sync create, `order.created` webhook, reconciliation) applies T5/T6 through one service that re-reads the booking under a row lock and acts only while it is still `paid`. This guarantees exactly one supplier-charge ledger row, one set of documents, one refund, and one confirmation email.
+
 A booking may sit in `paid` for minutes. That is correct behavior, not a bug — the UI shows "finalizing your booking," and the reprocessing worker owns getting it out of `paid`. **Never** re-POST an order because `paid` "looks stuck."
 
 ---

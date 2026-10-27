@@ -44,6 +44,55 @@ import { getRequestId } from '../../common/logging/request-context';
 import { TicketPdfService } from './ticket-pdf.service';
 import { PassengerInputDto } from '../dto/save-passengers.dto';
 
+/** Duffel labels lap infants `infant_without_seat`; our API calls them `infant`. */
+export function normalizePassengerType(type: unknown): PassengerType | null {
+  switch (type) {
+    case 'adult':
+      return PassengerType.Adult;
+    case 'child':
+      return PassengerType.Child;
+    case 'infant':
+    case 'infant_without_seat':
+      return PassengerType.Infant;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Pairs each submitted passenger with an offer passenger id. Passengers of
+ * the same type are matched in order; an offer passenger with no recognised
+ * type (Duffel types age-searched passengers per airline rules) fills a
+ * remaining slot. Throws when the submitted types can't cover the offer —
+ * binding the wrong Duffel id fails ticketing only after the customer paid.
+ */
+export function assignSupplierPassengerIds(
+  inputs: { type: PassengerType }[],
+  offerPassengers: { id: string; type?: unknown }[],
+): string[] {
+  const byType = new Map<PassengerType, string[]>();
+  const untyped: string[] = [];
+  for (const p of offerPassengers) {
+    const type = normalizePassengerType(p.type);
+    if (type) {
+      byType.set(type, [...(byType.get(type) ?? []), p.id]);
+    } else {
+      untyped.push(p.id);
+    }
+  }
+
+  return inputs.map((input, i) => {
+    const id = byType.get(input.type)?.shift() ?? untyped.shift();
+    if (!id) {
+      throw new BadRequestException({
+        code: ErrorCode.VALIDATION_ERROR,
+        message: `Passenger at index ${i} (${input.type}) does not match the passengers on this offer.`,
+      });
+    }
+    return id;
+  });
+}
+
 interface CancellationConditionPenalty {
   amount?: number;
   currency?: string;
@@ -197,7 +246,7 @@ export class BookingsService {
         offer.passenger_identity_documents_required,
       passengers: offer.passengers.map((p) => ({
         supplier_passenger_id: p.id,
-        type: p.type,
+        type: normalizePassengerType(p.type) ?? p.type,
       })),
     };
 
@@ -284,6 +333,12 @@ export class BookingsService {
         });
       }
 
+      // Bind each input to its Duffel passenger id (type-aware, not by raw index)
+      const supplierPaxIds = assignSupplierPassengerIds(
+        passengerInputs,
+        snapshotPassengers,
+      );
+
       // 4. Validate document requirements
       if (snapshot.passengerIdentityDocumentsRequired) {
         for (let i = 0; i < passengerInputs.length; i++) {
@@ -330,9 +385,7 @@ export class BookingsService {
           passenger.nationality = input.document.nationality;
         }
 
-        // Match supplier ID by index order
-        const supplierPaxId = snapshotPassengers[i]?.id || null;
-        passenger.supplierPassengerId = supplierPaxId;
+        passenger.supplierPassengerId = supplierPaxIds[i];
 
         const savedPax = await manager.save(Passenger, passenger);
         indexToEntityMap.set(i, savedPax);
@@ -382,8 +435,7 @@ export class BookingsService {
           passenger.nationality = input.document.nationality;
         }
 
-        const supplierPaxId = snapshotPassengers[i]?.id || null;
-        passenger.supplierPassengerId = supplierPaxId;
+        passenger.supplierPassengerId = supplierPaxIds[i];
 
         await manager.save(Passenger, passenger);
       }

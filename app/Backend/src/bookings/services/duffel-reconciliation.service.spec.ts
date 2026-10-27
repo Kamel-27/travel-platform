@@ -1,20 +1,19 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return */
 import { Test, TestingModule } from '@nestjs/testing';
+import { ServiceUnavailableException } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 
 import { DuffelReconciliationService } from './duffel-reconciliation.service';
 import { DuffelService } from '../../duffel/duffel.service';
-import { BookingStateMachineService } from './booking-state-machine.service';
+import { FulfillmentOutcomeService } from './fulfillment-outcome.service';
 import { Booking, BookingStatus, Supplier } from '../entities/booking.entity';
-import { Document } from '../entities/document.entity';
-import { Payment, PaymentStatus } from '../../payments/entities/payment.entity';
-import { Refund } from '../../payments/entities/refund.entity';
 
 describe('DuffelReconciliationService', () => {
   let service: DuffelReconciliationService;
-  let duffelService: DuffelService;
-  let stateMachine: BookingStateMachineService;
+  let duffelService: any;
+  let outcome: any;
   let mockEntityManager: any;
+  let mockBookingRepo: any;
 
   const stuckBooking: Partial<Booking> = {
     id: 'booking_stuck_001',
@@ -22,44 +21,30 @@ describe('DuffelReconciliationService', () => {
     status: BookingStatus.Paid,
     supplier: Supplier.Duffel,
     supplierIdempotencyKey: 'idemp_key_stuck',
-    supplierOrderId: null,
-    bookingReference: null,
     totalAmount: 105000,
     currency: 'USD',
     createdAt: new Date('2026-07-04T10:00:00Z'),
     updatedAt: new Date('2026-07-04T10:00:00Z'),
   };
 
-  const mockPayment: Partial<Payment> = {
-    id: 'pay_stuck',
-    bookingId: 'booking_stuck_001',
-    status: PaymentStatus.Succeeded,
-    amount: 105000,
-    currency: 'USD',
+  const matchingOrder = {
+    id: 'ord_duffel_found',
+    booking_reference: 'FOUND123',
+    metadata: { supplier_idempotency_key: 'idemp_key_stuck' },
+    documents: [],
   };
-
-  let mockBookingRepo: any;
-  let mockPaymentRepo: any;
+  const mappedOrder = {
+    orderId: 'ord_duffel_found',
+    bookingReference: 'FOUND123',
+    documents: [],
+  };
 
   beforeEach(async () => {
     mockBookingRepo = {
       find: jest.fn().mockResolvedValue([stuckBooking]),
-      update: jest.fn().mockResolvedValue(undefined),
     };
-    mockPaymentRepo = {
-      findOneBy: jest.fn().mockResolvedValue(mockPayment),
-    };
-
     mockEntityManager = {
-      getRepository: jest.fn().mockImplementation((cls) => {
-        if (cls === Booking) return mockBookingRepo;
-        if (cls === Payment) return mockPaymentRepo;
-        return {
-          findOneBy: jest.fn().mockResolvedValue(null),
-          find: jest.fn().mockResolvedValue([]),
-        };
-      }),
-      save: jest.fn().mockImplementation((cls, val) => Promise.resolve(val)),
+      getRepository: jest.fn().mockReturnValue(mockBookingRepo),
       transaction: jest.fn().mockImplementation((cb) => cb(mockEntityManager)),
     };
 
@@ -69,123 +54,97 @@ describe('DuffelReconciliationService', () => {
         {
           provide: DuffelService,
           useValue: {
-            listOrders: jest.fn().mockResolvedValue([]),
+            findOrder: jest
+              .fn()
+              .mockResolvedValue({ order: null, complete: true }),
+            mapOrderResult: jest.fn().mockReturnValue(mappedOrder),
           },
         },
         {
-          provide: BookingStateMachineService,
+          provide: FulfillmentOutcomeService,
           useValue: {
-            transitionTo: jest.fn().mockResolvedValue(stuckBooking),
+            confirmPaidBooking: jest.fn().mockResolvedValue(true),
+            failPaidBookingAndRefund: jest.fn().mockResolvedValue(true),
+            sendConfirmationEmail: jest.fn().mockResolvedValue(undefined),
           },
         },
-        {
-          provide: EntityManager,
-          useValue: mockEntityManager,
-        },
+        { provide: EntityManager, useValue: mockEntityManager },
       ],
     }).compile();
 
-    service = module.get<DuffelReconciliationService>(
-      DuffelReconciliationService,
-    );
-    duffelService = module.get<DuffelService>(DuffelService);
-    stateMachine = module.get<BookingStateMachineService>(
-      BookingStateMachineService,
-    );
+    service = module.get(DuffelReconciliationService);
+    duffelService = module.get(DuffelService);
+    outcome = module.get(FulfillmentOutcomeService);
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  describe('sweepStuckPaidBookings', () => {
-    it('should do nothing when no stuck bookings exist', async () => {
-      mockEntityManager.getRepository = jest.fn().mockReturnValue({
-        find: jest.fn().mockResolvedValue([]),
-      });
+  it('does nothing when no stuck bookings exist', async () => {
+    mockBookingRepo.find.mockResolvedValue([]);
 
-      await service.sweepStuckPaidBookings();
+    await service.sweepStuckPaidBookings();
 
-      expect(duffelService.listOrders).not.toHaveBeenCalled();
-      expect(stateMachine.transitionTo).not.toHaveBeenCalled();
+    expect(duffelService.findOrder).not.toHaveBeenCalled();
+  });
+
+  it('matches orders on our supplier_idempotency_key', async () => {
+    await service.sweepStuckPaidBookings();
+
+    const match = duffelService.findOrder.mock.calls[0][0];
+    expect(match(matchingOrder)).toBe(true);
+    expect(match({ metadata: { supplier_idempotency_key: 'other' } })).toBe(
+      false,
+    );
+  });
+
+  it('confirms and emails when the order is found (T5)', async () => {
+    duffelService.findOrder.mockResolvedValue({
+      order: matchingOrder,
+      complete: true,
     });
 
-    it('should transition to confirmed when matching order found (T5)', async () => {
-      const matchingDuffelOrder = {
-        id: 'ord_duffel_found',
-        booking_reference: 'FOUND123',
-        metadata: { supplier_idempotency_key: 'idemp_key_stuck' },
-        documents: [
-          {
-            type: 'electronic_ticket',
-            unique_identifier: '9876543210',
-            passenger_ids: ['pas_001'],
-          },
-        ],
-      };
+    await service.sweepStuckPaidBookings();
 
-      (duffelService.listOrders as jest.Mock).mockResolvedValue([
-        matchingDuffelOrder,
-      ]);
+    expect(outcome.confirmPaidBooking).toHaveBeenCalledWith(
+      mockEntityManager,
+      'booking_stuck_001',
+      mappedOrder,
+      'Reconciliation sweep found Duffel order',
+    );
+    expect(outcome.sendConfirmationEmail).toHaveBeenCalledWith(
+      'booking_stuck_001',
+    );
+    expect(outcome.failPaidBookingAndRefund).not.toHaveBeenCalled();
+  });
 
-      await service.sweepStuckPaidBookings();
+  it('fails and refunds only on a verified absence (T6)', async () => {
+    await service.sweepStuckPaidBookings();
 
-      // Verify order data was persisted
-      expect(mockBookingRepo.update).toHaveBeenCalledWith('booking_stuck_001', {
-        supplierOrderId: 'ord_duffel_found',
-        bookingReference: 'FOUND123',
-      });
+    expect(outcome.failPaidBookingAndRefund).toHaveBeenCalledWith(
+      'booking_stuck_001',
+      expect.stringContaining('Reconciliation sweep'),
+      'order_verified_absent_reconciliation',
+    );
+  });
 
-      // Verify T5 transition
-      expect(stateMachine.transitionTo).toHaveBeenCalledWith(
-        expect.any(Object),
-        'booking_stuck_001',
-        BookingStatus.Confirmed,
-        null,
-        'Reconciliation sweep found Duffel order',
-      );
+  it('leaves the booking paid when the order scan was cut short', async () => {
+    duffelService.findOrder.mockResolvedValue({ order: null, complete: false });
 
-      // Verify Document row created
-      expect(mockEntityManager.save).toHaveBeenCalledWith(
-        Document,
-        expect.objectContaining({
-          bookingId: 'booking_stuck_001',
-          type: 'electronic_ticket',
-          uniqueIdentifier: '9876543210',
-        }),
-      );
-    });
+    await service.sweepStuckPaidBookings();
 
-    it('should transition to order_failed and create refund when verified absent (T6)', async () => {
-      // No matching orders found
-      (duffelService.listOrders as jest.Mock).mockResolvedValue([
-        {
-          id: 'ord_other',
-          metadata: { supplier_idempotency_key: 'other_key' },
-        },
-      ]);
+    expect(outcome.failPaidBookingAndRefund).not.toHaveBeenCalled();
+    expect(outcome.confirmPaidBooking).not.toHaveBeenCalled();
+  });
 
-      await service.sweepStuckPaidBookings();
+  it('leaves the booking paid when Duffel is unreachable — never refunds a ticket that may exist', async () => {
+    duffelService.findOrder.mockRejectedValue(
+      new ServiceUnavailableException('Duffel down'),
+    );
 
-      // Verify T6 transition
-      expect(stateMachine.transitionTo).toHaveBeenCalledWith(
-        expect.any(Object),
-        'booking_stuck_001',
-        BookingStatus.OrderFailed,
-        null,
-        expect.stringContaining('Reconciliation sweep'),
-      );
+    await expect(service.sweepStuckPaidBookings()).resolves.toBeUndefined();
 
-      // Verify auto-refund created
-      expect(mockEntityManager.save).toHaveBeenCalledWith(
-        Refund,
-        expect.objectContaining({
-          paymentId: 'pay_stuck',
-          amount: 105000,
-          currency: 'USD',
-          reason: 'order_verified_absent_reconciliation',
-        }),
-      );
-    });
+    expect(outcome.failPaidBookingAndRefund).not.toHaveBeenCalled();
   });
 });

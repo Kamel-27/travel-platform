@@ -12,6 +12,7 @@ import { Segment } from '../entities/segment.entity';
 import { User } from '../../users/user.entity';
 import { DuffelService } from '../../duffel/duffel.service';
 import { DuffelReconciliationService } from '../services/duffel-reconciliation.service';
+import { FulfillmentOutcomeService } from '../services/fulfillment-outcome.service';
 import { MailService } from '../../auth/services/mail.service';
 
 /**
@@ -32,6 +33,7 @@ export class DuffelWebhookProcessor extends WorkerHost {
     private readonly entityManager: EntityManager,
     private readonly duffelService: DuffelService,
     private readonly reconciliation: DuffelReconciliationService,
+    private readonly fulfillmentOutcome: FulfillmentOutcomeService,
     private readonly mailService: MailService,
   ) {
     super();
@@ -40,43 +42,51 @@ export class DuffelWebhookProcessor extends WorkerHost {
   async process(job: Job<{ eventId: string }>): Promise<void> {
     const { eventId } = job.data;
 
-    await this.entityManager.transaction(async (manager) => {
-      const webhookEvent = await manager
-        .getRepository(SupplierWebhookEvent)
-        .createQueryBuilder('event')
-        .setLock('pessimistic_write')
-        .where('event.id = :id', { id: eventId })
-        .getOne();
+    const confirmedBookingId = await this.entityManager.transaction(
+      async (manager): Promise<string | null> => {
+        const webhookEvent = await manager
+          .getRepository(SupplierWebhookEvent)
+          .createQueryBuilder('event')
+          .setLock('pessimistic_write')
+          .where('event.id = :id', { id: eventId })
+          .getOne();
 
-      if (!webhookEvent) {
-        this.logger.error(`Supplier webhook event ${eventId} not found.`);
-        return;
-      }
-      if (webhookEvent.processedAt) {
-        this.logger.debug(`Event ${eventId} already processed. Skipping.`);
-        return;
-      }
+        if (!webhookEvent) {
+          this.logger.error(`Supplier webhook event ${eventId} not found.`);
+          return null;
+        }
+        if (webhookEvent.processedAt) {
+          this.logger.debug(`Event ${eventId} already processed. Skipping.`);
+          return null;
+        }
 
-      const resolved = await this.handleEvent(manager, webhookEvent);
-      if (!resolved) {
-        // Leave processed_at null — DuffelWebhookSweepService retries later.
-        this.logger.warn(
-          `Event ${eventId} (${webhookEvent.eventType}) not resolvable yet; left for reprocessing.`,
-        );
-        return;
-      }
+        const resolved = await this.handleEvent(manager, webhookEvent);
+        if (!resolved) {
+          // Leave processed_at null — DuffelWebhookSweepService retries later.
+          this.logger.warn(
+            `Event ${eventId} (${webhookEvent.eventType}) not resolvable yet; left for reprocessing.`,
+          );
+          return null;
+        }
 
-      webhookEvent.bookingId = resolved.bookingId;
-      webhookEvent.processedAt = new Date();
-      await manager.save(SupplierWebhookEvent, webhookEvent);
-    });
+        webhookEvent.bookingId = resolved.bookingId;
+        webhookEvent.processedAt = new Date();
+        await manager.save(SupplierWebhookEvent, webhookEvent);
+        return resolved.confirmed ? resolved.bookingId : null;
+      },
+    );
+
+    // Only after commit: the confirmation must be durable before we email it.
+    if (confirmedBookingId) {
+      await this.fulfillmentOutcome.sendConfirmationEmail(confirmedBookingId);
+    }
   }
 
   /** Returns null when the event couldn't be resolved yet (retry later). */
   private async handleEvent(
     manager: EntityManager,
     event: SupplierWebhookEvent,
-  ): Promise<{ bookingId: string | null } | null> {
+  ): Promise<{ bookingId: string | null; confirmed?: boolean } | null> {
     switch (event.eventType) {
       case 'ping.triggered':
         return { bookingId: null };
@@ -96,7 +106,7 @@ export class DuffelWebhookProcessor extends WorkerHost {
   private async handleOrderCreated(
     manager: EntityManager,
     event: SupplierWebhookEvent,
-  ): Promise<{ bookingId: string | null } | null> {
+  ): Promise<{ bookingId: string | null; confirmed?: boolean } | null> {
     const orderId = event.supplierResourceId;
     if (!orderId) {
       this.logger.warn(`order.created event ${event.id} has no resource id.`);
@@ -107,11 +117,15 @@ export class DuffelWebhookProcessor extends WorkerHost {
 
     // Fast path: reconciliation (or an earlier webhook delivery) already linked it.
     let booking = await bookingRepo.findOneBy({ supplierOrderId: orderId });
+    let order: Record<string, unknown> | null = null;
 
     if (!booking) {
-      const order = await this.duffelService.getOrder(orderId);
+      order = await this.duffelService.getOrder(orderId);
       const metadata = order['metadata'] as Record<string, string> | undefined;
-      const internalKey = metadata?.['idempotency_key'];
+      // createOrder writes `supplier_idempotency_key`; `idempotency_key` is
+      // the old name this lookup used to read (it never matched).
+      const internalKey =
+        metadata?.['supplier_idempotency_key'] ?? metadata?.['idempotency_key'];
       if (!internalKey) {
         return null;
       }
@@ -121,32 +135,26 @@ export class DuffelWebhookProcessor extends WorkerHost {
       if (!booking) {
         return null;
       }
-      if (booking.status === BookingStatus.Paid) {
-        await this.reconciliation.confirmBookingFromOrder(
-          manager,
-          booking,
-          order,
-        );
-      }
+    }
+
+    if (booking.status !== BookingStatus.Paid) {
+      // Already confirmed/failed/refunded — replay-safe no-op.
       return { bookingId: booking.id };
     }
 
-    if (booking.status === BookingStatus.Paid) {
-      const order = await this.duffelService.getOrder(orderId);
-      await this.reconciliation.confirmBookingFromOrder(
-        manager,
-        booking,
-        order,
-      );
-    }
-    // Already confirmed/failed/refunded — replay-safe no-op.
-    return { bookingId: booking.id };
+    order ??= await this.duffelService.getOrder(orderId);
+    const confirmed = await this.reconciliation.confirmBookingFromOrder(
+      manager,
+      booking,
+      order,
+    );
+    return { bookingId: booking.id, confirmed };
   }
 
   private async handleScheduleChange(
     manager: EntityManager,
     event: SupplierWebhookEvent,
-  ): Promise<{ bookingId: string | null } | null> {
+  ): Promise<{ bookingId: string | null; confirmed?: boolean } | null> {
     const orderId = event.supplierResourceId;
     if (!orderId) {
       this.logger.warn(`schedule-change event ${event.id} has no resource id.`);
