@@ -1,378 +1,619 @@
 # TravelHub — ERD (Phase 1: Flights Only)
 
-**Status:** Draft v2.1 (v2: design review — supplier-side gaps closed, money model tightened; v2.1: corrections from fact-checking Duffel's docs — no supplier idempotency support, real webhook event names/dedup key, exact `documents[].type` values, offer expiry is variable)
-**Scope:** Direct B2C users booking flights via Duffel, paid through Stripe (test mode). No hotels, no Travel Company/Agent layer, no wallet yet — those are Phase 2+ per [prd.md](prd.md).
+**Status:** Verified against code 2026-10-27 (main @ b176f47)
+**Scope:** Direct B2C users booking flights via Duffel, paid through **Paymob**. No hotels, no Travel Company/Agent layer, no wallet — those are Phase 2+ per [archive/prd.md](archive/prd.md).
 
-Design decisions driving this schema, all deliberate:
+**Source of truth for this document:** the TypeORM entities (`app/Backend/src/**/*.entity.ts`) and the migrations in `app/Backend/src/database/migrations/` (12 files, `1751600000000-InitAuthTables` → `1758000000000-CreateSupportTicketsTable`). `synchronize` is `false` in both `data-source.ts` and `database.module.ts`, so **the migrations are the real DDL**; entity decorators only describe them. No custom naming strategy is configured — every column name is set explicitly with `name:` in the entity, snake_case by convention. All PKs are `uuid`.
 
-1. **We own a full snapshot of what was booked**, not just a Duffel order ID. Duffel is the airline-side source of truth for the PNR, but our DB is the source of truth for *what the customer was shown and charged* — needed for support, disputes, and audit independent of Duffel's live data changing later. The snapshot therefore includes the offer's **price, cabin class, and fare conditions**, plus the raw offer payload.
-2. **Payment is provider-agnostic even though only Stripe is wired up now.** A `provider` field plus a separate `PaymentAttempt`/`PaymentWebhookEvent`/`Refund` layer means adding Paymob or Moyasar later is additive, not a schema rewrite — and it's what actually lets you build real retry/webhook/idempotency logic instead of a single happy-path charge call.
-3. **Flight supply is supplier-agnostic too — symmetrically.** The supplier side gets the same treatment as the payment side: a `supplier` enum, an order-creation **idempotency key** we control (client-side only — Duffel accepts none; see `Booking`), and a `SupplierWebhookEvent` table for Duffel's at-least-once order webhooks (schedule changes, airline cancellations). Post-purchase, the supplier is *not* write-only.
-4. **Auth is passwordless: Google OAuth + email magic link.** No `password_hash` on `User` — instead an `AuthIdentity` table (provider-agnostic, same pattern as payment/supplier) and a `MagicLinkToken` table for the email flow. Identity rows *are* the credentials, so they carry hard unique constraints.
-5. **Contact info lives on the booking flow, not the account.** Duffel requires `phone_number` and `email` **per passenger** to create an order — and also `title` and `gender`, which are just as mandatory. `User.phone` stays optional (used only to prefill the checkout form); the real required fields live on `Passenger`.
-6. **Duffel has its own passenger ID namespace.** Order passengers, `documents[].passenger_ids`, and webhook payloads all reference Duffel's IDs, not ours — so `Passenger.supplier_passenger_id` is the mapping that makes every supplier response resolvable to our rows.
-7. **Duffel doesn't send a PDF.** Its `documents[]` array gives you a ticket number, a type, and which passengers it covers — nothing downloadable. Generating the itinerary/receipt PDF is our job. `Document` distinguishes supplier-issued ticket records from files we generate (`source` discriminator), and links to passengers via a proper join table.
-8. **Money is stored as integer minor units** (cents, fils, …) with an ISO 4217 currency code. This survives 0-decimal (JPY) and 3-decimal (KWD, BHD) currencies that Duffel will actually return. **Phase 1 constraint: a booking, its payment, and its refunds share one currency** — cross-currency (an `fx_rate` + `quoted_at` pair) is deferred until Paymob/Moyasar make it real, and is additive when it comes.
-9. **Flight times are local wall-clock times, never normalized to UTC.** Duffel returns local times; "departs 09:15" must render as 09:15 regardless of the viewer's timezone. Segments store the local datetime plus the IANA timezone per endpoint.
+Design decisions driving this schema:
+
+1. **We own a full snapshot of what was booked**, not just a Duffel order ID. Duffel is the airline-side source of truth for the PNR, but our DB is the source of truth for *what the customer was shown and charged*. The snapshot includes the offer's **price, cabin class, and fare conditions**, plus the raw offer payload (`flight_offer_snapshots` → `slices` → `segments`).
+2. **Payment is provider-agnostic even though only Paymob is wired up.** A `provider` enum plus a separate `payment_attempts` / `payment_webhook_events` / `refunds` layer. The `payment_provider` enum still contains `stripe` (the original design target) and the `payments.provider` column default is still `'stripe'`, but every code path writes `paymob` — see `Payment` below.
+3. **Flight supply is supplier-agnostic too.** A `supplier_provider` enum (one value: `duffel`), an order-creation **idempotency key** we control (Duffel accepts none), and a `supplier_webhook_events` table for Duffel's at-least-once order webhooks.
+4. **Auth is passwordless: Google OAuth + email magic link, with rotating refresh tokens.** No `password_hash` on `users` — instead `auth_identities` (provider-agnostic), `magic_link_tokens` for the email flow, and `refresh_tokens` for JWT session rotation with family-based reuse detection.
+5. **Contact info lives on the booking flow, not the account.** Duffel requires `phone_number`, `email`, `title` and `gender` **per passenger**. `users.phone` / `users.full_name` are optional prefill only; the required fields live on `passengers`.
+6. **Duffel has its own passenger ID namespace.** `passengers.supplier_passenger_id` is the mapping that makes every supplier response (orders, `documents[].passenger_ids`, webhooks) resolvable to our rows.
+7. **Documents are Duffel's ticket records only.** `documents` stores what Duffel returns in `order.documents[]` (type, e-ticket number, covered passenger IDs as a JSON array). There is **no** `source` discriminator, no generated-PDF rows, and no `document_passengers` join table — the itinerary/receipt PDF is rendered on demand by `bookings/services/ticket-pdf.service.ts` from booking data, not persisted.
+8. **Money is stored as `integer` minor units** (cents, piastres, fils, …) with a `char(3)` ISO 4217 currency column on every money-bearing table. **Phase 1 constraint: a booking, its payment, and its refunds share one currency** — there is no `fx_rate` column anywhere.
+9. **Flight times are local wall-clock times, never normalized to UTC.** `segments` stores `timestamp` (without time zone) plus the IANA timezone per endpoint. Every other timestamp in the schema is `timestamptz`.
+10. **Operational state is appended, not overwritten.** `booking_status_history`, `audit_logs`, `ledger_entries` and both webhook-event tables are append-only; `support_tickets` is the one customer-facing mutable work queue.
 
 ---
 
 ## Entities
 
-### User
-No password — see `AuthIdentity`/`MagicLinkToken` below.
-| Field | Type | Notes |
+Column types below are the Postgres types from the migrations. "NN" = `NOT NULL`. FK `ON DELETE` rules are given per column because they differ table to table.
+
+### User — `users`
+No password — see `AuthIdentity` / `MagicLinkToken` / `RefreshToken`.
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| email | string, unique | Identity key — Google and magic-link auth both resolve to this |
-| email_verified_at | timestamp, nullable | Set on first successful Google login or magic-link verification |
-| full_name | string | From Google profile, or collected post-signup for email-link users |
-| phone | string, nullable | Convenience prefill only — never the source of truth for a booking's contact info |
-| role | enum(`technical_admin`, `user`) | Phase 2 adds `travel_company_admin`, `travel_agent` — not modeled yet |
-| is_active | boolean | |
-| created_at / updated_at | timestamp | |
+| id | uuid PK | `gen_random_uuid()` |
+| email | varchar NN, **unique** (`ux_users_email`) | Identity key — Google and magic-link auth both resolve to this |
+| email_verified_at | timestamptz, nullable | Set on first successful Google login or magic-link verification |
+| full_name | varchar, **nullable** | From Google profile, or collected post-signup for email-link users |
+| phone | varchar, nullable | Convenience prefill only — never the source of truth for a booking's contact info |
+| role | enum `user_role` NN, default `'user'` | Values: `technical_admin`, `user` |
+| is_active | boolean NN, default `true` | |
+| created_at / updated_at | timestamptz NN, default `now()` | |
 
-### AuthIdentity
-One row per login method a user has used. Same "provider enum + adapter" pattern as `Payment`. Because these rows are the credentials in a passwordless system, uniqueness is enforced hard:
-- **unique (`provider`, `provider_user_id`)** where `provider_user_id` is not null — one Google `sub` can never map to two users (account-takeover guard, and absorbs double-submitted OAuth callbacks).
-- **unique (`user_id`, `provider`)** — one identity row per method per user.
+### AuthIdentity — `auth_identities`
+One row per login method a user has used. Identity rows *are* the credentials in a passwordless system, so uniqueness is enforced hard:
+- **`ux_auth_identities_provider_user`** — partial unique index on (`provider`, `provider_user_id`) `WHERE provider_user_id IS NOT NULL` — one Google `sub` can never map to two users.
+- **`ux_auth_identities_user_provider`** — UNIQUE (`user_id`, `provider`) — one identity row per method per user.
 
-| Field | Type | Notes |
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| user_id | FK → User | |
-| provider | enum(`google`, `email_link`) | Extensible — Apple/Facebook later without a schema change |
-| provider_user_id | string, nullable | Google's `sub` claim; null for `email_link` |
-| created_at | timestamp | |
+| id | uuid PK | |
+| user_id | uuid NN, FK → users **ON DELETE CASCADE** (`fk_auth_identities_user`) | |
+| provider | enum `auth_provider` NN | Values: `google`, `email_link` |
+| provider_user_id | varchar, nullable | Google's stable `sub` claim; null for `email_link` |
+| created_at | timestamptz NN | |
 
-### MagicLinkToken
-| Field | Type | Notes |
+### MagicLinkToken — `magic_link_tokens`
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| user_id | FK → User, nullable | Null until the email is confirmed to belong to an existing/new user |
-| email | string | What the link was requested for |
-| token_hash | string, **indexed** | Store a hash, never the raw token — compare hashes on verification; this is the verification hot path |
-| expires_at | timestamp | Short-lived (~15 min) |
-| used_at | timestamp, nullable | Single-use — reject if already set |
-| requested_ip | string, nullable | Basic abuse/rate-limit signal |
-| created_at | timestamp | |
+| id | uuid PK | |
+| user_id | uuid, nullable, FK → users **ON DELETE CASCADE** (`fk_magic_link_tokens_user`) | Null until the email is confirmed to belong to an existing/new user |
+| email | varchar NN | What the link was requested for |
+| token_hash | varchar NN, **indexed** (`ix_magic_link_tokens_token_hash`, non-unique) | SHA-256 of the raw token; the raw token is never stored |
+| expires_at | timestamptz NN | |
+| used_at | timestamptz, nullable | Single-use — verification is an atomic `UPDATE … WHERE used_at IS NULL` |
+| requested_ip | varchar, nullable | Abuse/rate-limit signal |
+| created_at | timestamptz NN | |
 
-### MarkupRule
-Satisfies the PRD requirement that markup be admin-configurable, not hardcoded.
-
-**Semantics (the number revenue depends on):** `percentage` applies to `Booking.base_amount` (Duffel's charge to us, taxes included), computed **once per booking** (not per passenger), rounded **half-up to the minor unit**. `fixed` is a minor-unit amount in the booking currency.
-
-**Constraint:** partial unique index on `is_active` where true — "only one active rule" is enforced by the database, not by convention, so two admins toggling simultaneously can't leave two rules active.
-
-| Field | Type | Notes |
+### RefreshToken — `refresh_tokens`
+JWT refresh-token rotation (auth_flow.md §4). Tokens are grouped into a **family**; presenting a revoked token from a family revokes the whole family (theft detection).
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| type | enum(`percentage`, `fixed`) | |
-| value | decimal | Percentage (e.g. `2.500`) or minor-unit amount for `fixed` |
-| is_active | boolean | Partial unique index: at most one row where true |
-| created_by_user_id | FK → User | Must be a `technical_admin` |
-| created_at / updated_at | timestamp | |
+| id | uuid PK | |
+| user_id | uuid NN, FK → users **ON DELETE CASCADE** (`fk_refresh_tokens_user`) | |
+| token_hash | varchar NN, **unique** (`ux_refresh_tokens_token_hash`) | SHA-256 of the raw opaque token |
+| family_id | uuid NN, **indexed** (`ix_refresh_tokens_family_id`) | Rotation chain id — the revoke-all-in-family lookup |
+| expires_at | timestamptz NN | |
+| revoked_at | timestamptz, nullable | Set on rotation or explicit revoke |
+| user_agent | varchar, nullable | |
+| ip | varchar, nullable | |
+| created_at | timestamptz NN | |
 
-### Booking
+### MarkupRule — `markup_rules`
+Admin-configurable markup. `percentage` applies to `bookings.base_amount` once per booking; `fixed` is a minor-unit amount in the booking currency.
+
+**Constraint:** `ux_markup_rules_active_one` — partial unique index on `is_active WHERE is_active = true` — at most one active rule, enforced by the database.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid PK | |
+| type | enum `markup_type` NN | Values: `percentage`, `fixed` |
+| value | numeric(10,3) NN | Percentage (e.g. `2.500`) or minor-unit amount for `fixed`. TypeORM surfaces it as a string |
+| is_active | boolean NN, default `false` | Partial unique index: at most one row where true |
+| created_by_user_id | uuid NN, FK → users **ON DELETE RESTRICT** (`fk_markup_rules_created_by`) | |
+| created_at / updated_at | timestamptz NN | |
+
+### Booking — `bookings`
 The commercial record — one per flight purchase.
 
 **Invariants:**
-- CHECK `total_amount = base_amount + markup_amount` (single shared `currency` makes this well-defined).
-- `supplier_idempotency_key` is generated **before** the first supplier order-creation call and reused on every retry. **Fact-check note: Duffel's Create Order accepts no client idempotency key** — this key is purely our own dedup mechanism, so it must also be **echoed into the Duffel order's `metadata`**: after a crash/timeout the recovery path is the `order.created` webhook or listing recent orders and matching on this key. Never blind-retry an ambiguous (200/202/timeout) outcome — that is exactly how duplicate airline orders happen.
-- `supplier_order_id` unique (nullable) — the database refuses a second booking claiming the same Duffel order.
+- CHECK `ck_bookings_total_match`: `total_amount = base_amount + markup_amount`.
+- `supplier_idempotency_key` is generated **before** the first supplier order-creation call and reused on every retry; Duffel accepts no client idempotency key, so it is echoed into the Duffel order `metadata` for post-timeout reconciliation.
+- `ux_bookings_supplier_order_id` — UNIQUE on nullable `supplier_order_id` — the database refuses a second booking claiming the same Duffel order.
 
-| Field | Type | Notes |
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| user_id | FK → User | Indexed with `created_at` for the my-bookings list |
-| markup_rule_id | FK → MarkupRule, nullable | Which rule was applied at booking time |
-| status | enum(`pending`, `awaiting_payment`, `paid`, `confirmed`, `order_failed`, `cancelled`, `failed`, `refunded`) | `paid` = money captured, supplier order in flight; `order_failed` = money captured but supplier order creation definitively failed (refund path) — a real state, not a `failed` catch-all. State machine doc next. |
-| supplier | enum(`duffel`) | One value today; exists so a second supplier is additive, not a migration |
-| supplier_idempotency_key | string, **unique** | Ours only — Duffel offers no idempotency support; echoed into Duffel order `metadata` for post-timeout reconciliation |
-| supplier_order_id | string, nullable, **unique** | Set once the supplier's order creation succeeds |
-| booking_reference | string, nullable, indexed | Airline PNR, from the supplier's order — support looks bookings up by this |
-| base_amount | integer (minor units) | What Duffel charges us |
-| markup_amount | integer (minor units) | Computed from MarkupRule at booking time |
-| total_amount | integer (minor units) | What the customer pays; CHECK = base + markup |
-| currency | char(3), ISO 4217 | One currency per booking in Phase 1 (see design decision 8) |
-| created_at / updated_at | timestamp | |
+| id | uuid PK | |
+| user_id | uuid NN, FK → users **ON DELETE RESTRICT** (`fk_bookings_user`) | Indexed with `created_at DESC` (`ix_bookings_user_created`) for the my-bookings list |
+| markup_rule_id | uuid, nullable, FK → markup_rules **ON DELETE SET NULL** (`fk_bookings_markup_rule`) | Which rule was applied at booking time |
+| status | enum `booking_status` NN, default `'pending'` | Values: `pending`, `awaiting_payment`, `paid`, `confirmed`, `order_failed`, `cancelled`, `failed`, `refunded`. `paid` = money captured, supplier order in flight; `order_failed` = money captured but supplier order creation definitively failed (refund path). Transitions in [booking_state_machine.md](booking_state_machine.md) |
+| supplier | enum `supplier_provider` NN, default `'duffel'` | Values: `duffel` |
+| supplier_idempotency_key | varchar NN, **unique** (`ux_bookings_supplier_idempotency_key`) | Ours only |
+| supplier_order_id | varchar, nullable, **unique** (`ux_bookings_supplier_order_id`) | Set once the supplier's order creation succeeds (`ord_…`) |
+| booking_reference | varchar, nullable, indexed (`ix_bookings_booking_reference`) | Airline PNR — support looks bookings up by this |
+| base_amount | integer NN (minor units) | What Duffel charges us |
+| markup_amount | integer NN (minor units) | Computed from MarkupRule at booking time |
+| total_amount | integer NN (minor units) | What the customer pays; CHECK = base + markup |
+| currency | char(3) NN | ISO 4217 — one currency per booking |
+| cancellation_requested_at | timestamptz, nullable | Set when a non-auto-approvable cancellation is routed to `technical_admin` (migration `1754…`). Partial index `ix_bookings_cancellation_requested WHERE cancellation_requested_at IS NOT NULL` feeds the admin queue |
+| cancellation_request_reason | varchar, nullable | Customer's stated reason |
+| schedule_change_detected_at | timestamptz, nullable | Set when Duffel reports `order.airline_initiated_change_detected` (migration `1755…`) |
+| created_at / updated_at | timestamptz NN | |
 
-### FlightOfferSnapshot (1:1 with Booking)
-Frozen copy of the supplier's offer at the moment of booking — including everything the customer was shown and everything a later cancellation needs.
-| Field | Type | Notes |
+### FlightOfferSnapshot — `flight_offer_snapshots` (1:1 with Booking)
+Frozen copy of the supplier's offer at the moment of booking.
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| booking_id | FK → Booking, unique | |
-| supplier | enum(`duffel`) | Matches `Booking.supplier` |
-| supplier_offer_id | string | |
-| expires_at | timestamp | Supplier's own offer expiry — **no fixed window**; varies per offer/airline (LCCs can be minutes), this field is the only truth |
-| owner_airline_name / owner_airline_iata | string | |
-| total_amount / tax_amount | integer (minor units) | The offer's own price breakdown, pre-markup — what Duffel quoted |
-| currency | char(3) | |
-| cabin_class | string | e.g. `economy` — part of "what the customer was shown" |
-| conditions | JSON | Duffel's `conditions` (`refund_before_departure`, `change_before_departure` + penalties) — the data a cancellation/change flow prices from |
-| passenger_identity_documents_required | boolean | Drives whether checkout must collect passport/ID fields — comes straight off the Duffel offer |
-| raw_offer | JSON | The full offer payload as returned. Cheap, and the whole point of a snapshot is fidelity — disputes get the exact bytes |
-| captured_at | timestamp | |
+| id | uuid PK | |
+| booking_id | uuid NN, FK → bookings **ON DELETE CASCADE** (`fk_flight_offer_snapshots_booking`), **unique** (`ux_flight_offer_snapshots_booking_id`) | |
+| supplier | enum `supplier_provider` NN | Matches `bookings.supplier` (no default here) |
+| supplier_offer_id | varchar NN | Duffel `off_…` |
+| expires_at | timestamptz NN | Supplier's own offer expiry — no fixed window |
+| owner_airline_name / owner_airline_iata | varchar NN | |
+| total_amount / tax_amount | integer NN (minor units) | The offer's own price breakdown, pre-markup — what Duffel quoted |
+| currency | char(3) NN | |
+| cabin_class | varchar NN | e.g. `economy` |
+| conditions | jsonb NN | Duffel's `conditions` (`refund_before_departure`, `change_before_departure` + penalties) |
+| passenger_identity_documents_required | boolean NN, default `false` | Drives whether checkout must collect passport/ID fields |
+| raw_offer | jsonb NN | The full offer payload as returned |
+| captured_at | timestamptz NN, default `now()` | Create-date column |
 
-### Slice (offer snapshot → slices)
-| Field | Type | Notes |
+### Slice — `slices` (offer snapshot → slices)
+No timestamps on this table.
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| offer_snapshot_id | FK → FlightOfferSnapshot | |
-| origin / destination | string (IATA) | |
-| duration | string/interval | |
-| fare_brand_name | string, nullable | |
+| id | uuid PK | |
+| offer_snapshot_id | uuid NN, FK → flight_offer_snapshots **ON DELETE CASCADE** (`fk_slices_offer_snapshot`) | |
+| origin / destination | varchar(3) NN | IATA |
+| duration | varchar NN | ISO 8601 duration string as Duffel returns it |
+| fare_brand_name | varchar, nullable | |
 
-### Segment (slice → segments)
-Times are **local wall-clock, stored without UTC conversion** (`timestamp without time zone`), each paired with its IANA timezone (Duffel provides it per airport). Sorting/alerting derives UTC at read time; display never converts.
-| Field | Type | Notes |
+### Segment — `segments` (slice → segments)
+Times are **local wall-clock, stored without UTC conversion** (`timestamp` without time zone), each paired with its IANA timezone. No timestamps-of-record on this table.
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| slice_id | FK → Slice | |
-| marketing_carrier / operating_carrier | string | Codeshare distinction |
-| flight_number | string | |
-| aircraft | string, nullable | |
-| departing_at_local | timestamp (no tz) | Local time at origin — never normalized to UTC |
-| origin_timezone | string (IANA) | e.g. `Africa/Cairo` |
-| arriving_at_local | timestamp (no tz) | Local time at destination |
-| destination_timezone | string (IANA) | |
-| origin_terminal / destination_terminal | string, nullable | |
+| id | uuid PK | |
+| slice_id | uuid NN, FK → slices **ON DELETE CASCADE** (`fk_segments_slice`) | |
+| marketing_carrier / operating_carrier | varchar(2) NN | IATA airline codes; codeshare distinction |
+| flight_number | varchar NN | |
+| aircraft | varchar, nullable | |
+| departing_at_local | timestamp (no tz) NN | Local time at origin |
+| origin_timezone | varchar NN | IANA, e.g. `Africa/Cairo` |
+| arriving_at_local | timestamp (no tz) NN | Local time at destination |
+| destination_timezone | varchar NN | IANA |
+| origin_terminal / destination_terminal | varchar, nullable | |
 
-### Passenger
-Everything Duffel hard-requires to create an order lives here: `given_name`, `family_name`, `title`, `gender`, `date_of_birth`, `phone_number`, `email`.
+### Passenger — `passengers`
+Everything Duffel hard-requires to create an order lives here. No `created_at` / `updated_at` on this table.
 
 **Constraints:**
-- unique (`booking_id`, `supplier_passenger_id`) where not null.
-- `responsible_adult_passenger_id` required when `type = infant` (Duffel requires infants be associated with an adult on the same order).
+- `ux_passengers_booking_supplier_pax` — partial unique index on (`booking_id`, `supplier_passenger_id`) `WHERE supplier_passenger_id IS NOT NULL`.
+- CHECK `ck_passengers_infant_adult`: `type != 'infant' OR responsible_adult_passenger_id IS NOT NULL`.
 
-| Field | Type | Notes |
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| booking_id | FK → Booking | |
-| supplier_passenger_id | string, nullable | **Duffel's passenger ID** (assigned at offer-request time, echoed in orders, `documents[].passenger_ids`, and webhooks). Null until known; the mapping that makes every supplier response resolvable to our rows |
-| type | enum(`adult`, `child`, `infant`) | |
-| title | enum(`mr`, `ms`, `mrs`, `miss`) | **Required by Duffel** to create an order |
-| gender | enum(`m`, `f`) | **Required by Duffel** to create an order |
-| given_name / family_name | string | |
-| date_of_birth | date | |
-| phone_number | string | **Required by Duffel per passenger to create an order** — not optional |
-| email | string | **Required by Duffel per passenger** — defaults to the account email for the primary passenger, editable for others |
-| responsible_adult_passenger_id | FK → Passenger, nullable | Required when `type = infant` |
-| document_type | string, nullable | passport/national_id etc. — required only when `FlightOfferSnapshot.passenger_identity_documents_required` is true |
-| document_number | string, nullable | |
+| id | uuid PK | |
+| booking_id | uuid NN, FK → bookings **ON DELETE CASCADE** (`fk_passengers_booking`) | |
+| supplier_passenger_id | varchar, nullable | Duffel's passenger ID (`pas_…`); null until known |
+| type | enum `passenger_type` NN | Values: `adult`, `child`, `infant` |
+| title | enum `passenger_title` NN | Values: `mr`, `ms`, `mrs`, `miss` |
+| gender | enum `passenger_gender` NN | Values: `m`, `f` |
+| given_name / family_name | varchar NN | |
+| date_of_birth | date NN | TypeORM surfaces it as `YYYY-MM-DD` string |
+| phone_number | varchar NN | Required by Duffel per passenger |
+| email | varchar NN | Required by Duffel per passenger |
+| responsible_adult_passenger_id | uuid, nullable, FK → passengers **ON DELETE SET NULL** (`fk_passengers_responsible_adult`) | Required when `type = infant` (CHECK above) |
+| document_type | varchar, nullable | passport / national_id etc. — only when `flight_offer_snapshots.passenger_identity_documents_required` |
+| document_number | varchar, nullable | |
 | document_expiry | date, nullable | |
-| nationality | string, nullable | |
+| nationality | varchar, nullable | |
 
-### Payment (0..1 per Booking)
-Current state of money for a booking. Provider-agnostic by design. A booking in `pending` (offer selected, passengers being entered) has **no payment row yet** — the row is created when checkout reaches the pay step. `Payment.amount` must equal `Booking.total_amount` at creation (application-enforced invariant).
-| Field | Type | Notes |
+### Payment — `payments` (0..1 per Booking)
+Current state of money for a booking. A `pending` booking has **no payment row yet** — the row is created inside the checkout transaction when the pay step is reached (`payments.service.ts`), with `amount = bookings.total_amount` and `currency = bookings.currency` (application-enforced).
+
+> Note: the `payment_provider` enum is `('stripe', 'paymob')` and the column default is `'stripe'` (migration `1751900000000`), but `payments.service.ts` always sets `provider = 'paymob'` explicitly and the webhook controller only accepts Paymob. `stripe` is a residual value from the original design; no code path writes it.
+
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| booking_id | FK → Booking, unique | The unique FK is what makes two payments for one booking impossible |
-| provider | enum(`stripe`) | Single value today; enum grows later, not the schema shape |
-| status | enum(`pending`, `succeeded`, `failed`, `refunded`, `partially_refunded`) | Refund *details* live in `Refund` — this is just the rollup |
-| amount | integer (minor units) | = `Booking.total_amount` at creation |
-| currency | char(3) | = `Booking.currency` in Phase 1 |
-| created_at / updated_at | timestamp | |
+| id | uuid PK | |
+| booking_id | uuid NN, FK → bookings **ON DELETE RESTRICT** (`fk_payments_booking`), **unique** (`ux_payments_booking_id`) | One payment per booking, by the database |
+| provider | enum `payment_provider` NN, default `'stripe'` | Values: `stripe`, `paymob` — see Note |
+| status | enum `payment_status` NN, default `'pending'` | Values: `pending`, `succeeded`, `failed`, `refunded`, `partially_refunded`. Refund *details* live in `refunds` — this is the rollup |
+| amount | integer NN (minor units) | = `bookings.total_amount` at creation |
+| currency | char(3) NN | = `bookings.currency` |
+| created_at / updated_at | timestamptz NN | |
 
-### PaymentAttempt (Payment → attempts)
-This is where the actual gateway integration logic lives — retries, failures, 3DS, etc. `provider_reference_id` is **unique** — it's the key webhooks match on, and one Stripe PaymentIntent can never belong to two attempts.
-| Field | Type | Notes |
+### PaymentAttempt — `payment_attempts` (Payment → attempts)
+Where the gateway integration logic lives — retries, failures, 3DS. `provider_reference_id` is the key webhooks match on.
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| payment_id | FK → Payment | |
-| provider_reference_id | string, **unique, indexed** | Stripe PaymentIntent id — the webhook-matching key |
-| status | enum(`requires_action`, `processing`, `succeeded`, `failed`) | |
-| failure_reason | string, nullable | |
-| method | string, nullable | card / wallet / etc. |
-| attempted_at | timestamp | |
+| id | uuid PK | |
+| payment_id | uuid NN, FK → payments **ON DELETE CASCADE** (`fk_payment_attempts_payment`) | |
+| provider_reference_id | varchar NN, **unique** (`ux_payment_attempts_provider_ref`) | Paymob order / transaction reference. Also has a redundant non-unique index `ix_payment_attempts_provider_ref` (both the entity and migration create it alongside the UNIQUE constraint) |
+| status | enum `payment_attempt_status` NN | Values: `requires_action`, `processing`, `succeeded`, `failed` |
+| failure_reason | varchar, nullable | |
+| method | varchar, nullable | card / wallet / etc. |
+| attempted_at | timestamptz NN, default `now()` | Create-date column |
 
-### PaymentWebhookEvent
-Inbound events from the gateway — dedupe + audit trail, not trust-the-client. Dedupe is **unique (`provider`, `provider_event_id`)** — composite, because two providers' event ID namespaces can collide once Paymob/Moyasar arrive.
-| Field | Type | Notes |
+### PaymentWebhookEvent — `payment_webhook_events`
+Inbound events from the gateway — dedupe + audit trail. Dedupe is **UNIQUE (`provider`, `provider_event_id`)** (`ux_payment_webhook_events_provider_event`).
+
+> Note: Paymob has no distinct event id. `webhooks.controller.ts` synthesises `provider_event_id = "<transaction.id>:<event_type>"` and `event_type` is one of `transaction.pending`, `transaction.succeeded`, `transaction.failed` — so exact redeliveries collapse while state progressions for the same transaction are kept. Processing happens in a BullMQ worker; `processed_at` is set when the worker finishes.
+
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| provider | enum(`stripe`) | |
-| provider_event_id | string | Unique together with `provider` |
-| event_type | string | e.g. `payment_intent.succeeded` |
-| payload | JSON | Raw event body |
-| payment_id | FK → Payment, nullable | Resolved after matching |
-| payment_attempt_id | FK → PaymentAttempt, nullable | Which *attempt* the event settles — with 3DS retries, payment-level isn't enough |
-| received_at / processed_at | timestamp | `processed_at` null until handled; partial index on `processed_at IS NULL` for the reprocessing worker |
+| id | uuid PK | |
+| provider | enum `payment_provider` NN | Code only writes `paymob` |
+| provider_event_id | varchar NN | Unique together with `provider` |
+| event_type | varchar NN | See Note |
+| payload | jsonb NN | Raw event body |
+| payment_id | uuid, nullable, FK → payments **ON DELETE SET NULL** (`fk_payment_webhook_events_payment`) | Resolved after matching |
+| payment_attempt_id | uuid, nullable, FK → payment_attempts **ON DELETE SET NULL** (`fk_payment_webhook_events_payment_attempt`) | Which *attempt* the event settles |
+| received_at | timestamptz NN, default `now()` | Create-date column |
+| processed_at | timestamptz, nullable | Partial index `ix_payment_webhook_events_unprocessed WHERE processed_at IS NULL` for the reprocessing worker |
 
-### Refund
-`refunded` / `partially_refunded` are rollup statuses; this is the record behind them — amount, provider reference, who, when, why. "Partially refunded" is meaningless without an amount.
-| Field | Type | Notes |
+### Refund — `refunds`
+`refunded` / `partially_refunded` on `payments` are rollups; this is the record behind them. Rows are created as `pending` **before** the gateway call (migration `1756000000000` made `provider_refund_id` nullable for exactly this reason).
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| payment_id | FK → Payment | |
-| provider_refund_id | string, **unique**, nullable | Gateway refund id — assigned only once the gateway accepts the refund; null while `pending`/`failed` (rows are created before the gateway call; Postgres allows multiple NULLs under UNIQUE) |
-| amount | integer (minor units) | What we return to the customer |
-| currency | char(3) | = booking currency in Phase 1 |
-| supplier_refund_amount | integer (minor units), nullable | What Duffel refunded **us** on cancellation — airline-determined, often less than the customer paid. This is what makes markup accounting reconcilable |
-| status | enum(`pending`, `succeeded`, `failed`) | |
-| reason | string, nullable | |
-| initiated_by_user_id | FK → User, nullable | null = system-triggered |
-| created_at / updated_at | timestamp | |
+| id | uuid PK | |
+| payment_id | uuid NN, FK → payments **ON DELETE RESTRICT** (`fk_refunds_payment`) | |
+| provider_refund_id | varchar, nullable, **unique** (`ux_refunds_provider_refund_id`) | Paymob refund id — assigned only once the gateway accepts; null while `pending` / `failed` (Postgres allows multiple NULLs under UNIQUE) |
+| amount | integer NN (minor units) | What we return to the customer |
+| currency | char(3) NN | = booking currency |
+| supplier_refund_amount | integer, nullable (minor units) | What Duffel refunded **us** on cancellation — airline-determined, often less than the customer paid |
+| status | enum `refund_status` NN, default `'pending'` | Values: `pending`, `succeeded`, `failed` |
+| reason | varchar, nullable | |
+| initiated_by_user_id | uuid, nullable, FK → users **ON DELETE SET NULL** (`fk_refunds_user`) | null = system-triggered |
+| created_at / updated_at | timestamptz NN | |
 
-### SupplierWebhookEvent
-The supplier-side twin of `PaymentWebhookEvent` — Duffel delivers order lifecycle events **at-least-once**, unordered, retried up to 72h. Verified event types: `order.created`, `order.airline_initiated_change_detected`, `ping.triggered` (there is **no** documented `order.updated`). Phase 1 doesn't have to *act* on a schedule change, but it must be able to receive, dedupe, and store one — otherwise the customer's stored segments silently go stale.
+### SupplierWebhookEvent — `supplier_webhook_events`
+The supplier-side twin of `PaymentWebhookEvent`. Duffel delivers order lifecycle events at-least-once, unordered, retried up to 72h. The processor (`bookings/queues/duffel-webhook.processor.ts`) handles `ping.triggered`, `order.created`, `order.airline_initiated_change_detected`.
 
-**Dedup caution (verified):** Duffel events carry a unique event `id` (`wev_…`) *and* an `idempotency_key` — but the `idempotency_key` is the **related resource's ID** (e.g. `ord_…`), not a per-event key. Dedupe on the event `id`; use `idempotency_key` only to resolve the booking. Deduping on `idempotency_key` would silently drop distinct events about the same order.
-| Field | Type | Notes |
+**Dedup:** UNIQUE (`supplier`, `supplier_event_id`) (`ux_supplier_webhook_events_supplier_event`) on Duffel's event `id` (`wev_…`). `supplier_resource_id` is Duffel's `idempotency_key`, which is the **related resource's id** (`ord_…`), not a per-event key — used only to resolve the booking.
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| supplier | enum(`duffel`) | |
-| supplier_event_id | string | **Duffel's event `id` (`wev_…`)** — unique together with `supplier` |
-| supplier_resource_id | string, nullable | Duffel's `idempotency_key` = related resource id (`ord_…`) — the booking-matching key, indexed |
-| event_type | string | e.g. `order.created`, `order.airline_initiated_change_detected` |
-| payload | JSON | Raw event body |
-| booking_id | FK → Booking, nullable | Resolved after matching `order_id` → `Booking.supplier_order_id` |
-| received_at / processed_at | timestamp | Same reprocessing pattern as the payment side |
+| id | uuid PK | |
+| supplier | enum `supplier_provider` NN, default `'duffel'` | |
+| supplier_event_id | varchar NN | Duffel's event `id` — unique together with `supplier` |
+| supplier_resource_id | varchar, nullable, indexed (`ix_supplier_webhook_events_resource`) | Duffel's `idempotency_key` = related resource id |
+| event_type | varchar NN | |
+| payload | jsonb NN | Raw event body |
+| booking_id | uuid, nullable, FK → bookings **ON DELETE SET NULL** (`fk_supplier_webhook_events_booking`) | Resolved by matching `supplier_resource_id` → `bookings.supplier_order_id` |
+| received_at | timestamptz NN, default `now()` | Create-date column |
+| processed_at | timestamptz, nullable | Partial index `ix_supplier_webhook_events_unprocessed WHERE processed_at IS NULL` |
 
-### Document
-The ticket/itinerary artifact. Two genuinely different things live here, distinguished by `source`:
-- **`supplier`** — Duffel's ticket record: `supplier_document_id` (the real e-ticket number, verified airline-side against the PNR) + `issued_at`. Required for this source.
-- **`generated`** — our itinerary/receipt PDF, built from order data, stored in blob storage: `file_url` + `generated_at`. Required for this source. A booking-level receipt covers all passengers and is backed by no single Duffel document — so it can't carry an honest `issued_at`.
-
-| Field | Type | Notes |
+### Document — `documents`
+Duffel's ticket records, copied from `order.documents[]` on fulfilment (`fulfillment-outcome.service.ts`). One row per Duffel document; a document can cover several passengers, held as a JSON array of **Duffel** passenger ids that resolve to `passengers.supplier_passenger_id`. There is no `source` discriminator and no join table; generated PDFs are not stored.
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| booking_id | FK → Booking | |
-| source | enum(`supplier`, `generated`) | Discriminator — see above |
-| type | enum(`electronic_ticket`, `electronic_miscellaneous_document_associated`, `electronic_miscellaneous_document_standalone`, `itinerary_receipt`) | First three are Duffel's verified `documents[].type` values (there is no plain `electronic_miscellaneous_document`); last is ours |
-| supplier_document_id | string, nullable | Duffel's `unique_identifier`. Required when `source = supplier` |
-| issued_at | timestamp, nullable | When the supplier confirmed issuance. Required when `source = supplier` |
-| file_url | string, nullable | Blob-storage URL. Required when `source = generated` |
-| generated_at | timestamp, nullable | Required when `source = generated` |
+| id | uuid PK | `uuid_generate_v4()` (see Note under Constraints) |
+| booking_id | uuid NN, FK → bookings **ON DELETE CASCADE** (`fk_documents_booking`), indexed (`ix_documents_booking_id`) | |
+| type | varchar NN | Duffel's `documents[].type` as a free string — e.g. `electronic_ticket`, `electronic_miscellaneous_document_associated`. Not an enum |
+| unique_identifier | varchar NN | Duffel's `unique_identifier` — the e-ticket number. Not unique at the DB level |
+| supplier_passenger_ids | jsonb NN, default `'[]'` | Array of Duffel passenger ids (`pas_…`) this document covers |
+| created_at | timestamptz NN | |
 
-### DocumentPassenger (join: Document ↔ Passenger)
-A document can cover multiple passengers (Duffel's `documents[].passenger_ids`) — modeled as a real join table, not a JSON array of IDs, so the FKs actually enforce integrity and the relation is queryable. Duffel's passenger IDs resolve to rows via `Passenger.supplier_passenger_id`.
-| Field | Type | Notes |
+### BookingStatusHistory — `booking_status_history`
+Audit trail for the booking state machine. No indexes beyond the PK.
+| Column | Type | Notes |
 |---|---|---|
-| document_id | FK → Document | Composite PK with `passenger_id` |
-| passenger_id | FK → Passenger | |
+| id | uuid PK | |
+| booking_id | uuid NN, FK → bookings **ON DELETE CASCADE** (`fk_booking_status_history_booking`) | |
+| from_status / to_status | enum `booking_status` NN | |
+| changed_by_user_id | uuid, nullable, FK → users **ON DELETE SET NULL** (`fk_booking_status_history_user`) | null = system-triggered (webhook, worker) |
+| reason | varchar, nullable | e.g. `offer_expired` |
+| created_at | timestamptz NN | |
 
-### BookingStatusHistory
-Audit trail for the booking state machine.
-| Field | Type | Notes |
+### AuditLog — `audit_logs`
+Generic admin-action trail.
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| booking_id | FK → Booking | |
-| from_status / to_status | enum | |
-| changed_by_user_id | FK → User, nullable | null = system-triggered (e.g. webhook) |
-| reason | string, nullable | |
-| created_at | timestamp | |
+| id | uuid PK | `uuid_generate_v4()` |
+| actor_user_id | uuid NN, FK → users **ON DELETE RESTRICT** (`fk_audit_logs_user`) | Indexed with `created_at DESC` (`ix_audit_logs_actor_created`) |
+| action | varchar NN | e.g. `markup_rule.updated` |
+| entity_type / entity_id | varchar NN | Polymorphic reference |
+| metadata | jsonb, nullable | Before/after values |
+| created_at | timestamptz NN | |
 
-### AuditLog
-Generic admin-action trail — satisfies the NFR that admin actions be auditable.
-| Field | Type | Notes |
+### LedgerEntry — `ledger_entries`
+Append-only internal money-movement ledger — substitutes for Duffel's missing balance API. `LedgerService.createEntry` takes the caller's `EntityManager`, so entries are written **inside the same DB transaction** as the lifecycle event they record. Migration `1757000000000` backfilled entries from existing payments, refunds and confirmed bookings.
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| actor_user_id | FK → User | |
-| action | string | e.g. `markup_rule.updated` |
-| entity_type / entity_id | string / string | Polymorphic reference |
-| metadata | JSON, nullable | Before/after values |
-| created_at | timestamp | |
+| id | uuid PK | |
+| entry_type | enum `ledger_entry_type` NN | Values: `customer_payment` (+), `gateway_refund` (−), `supplier_charge` (−), `supplier_refund` (+), `adjustment` (±) |
+| amount | integer NN | **Signed** minor units; sign encodes direction |
+| currency | char(3) NN | |
+| supplier | enum `supplier_provider`, nullable | Set on supplier-wallet movements (`duffel`); NULL on gateway-side entries |
+| payment_id | uuid, nullable, FK → payments **ON DELETE SET NULL** (`fk_ledger_entries_payment`) | |
+| booking_id | uuid, nullable, FK → bookings **ON DELETE SET NULL** (`fk_ledger_entries_booking`), indexed (`ix_ledger_entries_booking`) | |
+| refund_id | uuid, nullable, FK → refunds **ON DELETE SET NULL** (`fk_ledger_entries_refund`) | |
+| note | varchar, nullable | |
+| created_at | timestamptz NN, indexed (`ix_ledger_entries_created_at`) | |
 
-### LedgerEntry
-Append-only internal money-movement ledger — substitutes for Duffel's missing balance API (wallet balance is estimated from `supplier`-tagged entries and reconciled manually against provider dashboards). Written inside the same DB transaction as the lifecycle event it records.
-| Field | Type | Notes |
+### SupportTicket — `support_tickets`
+Customer-raised support requests, worked by `technical_admin`.
+| Column | Type | Notes |
 |---|---|---|
-| id | PK | |
-| entry_type | enum | `customer_payment` (+), `gateway_refund` (−), `supplier_charge` (−), `supplier_refund` (+), `adjustment` (±) |
-| amount | integer | Signed minor units; sign encodes direction |
-| currency | char(3) | |
-| supplier | enum, nullable | Set on supplier-wallet movements (`duffel`); NULL on gateway-side entries |
-| payment_id | FK → Payment, nullable | ON DELETE SET NULL |
-| booking_id | FK → Booking, nullable | ON DELETE SET NULL |
-| refund_id | FK → Refund, nullable | ON DELETE SET NULL |
-| note | string, nullable | |
-| created_at | timestamptz | |
+| id | uuid PK | `uuid_generate_v4()` |
+| user_id | uuid NN, FK → users **ON DELETE CASCADE** (`fk_support_tickets_user`) | Indexed with `created_at DESC` (`ix_support_tickets_user_created`) |
+| type | enum `support_ticket_type` NN | Values: `cancellation`, `flight_delay`, `name_change`, `refund`, `other` |
+| booking_reference | varchar, nullable | Free-text PNR as entered by the customer — **deliberately not an FK**: users may cite bookings made under another account or mistype; admins resolve it manually |
+| description | text NN | |
+| status | enum `support_ticket_status` NN, default `'open'` | Values: `open`, `in_progress`, `resolved`. Indexed with `created_at DESC` (`ix_support_tickets_status_created`) for the admin queue |
+| admin_note | text, nullable | Visible to the customer as the support team's reply |
+| created_at / updated_at | timestamptz NN | |
+
+---
+
+## Enum types (Postgres)
+
+| Type | Values | Used by |
+|---|---|---|
+| `user_role` | `technical_admin`, `user` | users.role |
+| `auth_provider` | `google`, `email_link` | auth_identities.provider |
+| `markup_type` | `percentage`, `fixed` | markup_rules.type |
+| `booking_status` | `pending`, `awaiting_payment`, `paid`, `confirmed`, `order_failed`, `cancelled`, `failed`, `refunded` | bookings.status, booking_status_history.from_status / to_status |
+| `supplier_provider` | `duffel` | bookings, flight_offer_snapshots, supplier_webhook_events, ledger_entries |
+| `passenger_type` | `adult`, `child`, `infant` | passengers.type |
+| `passenger_title` | `mr`, `ms`, `mrs`, `miss` | passengers.title |
+| `passenger_gender` | `m`, `f` | passengers.gender |
+| `payment_provider` | `stripe`, `paymob` | payments.provider, payment_webhook_events.provider |
+| `payment_status` | `pending`, `succeeded`, `failed`, `refunded`, `partially_refunded` | payments.status |
+| `payment_attempt_status` | `requires_action`, `processing`, `succeeded`, `failed` | payment_attempts.status |
+| `refund_status` | `pending`, `succeeded`, `failed` | refunds.status |
+| `ledger_entry_type` | `customer_payment`, `gateway_refund`, `supplier_charge`, `supplier_refund`, `adjustment` | ledger_entries.entry_type |
+| `support_ticket_type` | `cancellation`, `flight_delay`, `name_change`, `refund`, `other` | support_tickets.type |
+| `support_ticket_status` | `open`, `in_progress`, `resolved` | support_tickets.status |
 
 ---
 
 ## Constraints & Indexes (consolidated)
 
 Uniqueness that prevents corruption:
-- `User.email` unique
-- `AuthIdentity` — unique (`provider`, `provider_user_id`) where not null; unique (`user_id`, `provider`)
-- `Booking.supplier_idempotency_key` unique; `Booking.supplier_order_id` unique (nullable)
-- `Payment.booking_id` unique (one payment per booking, by the database)
-- `PaymentAttempt.provider_reference_id` unique
-- `PaymentWebhookEvent` unique (`provider`, `provider_event_id`); `SupplierWebhookEvent` unique (`supplier`, `supplier_event_id`)
-- `Refund.provider_refund_id` unique
-- `Passenger` unique (`booking_id`, `supplier_passenger_id`) where not null
-- `MarkupRule` partial unique on `is_active` where true
-- `FlightOfferSnapshot.booking_id` unique
-- `DocumentPassenger` composite PK (`document_id`, `passenger_id`)
+- `users.email` — `ux_users_email`
+- `auth_identities` — `ux_auth_identities_provider_user` partial unique (`provider`, `provider_user_id`) `WHERE provider_user_id IS NOT NULL`; `ux_auth_identities_user_provider` UNIQUE (`user_id`, `provider`)
+- `refresh_tokens.token_hash` — `ux_refresh_tokens_token_hash`
+- `markup_rules` — `ux_markup_rules_active_one` partial unique on `is_active WHERE is_active = true`
+- `bookings.supplier_idempotency_key` — `ux_bookings_supplier_idempotency_key`; `bookings.supplier_order_id` — `ux_bookings_supplier_order_id` (nullable)
+- `flight_offer_snapshots.booking_id` — `ux_flight_offer_snapshots_booking_id`
+- `passengers` — `ux_passengers_booking_supplier_pax` partial unique (`booking_id`, `supplier_passenger_id`) `WHERE supplier_passenger_id IS NOT NULL`
+- `payments.booking_id` — `ux_payments_booking_id`
+- `payment_attempts.provider_reference_id` — `ux_payment_attempts_provider_ref`
+- `payment_webhook_events` — `ux_payment_webhook_events_provider_event` (`provider`, `provider_event_id`)
+- `refunds.provider_refund_id` — `ux_refunds_provider_refund_id` (nullable)
+- `supplier_webhook_events` — `ux_supplier_webhook_events_supplier_event` (`supplier`, `supplier_event_id`)
 
 CHECKs:
-- `Booking`: `total_amount = base_amount + markup_amount`
-- `Passenger`: `type != 'infant' OR responsible_adult_passenger_id IS NOT NULL`
-- `Document`: source-conditional requiredness (supplier → `supplier_document_id` + `issued_at`; generated → `file_url` + `generated_at`)
+- `bookings` — `ck_bookings_total_match`: `total_amount = base_amount + markup_amount`
+- `passengers` — `ck_passengers_infant_adult`: `type != 'infant' OR responsible_adult_passenger_id IS NOT NULL`
+
+No other CHECK constraints exist (in particular, nothing on `documents`).
 
 Access-pattern indexes:
-- `Booking (user_id, created_at DESC)` — my-bookings list
-- `Booking (booking_reference)` — support lookup by PNR
-- `MagicLinkToken (token_hash)` — verification hot path
-- `PaymentWebhookEvent (processed_at) WHERE processed_at IS NULL` — reprocessing worker (same on `SupplierWebhookEvent`)
-- `LedgerEntry (created_at)` and `LedgerEntry (booking_id)` — admin ledger list + per-booking lookup
+- `bookings (user_id, created_at DESC)` — `ix_bookings_user_created` — my-bookings list
+- `bookings (booking_reference)` — `ix_bookings_booking_reference` — support lookup by PNR
+- `bookings (cancellation_requested_at) WHERE cancellation_requested_at IS NOT NULL` — `ix_bookings_cancellation_requested` — admin cancellation queue
+- `magic_link_tokens (token_hash)` — `ix_magic_link_tokens_token_hash`
+- `refresh_tokens (family_id)` — `ix_refresh_tokens_family_id`
+- `payment_attempts (provider_reference_id)` — `ix_payment_attempts_provider_ref` (redundant with the UNIQUE constraint)
+- `payment_webhook_events (processed_at) WHERE processed_at IS NULL` — `ix_payment_webhook_events_unprocessed`
+- `supplier_webhook_events (supplier_resource_id)` — `ix_supplier_webhook_events_resource`; `(processed_at) WHERE processed_at IS NULL` — `ix_supplier_webhook_events_unprocessed`
+- `documents (booking_id)` — `ix_documents_booking_id`
+- `audit_logs (actor_user_id, created_at DESC)` — `ix_audit_logs_actor_created`
+- `ledger_entries (created_at)` — `ix_ledger_entries_created_at`; `(booking_id)` — `ix_ledger_entries_booking`
+- `support_tickets (user_id, created_at DESC)` — `ix_support_tickets_user_created`; `(status, created_at DESC)` — `ix_support_tickets_status_created`
+
+FK `ON DELETE` summary:
+- **CASCADE** from `users`: auth_identities, magic_link_tokens, refresh_tokens, support_tickets. From `bookings`: flight_offer_snapshots, passengers, booking_status_history, documents. From `flight_offer_snapshots`: slices. From `slices`: segments. From `payments`: payment_attempts.
+- **RESTRICT**: bookings.user_id, markup_rules.created_by_user_id, audit_logs.actor_user_id, payments.booking_id, refunds.payment_id — a user with bookings, a booking with a payment, or a payment with refunds cannot be hard-deleted.
+- **SET NULL**: bookings.markup_rule_id, passengers.responsible_adult_passenger_id, booking_status_history.changed_by_user_id, refunds.initiated_by_user_id, payment_webhook_events.payment_id / payment_attempt_id, supplier_webhook_events.booking_id, ledger_entries.payment_id / booking_id / refund_id.
+
+> Note: entity decorators and migrations disagree in two cosmetic places. (1) The entity `@Index` for `ix_bookings_user_created`, `ix_audit_logs_actor_created`, `ix_support_tickets_user_created` and `ix_support_tickets_status_created` does not express the `DESC` ordering the migrations create; since `synchronize` is off, the migration's `DESC` is what exists. (2) `flight_offer_snapshots.booking_id` uniqueness is a named constraint in the migration (`ux_flight_offer_snapshots_booking_id`) but only implied by `@OneToOne` + `@JoinColumn` in the entity.
+
+> Note: PK defaults are inconsistent across migrations. `documents`, `audit_logs` and `support_tickets` use `uuid_generate_v4()` (requires the `uuid-ossp` extension), while every other table uses the built-in `gen_random_uuid()`. No migration, compose file or SQL script in the repo runs `CREATE EXTENSION "uuid-ossp"`, so the extension must already exist on the target database; a fresh Postgres without it would fail at migration `1752000000000`.
 
 ---
 
 ## Relationships
 
-Full diagram with fields: [erd.png](erd.png)
+Legacy diagram image (pre-dates `refresh_tokens`, `support_tickets` and the `documents` simplification): [erd.png](erd.png)
 
 ![TravelHub ERD](erd.png)
 
 ```mermaid
 erDiagram
-    User ||--o{ AuthIdentity : "logs in via"
-    User ||--o{ MagicLinkToken : requests
-    User ||--o{ Booking : makes
-    User ||--o{ MarkupRule : creates
-    User ||--o{ AuditLog : performs
-    MarkupRule ||--o{ Booking : "applied to"
+    users ||--o{ auth_identities : "logs in via"
+    users ||--o{ magic_link_tokens : requests
+    users ||--o{ refresh_tokens : "holds session"
+    users ||--o{ bookings : makes
+    users ||--o{ markup_rules : creates
+    users ||--o{ audit_logs : performs
+    users ||--o{ support_tickets : raises
+    users |o--o{ booking_status_history : "changed by"
+    users |o--o{ refunds : "initiated by"
+    markup_rules |o--o{ bookings : "applied to"
 
-    Booking ||--|| FlightOfferSnapshot : snapshots
-    Booking ||--o{ Passenger : includes
-    Booking ||--o| Payment : "paid via"
-    Booking ||--o{ Document : produces
-    Booking ||--o{ BookingStatusHistory : tracks
-    Booking ||--o{ SupplierWebhookEvent : "updated by"
+    bookings ||--|| flight_offer_snapshots : snapshots
+    bookings ||--o{ passengers : includes
+    bookings ||--o| payments : "paid via"
+    bookings ||--o{ documents : "ticketed by"
+    bookings ||--o{ booking_status_history : tracks
+    bookings |o--o{ supplier_webhook_events : "updated by"
+    bookings |o--o{ ledger_entries : "accounted in"
 
-    FlightOfferSnapshot ||--o{ Slice : contains
-    Slice ||--o{ Segment : contains
+    flight_offer_snapshots ||--o{ slices : contains
+    slices ||--o{ segments : contains
+    passengers |o--o{ passengers : "responsible adult for"
 
-    Passenger |o--o{ Passenger : "responsible adult for"
-    Document ||--o{ DocumentPassenger : covers
-    Passenger ||--o{ DocumentPassenger : "covered by"
+    payments ||--o{ payment_attempts : "tried via"
+    payments |o--o{ payment_webhook_events : "confirmed by"
+    payments ||--o{ refunds : "refunded by"
+    payments |o--o{ ledger_entries : "accounted in"
+    payment_attempts |o--o{ payment_webhook_events : settles
+    refunds |o--o{ ledger_entries : "accounted in"
 
-    Payment ||--o{ PaymentAttempt : "tried via"
-    Payment ||--o{ PaymentWebhookEvent : "confirmed by"
-    Payment ||--o{ Refund : "refunded by"
-    PaymentAttempt |o--o{ PaymentWebhookEvent : settles
+    users {
+        uuid id PK
+        varchar email UK
+        enum role
+        boolean is_active
+    }
+    auth_identities {
+        uuid id PK
+        uuid user_id FK
+        enum provider
+        varchar provider_user_id
+    }
+    magic_link_tokens {
+        uuid id PK
+        uuid user_id FK
+        varchar token_hash
+        timestamptz expires_at
+        timestamptz used_at
+    }
+    refresh_tokens {
+        uuid id PK
+        uuid user_id FK
+        varchar token_hash UK
+        uuid family_id
+        timestamptz revoked_at
+    }
+    markup_rules {
+        uuid id PK
+        enum type
+        numeric value
+        boolean is_active
+        uuid created_by_user_id FK
+    }
+    bookings {
+        uuid id PK
+        uuid user_id FK
+        uuid markup_rule_id FK
+        enum status
+        enum supplier
+        varchar supplier_idempotency_key UK
+        varchar supplier_order_id UK
+        varchar booking_reference
+        integer base_amount
+        integer markup_amount
+        integer total_amount
+        char currency
+        timestamptz cancellation_requested_at
+        timestamptz schedule_change_detected_at
+    }
+    flight_offer_snapshots {
+        uuid id PK
+        uuid booking_id FK
+        varchar supplier_offer_id
+        timestamptz expires_at
+        integer total_amount
+        integer tax_amount
+        char currency
+        jsonb conditions
+        jsonb raw_offer
+    }
+    slices {
+        uuid id PK
+        uuid offer_snapshot_id FK
+        varchar origin
+        varchar destination
+        varchar duration
+    }
+    segments {
+        uuid id PK
+        uuid slice_id FK
+        varchar marketing_carrier
+        varchar flight_number
+        timestamp departing_at_local
+        timestamp arriving_at_local
+    }
+    passengers {
+        uuid id PK
+        uuid booking_id FK
+        varchar supplier_passenger_id
+        enum type
+        enum title
+        enum gender
+        uuid responsible_adult_passenger_id FK
+    }
+    payments {
+        uuid id PK
+        uuid booking_id FK
+        enum provider
+        enum status
+        integer amount
+        char currency
+    }
+    payment_attempts {
+        uuid id PK
+        uuid payment_id FK
+        varchar provider_reference_id UK
+        enum status
+    }
+    payment_webhook_events {
+        uuid id PK
+        enum provider
+        varchar provider_event_id
+        varchar event_type
+        uuid payment_id FK
+        uuid payment_attempt_id FK
+        timestamptz processed_at
+    }
+    refunds {
+        uuid id PK
+        uuid payment_id FK
+        varchar provider_refund_id UK
+        integer amount
+        integer supplier_refund_amount
+        enum status
+        uuid initiated_by_user_id FK
+    }
+    supplier_webhook_events {
+        uuid id PK
+        enum supplier
+        varchar supplier_event_id
+        varchar supplier_resource_id
+        varchar event_type
+        uuid booking_id FK
+        timestamptz processed_at
+    }
+    documents {
+        uuid id PK
+        uuid booking_id FK
+        varchar type
+        varchar unique_identifier
+        jsonb supplier_passenger_ids
+    }
+    booking_status_history {
+        uuid id PK
+        uuid booking_id FK
+        enum from_status
+        enum to_status
+        uuid changed_by_user_id FK
+    }
+    audit_logs {
+        uuid id PK
+        uuid actor_user_id FK
+        varchar action
+        varchar entity_type
+        varchar entity_id
+    }
+    ledger_entries {
+        uuid id PK
+        enum entry_type
+        integer amount
+        char currency
+        enum supplier
+        uuid payment_id FK
+        uuid booking_id FK
+        uuid refund_id FK
+    }
+    support_tickets {
+        uuid id PK
+        uuid user_id FK
+        enum type
+        varchar booking_reference
+        enum status
+    }
 ```
 
 Cardinality notes:
-- `Booking → Payment` is **0..1**, not 1:1 — a `pending` booking has no payment row yet.
-- `PaymentWebhookEvent.payment_id` / `payment_attempt_id` / `SupplierWebhookEvent.booking_id` are nullable: unmatched events are stored first, resolved after.
+- `bookings → payments` is **0..1**, not 1:1 — a `pending` booking has no payment row yet.
+- `payment_webhook_events.payment_id` / `payment_attempt_id` and `supplier_webhook_events.booking_id` are nullable: unmatched events are stored first, resolved after.
+- `support_tickets.booking_reference` is free text, not an FK — it is drawn only as a user relation.
+- `documents.supplier_passenger_ids` references passengers by Duffel id inside JSON; there is no FK, so the diagram shows no edge to `passengers`.
 
 ---
 
 ## Deliberately Excluded (Phase 2+)
 
-- `TravelCompany`, `TravelAgent`, `Wallet`, `WalletTransaction`, `CommissionRule` — B2B layer, per PRD Phase 2.
-- `Accommodation`/`Room`/`Rate`/hotel-side entities — flights-only for now.
-- Cross-currency money (`fx_rate`, `quoted_at`) — deferred until Paymob/Moyasar make it real; additive to the minor-units model.
-- Provider-specific tables for Paymob/Moyasar or a second flight supplier — the `provider`/`supplier` enums plus the adapter-shaped tables (`PaymentAttempt`/`PaymentWebhookEvent`/`Refund`, `FlightOfferSnapshot`/`SupplierWebhookEvent`) already accommodate them without migration surgery when they're added.
-- Apple/Facebook/other OAuth providers — `AuthIdentity.provider` accommodates them the same way.
+- `TravelCompany`, `TravelAgent`, `Wallet`, `WalletTransaction`, `CommissionRule` — B2B layer, per [archive/prd.md](archive/prd.md) Phase 2.
+- `Accommodation` / `Room` / `Rate` / hotel-side entities — flights-only for now.
+- Cross-currency money (`fx_rate`, `quoted_at`) — not modeled; additive to the minor-units model.
+- A `document_passengers` join table and a `source`/`file_url` document model — the earlier draft's design; the shipped `documents` table holds Duffel ticket records only, with covered passengers as a JSON array.
+- Provider-specific tables for a second gateway or a second flight supplier — the `provider` / `supplier` enums plus the adapter-shaped tables already accommodate them.
+- Apple/Facebook/other OAuth providers — `auth_identities.provider` accommodates them the same way.
 
 ---
 
 ## Next
 
-This feeds the **[Booking/Payment state machine](booking_state_machine.md)** (transition rules for the `status` enums above, including the `paid` → `confirmed` / `order_failed` fork the idempotency key exists for), the **[sequence diagrams](sequence_diagrams.md)** (race-prone flows), and the **[API contract](api_contract.md)** (each entity here maps to request/response shapes). See also [auth_flow.md](auth_flow.md) and [nfr.md](nfr.md).
+This feeds the **[Booking/Payment state machine](booking_state_machine.md)** (transition rules for the `status` enums above), the **[sequence diagrams](sequence_diagrams.md)** (race-prone flows), and the **[API contract](api_contract.md)** (each entity here maps to request/response shapes). See also [auth_flow.md](auth_flow.md) and [nfr.md](nfr.md).
