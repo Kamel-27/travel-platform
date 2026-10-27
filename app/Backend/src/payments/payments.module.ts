@@ -29,6 +29,9 @@ import { WebhookRetentionService } from './services/webhook-retention.service';
     BullModule.registerQueue(
       { name: 'payment_webhook_queue' },
       { name: 'order_fulfillment_queue' },
+      // A capture that arrives for a booking no longer awaiting payment is
+      // refunded from the webhook processor.
+      { name: 'refund_execution_queue' },
     ),
     AuthModule,
     BookingsModule,

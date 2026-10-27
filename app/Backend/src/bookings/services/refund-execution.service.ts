@@ -31,6 +31,12 @@ export interface CreatePendingRefundParams {
   reason: string | null;
   initiatedByUserId: string | null;
   supplierRefundAmount?: number | null;
+  /**
+   * Pin the refund to one attempt: returns that specific capture (a second
+   * succeeded attempt on an already paid booking) instead of drawing on the
+   * booking-level refundable balance. See Refund.paymentAttemptId.
+   */
+  paymentAttemptId?: string | null;
 }
 
 export interface ExecuteRefundResult {
@@ -108,15 +114,32 @@ export class RefundExecutionService {
       });
     }
 
-    const committed = await this.sumCommittedRefunds(manager, payment.id);
-    if (committed + params.amount > payment.amount) {
-      throw new UnprocessableEntityException({
-        code: ErrorCode.VALIDATION_ERROR,
-        message: `Refund of ${params.amount} exceeds the remaining refundable amount (${payment.amount - committed}).`,
+    if (params.paymentAttemptId) {
+      // Attempt-level refund: the money being returned is a capture on top
+      // of the booking's payment, so the booking-level balance does not
+      // apply — but the same capture must never be refunded twice.
+      const pinned = await manager.getRepository(Refund).findBy({
+        paymentAttemptId: params.paymentAttemptId,
+        status: In([RefundStatus.Pending, RefundStatus.Succeeded]),
       });
+      if (pinned.some((r) => r.paymentAttemptId === params.paymentAttemptId)) {
+        throw new ConflictException({
+          code: ErrorCode.ILLEGAL_TRANSITION,
+          message: `Attempt ${params.paymentAttemptId} already has a refund.`,
+        });
+      }
+    } else {
+      const committed = await this.sumCommittedRefunds(manager, payment.id);
+      if (committed + params.amount > payment.amount) {
+        throw new UnprocessableEntityException({
+          code: ErrorCode.VALIDATION_ERROR,
+          message: `Refund of ${params.amount} exceeds the remaining refundable amount (${payment.amount - committed}).`,
+        });
+      }
     }
 
     const refund = new Refund();
+    refund.paymentAttemptId = params.paymentAttemptId ?? null;
     refund.paymentId = payment.id;
     refund.providerRefundId = null;
     refund.amount = params.amount;
@@ -168,7 +191,9 @@ export class RefundExecutionService {
       });
     }
 
-    const transactionId = await this.resolvePaymobTransactionId(payment.id);
+    const transactionId = refund.paymentAttemptId
+      ? await this.resolveAttemptTransactionId(refund.paymentAttemptId)
+      : await this.resolvePaymobTransactionId(payment.id);
     // The original gateway charge was sandbox-converted to EGP, so refunds
     // must be issued in the same converted figure.
     const { amountCents: gatewayAmount } = toPaymobGatewayAmount(
@@ -210,10 +235,18 @@ export class RefundExecutionService {
           note: 'Gateway refund succeeded',
         });
 
-        const priorSucceeded = await manager.getRepository(Refund).findBy({
-          paymentId: payment.id,
-          status: RefundStatus.Succeeded,
-        });
+        if (savedRefund.paymentAttemptId) {
+          // Attempt-level refund: the booking's own payment is untouched,
+          // so neither the payment rollup nor the booking transition apply.
+          return { updatedRefund: savedRefund, fullyRefunded: false };
+        }
+
+        const priorSucceeded = (
+          await manager.getRepository(Refund).findBy({
+            paymentId: payment.id,
+            status: RefundStatus.Succeeded,
+          })
+        ).filter((r) => !r.paymentAttemptId);
         const refundedTotal = priorSucceeded.reduce(
           (sum, r) => sum + r.amount,
           0,
@@ -287,7 +320,28 @@ export class RefundExecutionService {
       paymentId,
       status: In([RefundStatus.Pending, RefundStatus.Succeeded]),
     });
-    return refunds.reduce((sum, r) => sum + r.amount, 0);
+    // Attempt-level refunds return extra captures, not the booking's payment.
+    return refunds
+      .filter((r) => !r.paymentAttemptId)
+      .reduce((sum, r) => sum + r.amount, 0);
+  }
+
+  /**
+   * Transaction id for an attempt-level refund: the attempt itself carries
+   * it (set by the webhook processor on success).
+   */
+  private async resolveAttemptTransactionId(
+    attemptId: string,
+  ): Promise<number> {
+    const attempt = await this.attemptRepo.findOneBy({ id: attemptId });
+    const transactionId = Number(attempt?.providerTransactionId);
+    if (!attempt?.providerTransactionId || Number.isNaN(transactionId)) {
+      throw new ConflictException({
+        code: ErrorCode.ILLEGAL_TRANSITION,
+        message: `No gateway transaction stored for attempt ${attemptId}; cannot refund.`,
+      });
+    }
+    return transactionId;
   }
 
   /**

@@ -6,6 +6,14 @@ import { Booking, BookingStatus } from '../entities/booking.entity';
 import { FlightOfferSnapshot } from '../entities/flight-offer-snapshot.entity';
 import { BookingStateMachineService } from './booking-state-machine.service';
 
+/**
+ * How long a payment attempt that is still `requires_action` keeps its
+ * booking out of the expiry sweep. A customer on the Paymob page when the
+ * offer expires would otherwise be moved to `failed` mid-checkout, and the
+ * capture that lands seconds later could only be refunded, never honoured.
+ */
+export const PAYMENT_IN_FLIGHT_GRACE_MS = 30 * 60 * 1000;
+
 @Injectable()
 export class ExpirySweepService {
   private readonly logger = new Logger(ExpirySweepService.name);
@@ -37,6 +45,20 @@ export class ExpirySweepService {
         statuses: [BookingStatus.Pending, BookingStatus.AwaitingPayment],
       })
       .andWhere('snapshot.expires_at <= :now', { now })
+      // Leave a booking alone while the customer may still be on the
+      // payment page: a recent attempt in requires_action means a capture
+      // can arrive any second. The next sweep picks it up once the grace
+      // window has passed (or the attempt has failed).
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1 FROM payment_attempts pa
+          INNER JOIN payments p ON p.id = pa.payment_id
+          WHERE p.booking_id = booking.id
+            AND pa.status = 'requires_action'
+            AND pa.attempted_at > :graceCutoff
+        )`,
+        { graceCutoff: new Date(now.getTime() - PAYMENT_IN_FLIGHT_GRACE_MS) },
+      )
       .getMany();
 
     if (expiredBookings.length === 0) {

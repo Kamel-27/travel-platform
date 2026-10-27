@@ -115,7 +115,10 @@ describe('RefundExecutionService', () => {
 
     // Default: no attempt carries a transaction id, so the legacy webhook
     // lookup is exercised; the tests below override it.
-    attemptRepo = { findOne: jest.fn().mockResolvedValue(null) };
+    attemptRepo = {
+      findOne: jest.fn().mockResolvedValue(null),
+      findOneBy: jest.fn().mockResolvedValue(null),
+    };
 
     service = new RefundExecutionService(
       paymentRepo,
@@ -344,6 +347,88 @@ describe('RefundExecutionService', () => {
       expect(paymobService.refundTransaction).toHaveBeenCalledWith(
         987654,
         expect.any(Number),
+      );
+    });
+  });
+
+  describe('attempt-level refunds (a capture on top of the booking payment)', () => {
+    it('does not draw on the booking-level balance, so a duplicate capture can be returned even when the payment is already fully refunded', async () => {
+      refundRows = [
+        {
+          id: 'refund_old',
+          paymentId: 'pay_1',
+          amount: 1000,
+          status: RefundStatus.Succeeded,
+          paymentAttemptId: null,
+        },
+      ];
+
+      const refund = await service.createPendingRefund(mockManager, {
+        paymentId: 'pay_1',
+        amount: 1000,
+        reason: 'duplicate_payment',
+        initiatedByUserId: null,
+        paymentAttemptId: 'att_dup',
+      });
+
+      expect(refund.status).toBe(RefundStatus.Pending);
+      expect(refund.paymentAttemptId).toBe('att_dup');
+    });
+
+    it('refuses a second refund pinned to the same attempt', async () => {
+      refundRows = [
+        {
+          id: 'refund_pinned',
+          paymentId: 'pay_1',
+          amount: 1000,
+          status: RefundStatus.Pending,
+          paymentAttemptId: 'att_dup',
+        },
+      ];
+
+      await expect(
+        service.createPendingRefund(mockManager, {
+          paymentId: 'pay_1',
+          amount: 1000,
+          reason: 'duplicate_payment',
+          initiatedByUserId: null,
+          paymentAttemptId: 'att_dup',
+        }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('executes against that attempt transaction and leaves the payment and booking untouched', async () => {
+      const pinnedRefund = {
+        ...pendingRefund(),
+        amount: 1000,
+        paymentAttemptId: 'att_dup',
+      };
+      refundRepo.findOneBy.mockResolvedValue(pinnedRefund);
+      lastSavedRefund = pinnedRefund; // row the locked re-read returns
+      attemptRepo.findOneBy.mockResolvedValue({
+        id: 'att_dup',
+        providerTransactionId: '777',
+      });
+
+      const result = await service.executeRefund('refund_1');
+
+      expect(result.executed).toBe(true);
+      expect(result.fullyRefunded).toBe(false);
+      expect(paymobService.refundTransaction).toHaveBeenCalledWith(
+        777,
+        expect.any(Number),
+      );
+      expect(webhookEventRepo.findOne).not.toHaveBeenCalled();
+      expect(
+        mockManager.save.mock.calls.some((c: unknown[]) => c[0] === Payment),
+      ).toBe(false);
+      expect(stateMachine.transitionTo).not.toHaveBeenCalled();
+      expect(ledgerService.createEntry).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          entryType: LedgerEntryType.GatewayRefund,
+          amount: -1000,
+        }),
       );
     });
   });

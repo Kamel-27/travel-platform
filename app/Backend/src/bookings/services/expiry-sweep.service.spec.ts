@@ -66,6 +66,27 @@ describe('ExpirySweepService', () => {
     );
   });
 
+  it('leaves bookings with a payment attempt still in flight out of the sweep', async () => {
+    mockQueryBuilder.getMany.mockResolvedValue([]);
+
+    const before = Date.now();
+    await service.sweepExpiredBookings();
+
+    const guard = mockQueryBuilder.andWhere.mock.calls.find(
+      (call: unknown[]) =>
+        typeof call[0] === 'string' && call[0].includes('requires_action'),
+    );
+    expect(guard).toBeDefined();
+    expect(guard[0]).toContain('NOT EXISTS');
+    expect(guard[0]).toContain('pa.attempted_at > :graceCutoff');
+    const cutoff = (guard[1] as { graceCutoff: Date }).graceCutoff;
+    // 30-minute grace window, measured from "now"
+    expect(before - cutoff.getTime()).toBeGreaterThanOrEqual(
+      30 * 60 * 1000 - 1000,
+    );
+    expect(before - cutoff.getTime()).toBeLessThan(30 * 60 * 1000 + 5000);
+  });
+
   it('should do nothing if no expired bookings are found', async () => {
     mockQueryBuilder.getMany.mockResolvedValue([]);
 

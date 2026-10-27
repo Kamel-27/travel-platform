@@ -14,6 +14,7 @@ import {
 import { PaymentWebhookEvent } from '../entities/payment-webhook-event.entity';
 import { LedgerService } from '../../ledger/services/ledger.service';
 import { LedgerEntryType } from '../../ledger/entities/ledger-entry.entity';
+import { RefundExecutionService } from '../../bookings/services/refund-execution.service';
 
 describe('PaymentWebhookProcessor', () => {
   let processor: PaymentWebhookProcessor;
@@ -23,6 +24,8 @@ describe('PaymentWebhookProcessor', () => {
   let mockEventQueryBuilder: any;
   let mockBookingQueryBuilder: any;
   let mockOrderFulfillmentQueue: any;
+  let mockRefundQueue: any;
+  let refundExecutionService: any;
 
   const mockWebhookEvent = {
     id: 'evt_123',
@@ -69,7 +72,11 @@ describe('PaymentWebhookProcessor', () => {
     mockEventQueryBuilder = {
       setLock: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
-      getOne: jest.fn().mockResolvedValue(mockWebhookEvent),
+      // Fresh copy per call: the processor mutates the row it loads
+      // (processedAt), and a shared fixture would leak between tests.
+      getOne: jest
+        .fn()
+        .mockImplementation(() => Promise.resolve({ ...mockWebhookEvent })),
     };
 
     mockBookingQueryBuilder = {
@@ -96,10 +103,18 @@ describe('PaymentWebhookProcessor', () => {
           };
         }
         if (cls === PaymentAttempt) {
-          return { findOne: jest.fn().mockResolvedValue(mockAttempt) };
+          return {
+            findOne: jest
+              .fn()
+              .mockImplementation(() => Promise.resolve({ ...mockAttempt })),
+          };
         }
         if (cls === Payment) {
-          return { findOneBy: jest.fn().mockResolvedValue(mockPayment) };
+          return {
+            findOneBy: jest
+              .fn()
+              .mockImplementation(() => Promise.resolve({ ...mockPayment })),
+          };
         }
         return {};
       }),
@@ -110,6 +125,9 @@ describe('PaymentWebhookProcessor', () => {
     });
 
     mockOrderFulfillmentQueue = {
+      add: jest.fn().mockResolvedValue(undefined),
+    };
+    mockRefundQueue = {
       add: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -136,8 +154,20 @@ describe('PaymentWebhookProcessor', () => {
             createEntry: jest.fn().mockResolvedValue(undefined),
           },
         },
+        {
+          provide: RefundExecutionService,
+          useValue: {
+            createPendingRefund: jest.fn().mockResolvedValue({ id: 'ref_new' }),
+          },
+        },
+        {
+          provide: getQueueToken('refund_execution_queue'),
+          useValue: mockRefundQueue,
+        },
       ],
     }).compile();
+
+    refundExecutionService = module.get(RefundExecutionService);
 
     processor = module.get<PaymentWebhookProcessor>(PaymentWebhookProcessor);
     ledgerService = module.get(LedgerService);
@@ -195,5 +225,105 @@ describe('PaymentWebhookProcessor', () => {
       { bookingId: 'booking_123', requestId: expect.any(String) },
       expect.objectContaining({ attempts: 1 }),
     );
+  });
+
+  describe('a capture that lands when the booking is no longer awaiting payment', () => {
+    it('records and refunds a payment that arrives after the expiry sweep failed the booking, instead of looping', async () => {
+      mockBookingQueryBuilder.getOne.mockResolvedValue({
+        ...mockBooking,
+        status: BookingStatus.Failed,
+      });
+
+      await processor.process({ data: { eventId: 'evt_123' } } as any);
+
+      // No T4: failed -> paid is illegal, and throwing here is what used to
+      // leave the event unprocessed and re-enqueued every minute.
+      expect(stateMachine.transitionTo).not.toHaveBeenCalled();
+
+      // The capture is recorded truthfully: attempt + payment succeeded,
+      // transaction id kept, ledger money in.
+      expect(mockEntityManager.save).toHaveBeenCalledWith(
+        PaymentAttempt,
+        expect.objectContaining({
+          status: PaymentAttemptStatus.Succeeded,
+          providerTransactionId: '99999',
+        }),
+      );
+      expect(mockEntityManager.save).toHaveBeenCalledWith(
+        Payment,
+        expect.objectContaining({ status: PaymentStatus.Succeeded }),
+      );
+      expect(ledgerService.createEntry).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          entryType: LedgerEntryType.CustomerPayment,
+          amount: 10500,
+          paymentId: 'pay_123',
+        }),
+      );
+
+      // A full, payment-level refund is written in the same transaction,
+      expect(refundExecutionService.createPendingRefund).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          paymentId: 'pay_123',
+          amount: 10500,
+          reason: 'payment_after_failed',
+          initiatedByUserId: null,
+          paymentAttemptId: null,
+        }),
+      );
+      // the event is marked processed so the sweep stops re-enqueuing it,
+      expect(mockEntityManager.save).toHaveBeenCalledWith(
+        PaymentWebhookEvent,
+        expect.objectContaining({ processedAt: expect.any(Date) }),
+      );
+      // and the refund is enqueued after commit with the standard policy.
+      expect(mockRefundQueue.add).toHaveBeenCalledWith(
+        'execute_refund',
+        expect.objectContaining({ refundId: 'ref_new' }),
+        expect.objectContaining({ jobId: 'refund:ref_new', attempts: 5 }),
+      );
+      expect(mockOrderFulfillmentQueue.add).not.toHaveBeenCalled();
+    });
+
+    it('refunds a second capture on an already paid booking against that attempt only', async () => {
+      mockBookingQueryBuilder.getOne.mockResolvedValue({
+        ...mockBooking,
+        status: BookingStatus.Confirmed,
+      });
+      const baseGetRepository = mockEntityManager.getRepository;
+      mockEntityManager.getRepository = jest.fn((cls: unknown) =>
+        cls === Payment
+          ? {
+              findOneBy: jest.fn().mockResolvedValue({
+                ...mockPayment,
+                status: PaymentStatus.Succeeded,
+              }),
+            }
+          : baseGetRepository(cls),
+      );
+
+      await processor.process({ data: { eventId: 'evt_123' } } as any);
+
+      expect(stateMachine.transitionTo).not.toHaveBeenCalled();
+      // The booking payment was already captured: it is not rewritten,
+      expect(
+        mockEntityManager.save.mock.calls.some(
+          (c: unknown[]) => c[0] === Payment,
+        ),
+      ).toBe(false);
+      // and the refund is pinned to the duplicate attempt.
+      expect(refundExecutionService.createPendingRefund).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          amount: 10500,
+          reason: 'duplicate_payment',
+          paymentAttemptId: 'att_123',
+        }),
+      );
+      expect(mockRefundQueue.add).toHaveBeenCalledTimes(1);
+      expect(mockOrderFulfillmentQueue.add).not.toHaveBeenCalled();
+    });
   });
 });
