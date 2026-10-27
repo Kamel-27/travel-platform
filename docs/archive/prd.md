@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-10-27.** Kept for history only; not maintained. See [archive/README.md](README.md) for what replaced it.
+
 # TravelHub — Product Requirements Document (PRD)
 
 **Status:** Draft v2 (post product review — aligned with decided architecture: flights-only Phase 1, passwordless auth, Stripe test mode; added success metrics, refund policy, post-booking events, ticket delivery, localization stance)

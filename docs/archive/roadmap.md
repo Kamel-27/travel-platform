@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-10-27.** Kept for history only; not maintained. See [archive/README.md](README.md) for what replaced it.
+
 # TravelHub — Roadmap & Delivery Plan
 
 **Status:** Draft v1
