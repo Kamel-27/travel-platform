@@ -1,6 +1,7 @@
 # Deployment — production runbook
 
 **Status:** Verified against repo 2026-10-27 (main @ b176f47)
+**Pending:** reflects fix branches fix/trust-proxy-and-idempotency-scope, fix/refund-transaction-id, fix/payment-after-terminal-state, fix/refund-executing-marker not yet merged to main.
 
 | Piece | Where | How it gets there |
 |---|---|---|
@@ -48,7 +49,9 @@ the live setup, not a plan.
   `{$DOMAIN}` → `reverse_proxy backend:3001`. `DOMAIN` comes from the root
   `.env` (see §3). Caddy obtains and renews the Let's Encrypt certificate
   itself; certs persist in the `caddy_data` volume, so a container rebuild
-  does not re-issue.
+  does not re-issue. The backend trusts exactly this one hop for
+  `X-Forwarded-For` (Express `trust proxy`, see `TRUST_PROXY_HOPS` in §3), so
+  per-IP rate limits see the client, not Caddy (pending: fix/trust-proxy-and-idempotency-scope).
 - `www.safariyat.live` is configured on the Vercel side (project domains),
   not on the VM.
 
@@ -80,6 +83,7 @@ ignored.
 | `JWT_SECRET` | Real secret, `openssl rand -hex 32` |
 | `ACCESS_TOKEN_TTL_SECONDS`, `REFRESH_TOKEN_TTL_DAYS` | Defaults `900` / `30` |
 | `WEB_APP_URL` | `https://www.safariyat.live` — drives CORS, the magic-link URL and the Google OAuth post-login redirect |
+| `TRUST_PROXY_HOPS` | Leave unset on the VM: unset means **1** in production (the one Caddy hop) and 0 elsewhere, which is what this setup needs. Set it only if another proxy (e.g. a CDN) is put in front of Caddy (pending: fix/trust-proxy-and-idempotency-scope) |
 | `RESEND_API_KEY`, `MAIL_FROM` | Resend key for the verified sending domain; `MAIL_FROM=Safariyat <no-reply@auth.safariyat.live>`. Empty key = magic links are only logged. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` | Redirect URI is `https://api.safariyat.live/api/v1/auth/google/callback` and must be listed verbatim in the Google Cloud Console OAuth client |
 | `DUFFEL_API_KEY`, `DUFFEL_WEBHOOK_SECRET` | Webhook registered in Duffel's dashboard at `https://api.safariyat.live/api/v1/webhooks/duffel` |

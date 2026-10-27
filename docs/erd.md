@@ -1,14 +1,15 @@
 # TravelHub — ERD (Phase 1: Flights Only)
 
 **Status:** Verified against code 2026-10-27 (main @ b176f47)
+**Pending:** reflects fix branches fix/trust-proxy-and-idempotency-scope, fix/refund-transaction-id, fix/payment-after-terminal-state, fix/refund-executing-marker not yet merged to main.
 **Scope:** Direct B2C users booking flights via Duffel, paid through **Paymob**. No hotels, no Travel Company/Agent layer, no wallet — those are Phase 2+ per [archive/prd.md](archive/prd.md).
 
-**Source of truth for this document:** the TypeORM entities (`app/Backend/src/**/*.entity.ts`) and the migrations in `app/Backend/src/database/migrations/` (12 files, `1751600000000-InitAuthTables` → `1758000000000-CreateSupportTicketsTable`). `synchronize` is `false` in both `data-source.ts` and `database.module.ts`, so **the migrations are the real DDL**; entity decorators only describe them. No custom naming strategy is configured — every column name is set explicitly with `name:` in the entity, snake_case by convention. All PKs are `uuid`.
+**Source of truth for this document:** the TypeORM entities (`app/Backend/src/**/*.entity.ts`) and the migrations in `app/Backend/src/database/migrations/` (12 files, `1751600000000-InitAuthTables` → `1758000000000-CreateSupportTicketsTable`, plus three pending: `1759000000000-PaymentAttemptProviderTransactionId` (pending: fix/refund-transaction-id), `1760000000000-RefundPaymentAttempt` (pending: fix/payment-after-terminal-state), `1761000000000-RefundExecutingStatus` (pending: fix/refund-executing-marker)). `synchronize` is `false` in both `data-source.ts` and `database.module.ts`, so **the migrations are the real DDL**; entity decorators only describe them. No custom naming strategy is configured — every column name is set explicitly with `name:` in the entity, snake_case by convention. All PKs are `uuid`.
 
 Design decisions driving this schema:
 
 1. **We own a full snapshot of what was booked**, not just a Duffel order ID. Duffel is the airline-side source of truth for the PNR, but our DB is the source of truth for *what the customer was shown and charged*. The snapshot includes the offer's **price, cabin class, and fare conditions**, plus the raw offer payload (`flight_offer_snapshots` → `slices` → `segments`).
-2. **Payment is provider-agnostic even though only Paymob is wired up.** A `provider` enum plus a separate `payment_attempts` / `payment_webhook_events` / `refunds` layer. The `payment_provider` enum still contains `stripe` (the original design target) and the `payments.provider` column default is still `'stripe'`, but every code path writes `paymob` — see `Payment` below.
+2. **Payment is provider-agnostic even though only Paymob is wired up.** A `provider` enum plus a separate `payment_attempts` / `payment_webhook_events` / `refunds` layer. The `payment_provider` enum still contains `stripe` (the original design target); the `payments.provider` column default is `'paymob'` (pending: fix/refund-transaction-id) and every code path writes `paymob` — see `Payment` below.
 3. **Flight supply is supplier-agnostic too.** A `supplier_provider` enum (one value: `duffel`), an order-creation **idempotency key** we control (Duffel accepts none), and a `supplier_webhook_events` table for Duffel's at-least-once order webhooks.
 4. **Auth is passwordless: Google OAuth + email magic link, with rotating refresh tokens.** No `password_hash` on `users` — instead `auth_identities` (provider-agnostic), `magic_link_tokens` for the email flow, and `refresh_tokens` for JWT session rotation with family-based reuse detection.
 5. **Contact info lives on the booking flow, not the account.** Duffel requires `phone_number`, `email`, `title` and `gender` **per passenger**. `users.phone` / `users.full_name` are optional prefill only; the required fields live on `passengers`.
@@ -188,13 +189,13 @@ Everything Duffel hard-requires to create an order lives here. No `created_at` /
 ### Payment — `payments` (0..1 per Booking)
 Current state of money for a booking. A `pending` booking has **no payment row yet** — the row is created inside the checkout transaction when the pay step is reached (`payments.service.ts`), with `amount = bookings.total_amount` and `currency = bookings.currency` (application-enforced).
 
-> Note: the `payment_provider` enum is `('stripe', 'paymob')` and the column default is `'stripe'` (migration `1751900000000`), but `payments.service.ts` always sets `provider = 'paymob'` explicitly and the webhook controller only accepts Paymob. `stripe` is a residual value from the original design; no code path writes it.
+> Note: the `payment_provider` enum is `('stripe', 'paymob')`. The column default was `'stripe'` (migration `1751900000000`) and is flipped to `'paymob'` by migration `1759…` (pending: fix/refund-transaction-id); `payments.service.ts` always sets `provider = 'paymob'` explicitly and the webhook controller only accepts Paymob. `stripe` is a residual enum value from the original design; no code path writes it, and the `stripe` npm dependency is removed (pending: fix/refund-transaction-id).
 
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid PK | |
 | booking_id | uuid NN, FK → bookings **ON DELETE RESTRICT** (`fk_payments_booking`), **unique** (`ux_payments_booking_id`) | One payment per booking, by the database |
-| provider | enum `payment_provider` NN, default `'stripe'` | Values: `stripe`, `paymob` — see Note |
+| provider | enum `payment_provider` NN, default `'paymob'` (pending: fix/refund-transaction-id; was `'stripe'`) | Values: `stripe`, `paymob` — see Note |
 | status | enum `payment_status` NN, default `'pending'` | Values: `pending`, `succeeded`, `failed`, `refunded`, `partially_refunded`. Refund *details* live in `refunds` — this is the rollup |
 | amount | integer NN (minor units) | = `bookings.total_amount` at creation |
 | currency | char(3) NN | = `bookings.currency` |
@@ -208,6 +209,7 @@ Where the gateway integration logic lives — retries, failures, 3DS. `provider_
 | payment_id | uuid NN, FK → payments **ON DELETE CASCADE** (`fk_payment_attempts_payment`) | |
 | provider_reference_id | varchar NN, **unique** (`ux_payment_attempts_provider_ref`) | Paymob order / transaction reference. Also has a redundant non-unique index `ix_payment_attempts_provider_ref` (both the entity and migration create it alongside the UNIQUE constraint) |
 | status | enum `payment_attempt_status` NN | Values: `requires_action`, `processing`, `succeeded`, `failed` |
+| provider_transaction_id | varchar, nullable, indexed (`ix_payment_attempts_provider_txn`) | Paymob **transaction** id (webhook `obj.id`), set by the webhook processor when the attempt succeeds — the id the refund API takes (`provider_reference_id` above is the Paymob **order** id). Backfilled from stored `transaction.succeeded` webhook rows by migration `1759…` (pending: fix/refund-transaction-id) |
 | failure_reason | varchar, nullable | |
 | method | varchar, nullable | card / wallet / etc. |
 | attempted_at | timestamptz NN, default `now()` | Create-date column |
@@ -235,11 +237,13 @@ Inbound events from the gateway — dedupe + audit trail. Dedupe is **UNIQUE (`p
 |---|---|---|
 | id | uuid PK | |
 | payment_id | uuid NN, FK → payments **ON DELETE RESTRICT** (`fk_refunds_payment`) | |
-| provider_refund_id | varchar, nullable, **unique** (`ux_refunds_provider_refund_id`) | Paymob refund id — assigned only once the gateway accepts; null while `pending` / `failed` (Postgres allows multiple NULLs under UNIQUE) |
+| provider_refund_id | varchar, nullable, **unique** (`ux_refunds_provider_refund_id`) | Paymob refund id — assigned only once the gateway accepts; null while `pending` / `executing` / `failed` (Postgres allows multiple NULLs under UNIQUE) |
+| payment_attempt_id | uuid, nullable, FK → payment_attempts **ON DELETE SET NULL** (`fk_refunds_payment_attempt`), indexed (`ix_refunds_payment_attempt_id`) | Set only for an **attempt-level** refund: a capture that should not have happened (a second succeeded attempt on an already paid booking). Such a refund targets that attempt's transaction, is not counted against the booking-level refundable balance and never rolls the booking to `refunded`. Null for ordinary payment-level refunds (migration `1760…`, pending: fix/payment-after-terminal-state) |
 | amount | integer NN (minor units) | What we return to the customer |
 | currency | char(3) NN | = booking currency |
 | supplier_refund_amount | integer, nullable (minor units) | What Duffel refunded **us** on cancellation — airline-determined, often less than the customer paid |
-| status | enum `refund_status` NN, default `'pending'` | Values: `pending`, `succeeded`, `failed` |
+| status | enum `refund_status` NN, default `'pending'` | Values: `pending`, `executing` (pending: fix/refund-executing-marker), `succeeded`, `failed`. `executing` = claimed by an executor, gateway call in flight or outcome unknown; never retried automatically |
+| gateway_attempted_at | timestamptz, nullable | When an executor claimed the row (`executing`) and went to the gateway (migration `1761…`, pending: fix/refund-executing-marker) |
 | reason | varchar, nullable | |
 | initiated_by_user_id | uuid, nullable, FK → users **ON DELETE SET NULL** (`fk_refunds_user`) | null = system-triggered |
 | created_at / updated_at | timestamptz NN | |
@@ -338,7 +342,7 @@ Customer-raised support requests, worked by `technical_admin`.
 | `payment_provider` | `stripe`, `paymob` | payments.provider, payment_webhook_events.provider |
 | `payment_status` | `pending`, `succeeded`, `failed`, `refunded`, `partially_refunded` | payments.status |
 | `payment_attempt_status` | `requires_action`, `processing`, `succeeded`, `failed` | payment_attempts.status |
-| `refund_status` | `pending`, `succeeded`, `failed` | refunds.status |
+| `refund_status` | `pending`, `executing` (pending: fix/refund-executing-marker), `succeeded`, `failed` | refunds.status |
 | `ledger_entry_type` | `customer_payment`, `gateway_refund`, `supplier_charge`, `supplier_refund`, `adjustment` | ledger_entries.entry_type |
 | `support_ticket_type` | `cancellation`, `flight_delay`, `name_change`, `refund`, `other` | support_tickets.type |
 | `support_ticket_status` | `open`, `in_progress`, `resolved` | support_tickets.status |
@@ -373,7 +377,8 @@ Access-pattern indexes:
 - `bookings (cancellation_requested_at) WHERE cancellation_requested_at IS NOT NULL` — `ix_bookings_cancellation_requested` — admin cancellation queue
 - `magic_link_tokens (token_hash)` — `ix_magic_link_tokens_token_hash`
 - `refresh_tokens (family_id)` — `ix_refresh_tokens_family_id`
-- `payment_attempts (provider_reference_id)` — `ix_payment_attempts_provider_ref` (redundant with the UNIQUE constraint)
+- `payment_attempts (provider_reference_id)` — `ix_payment_attempts_provider_ref` (redundant with the UNIQUE constraint); `(provider_transaction_id)` — `ix_payment_attempts_provider_txn` (pending: fix/refund-transaction-id)
+- `refunds (payment_attempt_id)` — `ix_refunds_payment_attempt_id` (pending: fix/payment-after-terminal-state)
 - `payment_webhook_events (processed_at) WHERE processed_at IS NULL` — `ix_payment_webhook_events_unprocessed`
 - `supplier_webhook_events (supplier_resource_id)` — `ix_supplier_webhook_events_resource`; `(processed_at) WHERE processed_at IS NULL` — `ix_supplier_webhook_events_unprocessed`
 - `documents (booking_id)` — `ix_documents_booking_id`
@@ -384,7 +389,7 @@ Access-pattern indexes:
 FK `ON DELETE` summary:
 - **CASCADE** from `users`: auth_identities, magic_link_tokens, refresh_tokens, support_tickets. From `bookings`: flight_offer_snapshots, passengers, booking_status_history, documents. From `flight_offer_snapshots`: slices. From `slices`: segments. From `payments`: payment_attempts.
 - **RESTRICT**: bookings.user_id, markup_rules.created_by_user_id, audit_logs.actor_user_id, payments.booking_id, refunds.payment_id — a user with bookings, a booking with a payment, or a payment with refunds cannot be hard-deleted.
-- **SET NULL**: bookings.markup_rule_id, passengers.responsible_adult_passenger_id, booking_status_history.changed_by_user_id, refunds.initiated_by_user_id, payment_webhook_events.payment_id / payment_attempt_id, supplier_webhook_events.booking_id, ledger_entries.payment_id / booking_id / refund_id.
+- **SET NULL**: bookings.markup_rule_id, passengers.responsible_adult_passenger_id, booking_status_history.changed_by_user_id, refunds.initiated_by_user_id, refunds.payment_attempt_id (pending: fix/payment-after-terminal-state), payment_webhook_events.payment_id / payment_attempt_id, supplier_webhook_events.booking_id, ledger_entries.payment_id / booking_id / refund_id.
 
 > Note: entity decorators and migrations disagree in two cosmetic places. (1) The entity `@Index` for `ix_bookings_user_created`, `ix_audit_logs_actor_created`, `ix_support_tickets_user_created` and `ix_support_tickets_status_created` does not express the `DESC` ordering the migrations create; since `synchronize` is off, the migration's `DESC` is what exists. (2) `flight_offer_snapshots.booking_id` uniqueness is a named constraint in the migration (`ux_flight_offer_snapshots_booking_id`) but only implied by `@OneToOne` + `@JoinColumn` in the entity.
 
@@ -428,6 +433,7 @@ erDiagram
     payments ||--o{ refunds : "refunded by"
     payments |o--o{ ledger_entries : "accounted in"
     payment_attempts |o--o{ payment_webhook_events : settles
+    payment_attempts |o--o{ refunds : "pinned by"
     refunds |o--o{ ledger_entries : "accounted in"
 
     users {
@@ -527,6 +533,7 @@ erDiagram
         uuid payment_id FK
         varchar provider_reference_id UK
         enum status
+        varchar provider_transaction_id
     }
     payment_webhook_events {
         uuid id PK
@@ -544,6 +551,8 @@ erDiagram
         integer amount
         integer supplier_refund_amount
         enum status
+        timestamptz gateway_attempted_at
+        uuid payment_attempt_id FK
         uuid initiated_by_user_id FK
     }
     supplier_webhook_events {
@@ -598,6 +607,7 @@ erDiagram
 Cardinality notes:
 - `bookings → payments` is **0..1**, not 1:1 — a `pending` booking has no payment row yet.
 - `payment_webhook_events.payment_id` / `payment_attempt_id` and `supplier_webhook_events.booking_id` are nullable: unmatched events are stored first, resolved after.
+- `refunds.payment_attempt_id` is nullable: set only on an attempt-level refund of a duplicate capture; ordinary refunds hang off `payments` alone (pending: fix/payment-after-terminal-state).
 - `support_tickets.booking_reference` is free text, not an FK — it is drawn only as a user relation.
 - `documents.supplier_passenger_ids` references passengers by Duffel id inside JSON; there is no FK, so the diagram shows no edge to `passengers`.
 

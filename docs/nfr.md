@@ -1,6 +1,7 @@
 # TravelHub — Non-Functional Requirements (Phase 1)
 
 **Status:** Verified against code 2026-10-27 (main @ b176f47)
+**Pending:** reflects fix branches fix/trust-proxy-and-idempotency-scope, fix/refund-transaction-id, fix/payment-after-terminal-state, fix/refund-executing-marker not yet merged to main.
 **Inputs:** [archive/prd.md](archive/prd.md) §8 (NFR summary this doc expands), [erd.md](erd.md), [duffel_api_integration_guide.md](duffel_api_integration_guide.md), [auth_flow.md](auth_flow.md), [deployment.md](deployment.md).
 
 Each section states the requirement, the mechanism **as implemented**, and the number from code. Portfolio-project posture: real requirements sized honestly — no pretend five-nines. Where the code does *not* do something the July draft promised, that is stated rather than papered over.
@@ -12,13 +13,13 @@ Deployment shape this doc assumes (deployment.md): backend + Postgres + Redis in
 ## 1. Security & sessions
 
 - Token strategy as specified in [auth_flow.md](auth_flow.md) §4: access JWT `{sub, role}` with `ACCESS_TOKEN_TTL_SECONDS` = 900 (15 min) by default; opaque refresh token, SHA-256-hashed at rest, `REFRESH_TOKEN_TTL_DAYS` = 30 by default, rotated on every `POST /auth/refresh` with family-wide revocation on reuse; `httpOnly` cookie scoped to `/api/v1/auth`, `secure` + `SameSite=None` in production. No passwords, no password storage, no reset flow — that entire attack surface doesn't exist.
-- **Config validation:** `ConfigModule` runs a Joi schema at boot (`app.module.ts`). Required: `DATABASE_URL` (uri), `REDIS_URL` (uri), `JWT_SECRET`. Defaults: `NODE_ENV` ∈ dev/test/production (default development), `PORT` 3001, `WEB_APP_URL` `http://localhost:3000`, the two token TTLs. Optional, empty = unconfigured: `RESEND_API_KEY`, `MAIL_FROM`, `GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI`, `DUFFEL_API_KEY`, `DUFFEL_WEBHOOK_SECRET`, `PAYMOB_API_BASE/API_KEY/INTEGRATION_ID/IFRAME_ID/HMAC_SECRET`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`. An unconfigured integration makes its endpoints return `503 SUPPLIER_UNAVAILABLE` via `assertConfigured()`; the app still boots.
+- **Config validation:** `ConfigModule` runs a Joi schema at boot (`app.module.ts`). Required: `DATABASE_URL` (uri), `REDIS_URL` (uri), `JWT_SECRET`. Defaults: `NODE_ENV` ∈ dev/test/production (default development), `PORT` 3001, `WEB_APP_URL` `http://localhost:3000`, the two token TTLs. Optional integer `TRUST_PROXY_HOPS` (≥ 0): unset = 1 in production, 0 elsewhere (pending: fix/trust-proxy-and-idempotency-scope). Optional, empty = unconfigured: `RESEND_API_KEY`, `MAIL_FROM`, `GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI`, `DUFFEL_API_KEY`, `DUFFEL_WEBHOOK_SECRET`, `PAYMOB_API_BASE/API_KEY/INTEGRATION_ID/IFRAME_ID/HMAC_SECRET`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`. An unconfigured integration makes its endpoints return `503 SUPPLIER_UNAVAILABLE` via `assertConfigured()`; the app still boots.
 - All secrets come from the environment (`.env` on the VM, Vercel project settings for the web); never in the repo (`.env.example` ships empty values).
 - **HTTP hardening (`main.ts`):** `helmet()` defaults; CORS `origin: WEB_APP_URL` (one exact origin) with `credentials: true`; `cookie-parser`; JSON body limit **1 MB** (`express.json({ limit: '1mb' })`); `rawBody: true` so webhook signatures are checked over the exact bytes; global `ValidationPipe({ whitelist: true, transform: true })` strips unknown properties on every DTO; `X-Request-Id` echoed on every response (§7); global prefix `/api/v1`, `/health` unprefixed.
 - **Webhook endpoints verify signatures before touching the DB.** `POST /api/v1/webhooks/paymob` (`payments/webhooks.controller.ts`): HMAC-SHA512 over Paymob's fixed field list, compared with `timingSafeEqual` against the `?hmac=` query param; non-`TRANSACTION` callback types are acked and ignored. `POST /api/v1/webhooks/duffel` (`bookings/duffel-webhooks.controller.ts`): `X-Duffel-Signature` over the raw body. Invalid/missing signature → `400`, no event row, no side effects. Missing `PAYMOB_HMAC_SECRET` / `DUFFEL_WEBHOOK_SECRET` → `503`, never a silent accept.
 - Input validation at the DTO layer (class-validator) on every endpoint; the per-passenger Duffel field rules are validated server-side, never trusted from the client.
 - **Authorization:** no global auth guard — endpoints opt in with `@UseGuards(JwtAuthGuard)`; admin controllers add `RolesGuard` + `@Roles(technical_admin)` (auth_flow §5). Booking reads/mutations check `booking.userId === user.sub` in `BookingsService` (`403`/`404` otherwise).
-- `> Note:` Express is not configured with `trust proxy`, so behind Caddy every `req.ip` the backend sees is the proxy's container address. This affects every per-IP limit in §3.
+- **Client address behind Caddy:** `main.ts` sets Express `trust proxy` via `configureTrustProxy` (`common/http/trust-proxy.ts`). The hop count comes from `TRUST_PROXY_HOPS`, defaulting to **1** in production (Caddy is the one hop and sets `X-Forwarded-For`) and **0** elsewhere, so a directly reachable dev process does not believe a forged header. `req.ip` — the throttler tracker, the magic-link IP cap, the search inbound limit and `refresh_tokens.ip` — is therefore the real client address (pending: fix/trust-proxy-and-idempotency-scope).
 
 ## 2. PCI scope
 
@@ -42,12 +43,12 @@ Target: **SAQ-A** (hosted/iframe capture). Card data is entered into **Paymob's 
 | `GET /flights/search` | `@Throttle` override **and** a second Redis sliding window in `FlightsService.checkInboundRateLimit` | **30 / 60 s per IP** (both) |
 | `GET /flights/airports/search` | `@Throttle` override | **120 / 60 s per IP** |
 | `POST /auth/magic-link/request` | Redis counters, silent `202` when exceeded (auth_flow §3) | **3 / email**, **10 / IP** per 15-min window |
-| `POST /bookings` | `Idempotency-Key` header → Redis `idempotency_booking:<key>`: `locked` for **120 s** while in flight (`409` on a concurrent duplicate), then the booking id kept **24 h** so a replay returns the same booking | — |
+| `POST /bookings` | `Idempotency-Key` header → Redis `idempotency_booking:<user.sub>:<key>` (scoped per user, pending: fix/trust-proxy-and-idempotency-scope): `locked` for **120 s** while in flight (`409` on a concurrent duplicate), then the booking id kept **24 h** so a replay returns the same booking | — |
 | `/admin/*`, `/admin/ledger`, `/admin/support/tickets` | `@SkipThrottle()` — exempt but every mutation writes `AuditLog` | — |
 
 `429` from the guard is normalised to the `RATE_LIMITED` envelope by `GlobalExceptionFilter`.
 
-`> Note:` with no `trust proxy` (§1) all production traffic shares one `req.ip`, so the "per IP" limits above are effectively global ceilings, and the magic-link IP cap (10 / 15 min) is shared by every visitor.
+With `trust proxy` set to the Caddy hop (§1), the "per IP" limits above are per client and the magic-link IP cap (10 / 15 min) is per visitor; the production default needs no `TRUST_PROXY_HOPS` to be set (pending: fix/trust-proxy-and-idempotency-scope).
 
 ## 4. Consistency & integrity (mechanisms, cross-referenced)
 
@@ -56,7 +57,7 @@ The load-bearing set, defined authoritatively elsewhere, restated here as requir
 - Booking status transitions only via [booking_state_machine.md](booking_state_machine.md) (`BookingStateMachineService`), under `pessimistic_write` row locks, each writing `BookingStatusHistory` in-transaction.
 - Money invariants in the DB: `ck_bookings_total_match CHECK (total_amount = base_amount + markup_amount)`, `ck_passengers_infant_adult`, unique constraints on payment attempts (`ux_payment_attempts_provider_ref`), webhook events (`ux_payment_webhook_events_provider_event` on provider + event id) and supplier webhook events — the database is the last line of defence, not the service code.
 - Webhook processing is idempotent (unique event ids; Paymob dedupes on `<transaction.id>:<state>`) and eventually complete: `PaymentWebhookSweepService` and `DuffelWebhookSweepService` run `EVERY_MINUTE` and re-enqueue rows with `processed_at IS NULL` received more than 60 s ago.
-- Duffel order creation: `AbortSignal.timeout(130_000)` (other Duffel calls 15–30 s), a timeout/network error is `DuffelAmbiguousError` — never retried blindly; `DuffelReconciliationService` (`*/2 * * * *`) scans bookings stuck in `paid` for > 15 min and matches Duffel orders by the metadata-echoed `supplier_idempotency_key` (state machine §4). `ExpirySweepService` (`EVERY_MINUTE`) fails `pending`/`awaiting_payment` bookings whose offer has expired. `RefundRequeueSweepService` (`*/5 * * * *`) re-enqueues `pending` refunds that have no live job.
+- Duffel order creation: `AbortSignal.timeout(130_000)` (other Duffel calls 15–30 s), a timeout/network error is `DuffelAmbiguousError` — never retried blindly; `DuffelReconciliationService` (`*/2 * * * *`) scans bookings stuck in `paid` for > 15 min and matches Duffel orders by the metadata-echoed `supplier_idempotency_key` (state machine §4). `ExpirySweepService` (`EVERY_MINUTE`) fails `pending`/`awaiting_payment` bookings whose offer has expired, except while a payment attempt is in `requires_action` younger than 30 min (`PAYMENT_IN_FLIGHT_GRACE_MS`) — the customer may still be on the Paymob page (pending: fix/payment-after-terminal-state). `RefundRequeueSweepService` (`*/5 * * * *`) re-enqueues `pending` refunds that have no live job; refunds in `executing` (gateway called, outcome never recorded) are never re-enqueued automatically — refund execution claims the row before calling Paymob and parks it on an unknown outcome (pending: fix/refund-executing-marker).
 - Account resolution races are absorbed by `ux_users_email` and the two `auth_identities` unique constraints (auth_flow §1).
 
 ## 5. Availability & graceful degradation
@@ -105,7 +106,7 @@ The load-bearing set, defined authoritatively elsewhere, restated here as requir
 | Data | Policy | Code |
 |---|---|---|
 | `magic_link_tokens` | deleted when `expires_at < now − 24 h` | `MagicLinkTokenPurgeService`, `0 3 * * *` |
-| `payment_webhook_events` | deleted when `processed_at IS NOT NULL` and `received_at < now − 90 d`; unprocessed rows are never pruned | `WebhookRetentionService`, `0 4 * * *` |
+| `payment_webhook_events` | deleted when `processed_at IS NOT NULL` and `received_at < now − 90 d`; unprocessed rows are never pruned, and `transaction.succeeded` rows are kept for good — the audit record of money in and the fallback source of the Paymob transaction id (pending: fix/refund-transaction-id) | `WebhookRetentionService`, `0 4 * * *` |
 | `supplier_webhook_events` (Duffel) | **no purge** — kept indefinitely | — |
 | `refresh_tokens` (expired/revoked) | **no purge** — kept indefinitely | — |
 | bookings / payments / refunds / ledger / audit logs | kept indefinitely (commercial records) | — |

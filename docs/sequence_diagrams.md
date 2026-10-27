@@ -1,6 +1,7 @@
 # TravelHub — Sequence Diagrams (Race-Prone Flows)
 
 **Status:** Verified against code 2026-10-27 (main @ b176f47)
+**Pending:** reflects fix branches fix/trust-proxy-and-idempotency-scope, fix/refund-transaction-id, fix/payment-after-terminal-state, fix/refund-executing-marker not yet merged to main.
 **Inputs:** [booking_state_machine.md](booking_state_machine.md) (transition numbers T1–T9 referenced below), [erd.md](erd.md), [duffel_api_integration_guide.md](duffel_api_integration_guide.md), [archive/prd.md](archive/prd.md) §5.3–5.5.
 
 These diagrams cover the paths where ordering and failure matter, as the backend implements them today. Participant names are the real NestJS classes under `app/Backend/src/`; messages name the real methods and endpoints. The gateway is **Paymob**, the supplier is **Duffel**.
@@ -22,7 +23,7 @@ sequenceDiagram
 
     U->>W: select offer
     W->>C: POST /bookings {offer_id} + Idempotency-Key
-    C->>R: GET idempotency_booking:key
+    C->>R: GET idempotency_booking:user:key
     alt key = locked
         C-->>W: 409 ILLEGAL_TRANSITION (in progress)
     else key = booking id
@@ -53,7 +54,7 @@ sequenceDiagram
     S-->>W: {booking_id, status, total_amount, currency}
 ```
 
-Without an `Idempotency-Key` header the controller calls `createBooking` directly and a double-click creates two `pending` bookings. `savePassengers` returns a vestigial `client_secret: pi_mock_…` field that nothing consumes.
+Without an `Idempotency-Key` header the controller calls `createBooking` directly and a double-click creates two `pending` bookings. The Redis key is scoped per user — `idempotency_booking:<user.sub>:<key>` — so the same header value from two users is two keys (pending: fix/trust-proxy-and-idempotency-scope). The vestigial `client_secret: pi_mock_…` field that `savePassengers` used to return is gone (pending: fix/refund-transaction-id).
 
 ---
 
@@ -105,9 +106,17 @@ sequenceDiagram
             PR-->>Q: throw (no BullMQ retry policy)
             Note over DB,Q: processed_at stays NULL, PaymentWebhookSweepService re-enqueues after 1 min
         else transaction.succeeded and amount matches
-            PR->>DB: lock booking, Booking → paid [T4]
-            PR->>DB: attempt → succeeded, Payment → succeeded, ledger customer_payment, processed_at
-            PR->>PR: after commit, enqueue create_duffel_order
+            PR->>DB: lock booking
+            alt booking still awaiting_payment
+                PR->>DB: Booking → paid [T4]
+                PR->>DB: attempt → succeeded + provider_transaction_id, Payment → succeeded, ledger customer_payment, processed_at
+                PR->>PR: after commit, enqueue create_duffel_order
+            else booking failed / paid / confirmed (pending fix/payment-after-terminal-state)
+                PR->>DB: attempt → succeeded + provider_transaction_id, Payment → succeeded only if still pending, ledger customer_payment
+                PR->>DB: Refund(pending, full amount) reason payment_after_status or duplicate_payment pinned to attempt
+                PR->>DB: processed_at, booking status untouched
+                PR->>PR: after commit, enqueue execute_refund (diagram 4)
+            end
         else transaction.failed
             PR->>DB: attempt → failed (failure_reason), booking stays awaiting_payment
         end
@@ -132,6 +141,8 @@ sequenceDiagram
 The return page carries no outcome and sets no state. If the user lands back before the webhook has been processed, the booking still reads `awaiting_payment` and the page simply keeps polling. If the webhook arrives before `PaymentAttempt` is committed, the processor throws and the sweep replays the event a minute later. A `transaction.pending` callback (3DS in flight) is stored, acked and marked processed without touching the attempt.
 
 Retry after a decline: the user calls `POST /bookings/:id/payment-intent` again while still `awaiting_payment`; a **new** attempt with a fresh Paymob order (`merchant_order_id` suffix) is created; the failed attempt is never mutated.
+
+**Capture outside `awaiting_payment`** (pending: fix/payment-after-terminal-state). A `transaction.succeeded` for a booking that is no longer `awaiting_payment` — the expiry sweep failed it while the customer was on the Paymob page, or a second attempt succeeded on a booking already `paid`/`confirmed` — used to hit `transitionTo(paid)`, throw `ILLEGAL_TRANSITION`, leave `processed_at` null and be re-enqueued by the sweep every minute with the money never returned. The processor now records the capture truthfully (attempt `succeeded` with its transaction id, ledger `customer_payment`), creates a `pending` full refund in the same transaction (reason `payment_after_<status>`, or `duplicate_payment` pinned to the attempt via `refunds.payment_attempt_id` when the booking's own payment was already captured — such a refund targets that attempt's transaction and never rolls the booking to `refunded`), marks the event processed and enqueues the refund after commit. The booking status is untouched. On the same branch `ExpirySweepService` leaves an `awaiting_payment` booking alone while it has an attempt in `requires_action` younger than 30 min (`PAYMENT_IN_FLIGHT_GRACE_MS`), so a customer mid-checkout is not failed under their feet. The Paymob transaction id (`obj.id`) is stored on the succeeded attempt as `provider_transaction_id` on every success path; refunds read it from there (pending: fix/refund-transaction-id).
 
 ---
 
@@ -233,33 +244,52 @@ sequenceDiagram
         Note over FO,SW: logged, not thrown. Sweep re-enqueues pending rows older than 5 min
     end
 
+    Note over RE,DB: three-phase execution below is pending fix/refund-executing-marker
     loop attempt 1..5
         Q->>RP: process(job)
         RP->>RE: executeRefund(refundId)
-        RE->>DB: Refund row, no-op unless pending
-        RE->>DB: transaction id from stored transaction.succeeded webhook (obj.id)
-        RE->>PM: refundTransaction(txn id, EGP amount) outside any transaction
-        PM->>P: POST /acceptance/void_refund/refund
-        alt gateway ok
-            P-->>PM: {id}
-            RE->>DB: lock refund, only if still pending
-            RE->>DB: Refund → succeeded, ledger gateway_refund, Payment rollup
-            alt succeeded refunds >= Payment.amount and booking cancelled/order_failed
-                RE->>DB: Booking → refunded [T8/T9]
-            end
-            RE-->>RP: executed = true
-        else gateway error or missing transaction id
-            RE-->>RP: throw
-            RP-->>Q: rethrow → BullMQ backoff retry
-            alt attemptsMade >= 5
-                RP->>RE: markRefundFailed (pending → failed)
-                Note over RP: surfaces in GET /admin/refunds?status=failed
+        RE->>DB: Refund row
+        alt row executing (earlier gateway call, outcome never recorded)
+            RE-->>RP: parked, gateway NOT called
+            Note over RE: error log, admin checks Paymob then retries with gateway_checked
+        else row succeeded / failed
+            RE-->>RP: executed = false (replay no-op)
+        else row pending
+            RE->>DB: transaction id from succeeded attempt provider_transaction_id, else stored transaction.succeeded webhook obj.id
+            RE->>DB: phase 1 lock refund, pending → executing + gateway_attempted_at, commit
+            RE->>PM: phase 2 refundTransaction(txn id, EGP amount) outside any transaction
+            PM->>P: POST /acceptance/void_refund/refund
+            alt gateway ok
+                P-->>PM: {id}
+                RE->>DB: phase 3 lock refund, only if still executing
+                RE->>DB: Refund → succeeded, ledger gateway_refund
+                alt attempt-level refund (payment_attempt_id set)
+                    Note over RE,DB: no Payment rollup, no booking transition
+                else payment-level refund
+                    RE->>DB: Payment rollup (partially_refunded / refunded)
+                    alt succeeded refunds >= Payment.amount and booking cancelled/order_failed
+                        RE->>DB: Booking → refunded [T8/T9]
+                    end
+                end
+                RE-->>RP: executed = true
+            else PaymobGatewayError definitive (4xx, nothing issued)
+                RE->>DB: executing → pending
+                RE-->>RP: throw
+                RP-->>Q: rethrow → BullMQ backoff retry
+                alt attemptsMade >= 5
+                    RP->>RE: markRefundFailed (pending → failed)
+                    Note over RP: surfaces in GET /admin/refunds?status=failed
+                end
+            else network / timeout / 5xx (outcome unknown)
+                RE->>DB: row stays executing
+                RE-->>RP: parked, no throw, no retry
+                Note over RE: surfaces in GET /admin/refunds?status=executing
             end
         end
     end
 ```
 
-Admin paths reuse the same service: `POST /admin/payments/:id/refund` creates the `pending` row then calls `executeRefund` inline (marking the row `failed` on a throw); `POST /admin/refunds/:id/retry` flips `failed → pending` and re-enqueues with the same job options. Because `jobId` is derived from the refund id, the sweep and the retry endpoint are no-ops while a job is still live or delayed.
+Admin paths reuse the same service: `POST /admin/payments/:id/refund` creates the `pending` row then calls `executeRefund` inline (marking the row `failed` on a throw — a definitive 4xx, which first hands the row back to `pending`; a non-definitive error does not throw, leaves the row `executing` and the `201` response carries the row as read before the claim, so look at `GET /admin/refunds?status=executing` (pending: fix/refund-executing-marker)); `POST /admin/refunds/:id/retry` flips `failed → pending` and re-enqueues with the same job options, and moves an `executing` row back to `pending` only with body `{ "gateway_checked": true }` (`409 ILLEGAL_TRANSITION` otherwise), recording `gateway_checked: true` in the audit row (pending: fix/refund-executing-marker). Because `jobId` is derived from the refund id, the sweep and the retry endpoint are no-ops while a job is still live or delayed; the sweep selects only `pending` rows, so an `executing` row is never re-enqueued automatically (pending: fix/refund-executing-marker). A missing transaction id throws before phase 1, so the row stays `pending` and the ordinary retry/failed path applies.
 
 ---
 
